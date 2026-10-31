@@ -271,6 +271,7 @@ td.rank { font-weight: 700; }
 .dcheck li { font-size: .88rem; color: #c9d1da; padding-left: 18px; position: relative; margin: 4px 0; }
 .dcheck li::before { position: absolute; left: 0; font-weight: 800; }
 .warn-t { color: var(--gold); }
+.conf small.cparts { flex-basis: 100%; font: 600 .74rem var(--f-body); color: var(--muted); }
 .toast { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); background: var(--teal); color: #fff; font: 700 .95rem var(--f-body); padding: 10px 14px; border-radius: 6px; z-index: 20; }
 </style>
 </head>
@@ -384,7 +385,9 @@ function confCell(g, kind, label, c) {
   const cls = score >= 7 ? 'c-hi' : score >= 4 ? 'c-md' : 'c-lo';
   const canAdd = g.state === 'pre' && g.model && (kind !== 'moneyline' || g.model.mlSide) && (kind !== 'spread' || g.model.spreadSide) && (kind !== 'total' || g.model.totalSide);
   const an = score >= 4 ? analyze(league, g, kind) : null;
-  return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
+  const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
+  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? ' ' + sideName(pk.valueSide) : ''}</small>` : '';
+  return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 
 function lineCell(label, cur, open, kal) {
@@ -514,14 +517,16 @@ function breakdown(lg, g) {
   const cols = [['moneyline', 'Moneyline'], ['spread', 'Spread'], ['total', 'Total']].map(([k, lbl]) => {
     const a = analyze(lg, g, k);
     if (!a) return '';
-    return `<div class="bd-col"><div class="bd-h"><span>${lbl}</span>${vchip(a.verdict)}</div><b>${esc(a.call === 'Pass' ? (k === 'total' ? g.model.totalSide : k === 'spread' ? g.model.spreadSide : g.model.mlSide) || '' : a.call)}</b><ul>${reasonList(a)}</ul></div>`;
+    return `<div class="bd-col"><div class="bd-h"><span>${lbl}</span>${vchip(a.verdict)}</div><b>${esc(a.call === 'Pass' ? ((g.pick || {})[k] || {}).call || '' : a.call)}</b><ul>${reasonList(a)}</ul></div>`;
   }).join('');
   return cols ? `<div class="conf-h"><span><span class="ball"></span>Take or fade?</span><small>✓ supports the pick · ✗ works against it · ⚠ warning</small></div><div class="bd">${cols}</div>` : '';
 }
 
 /* ---------------- top picks (home) ---------------- */
 function kalshiFor(g, kind) {
-  const k = g.kalshi || {}, m = g.model || {};
+  const k = g.kalshi || {}, pk = (g.pick || {})[kind];
+  if (pk) return kind === 'total' ? (k.total || {})[pk.side] : (k[kind === 'moneyline' ? 'ml' : 'spread'] || {})[pk.side];
+  const m = g.model || {};
   if (kind === 'moneyline' && m.mlSide && k.ml) return k.ml[m.mlSide.startsWith(g.home.abbr + ' ') ? 'home' : 'away'];
   if (kind === 'spread' && m.spreadSide && k.spread) return k.spread[m.spreadSide.startsWith(g.home.abbr + ' ') ? 'home' : 'away'];
   if (kind === 'total' && m.totalSide && k.total) return k.total[m.totalSide.startsWith('Over') ? 'over' : 'under'];
@@ -675,7 +680,9 @@ function gameDay(g) {
 const gameTime = g => g.date.split(' · ')[1]?.replace(' ET', '') || '';
 function fromGame(g, kind, lg = league) {
   const league = lg;
-  const m = g.model, ln = g.lines, base = { date: gameDay(g), time: gameTime(g), league: league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, book: 'DK', stake: 1 };
+  const pk = (g.pick || {})[kind];
+  const m = pk ? { mlSide: pk.call, spreadSide: pk.call, totalSide: pk.call } : g.model;
+  const ln = g.lines, base = { date: gameDay(g), time: gameTime(g), league: league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, book: 'DK', stake: 1 };
   if (kind === 'moneyline') {
     const side = m.mlSide.startsWith(g.home.abbr + ' ') ? 'home' : 'away';
     return { ...base, play: `${g[side].abbr} ML`, price: priceNum(side === 'home' ? ln.homeML : ln.awayML), grade: { league, game: g.id, kind: 'ml', side } };
@@ -973,7 +980,8 @@ function foot() {
     ${bb ? 'L5 Rank uses each team\'s last 5 games; shooting percentages pool makes and attempts. Off and Def Rank use points per 100 possessions; L5 SOS ranks the average rating of the last 5 opponents (1st = toughest).'
       : 'L3 Rank uses each team\'s last 3 games. Off and Def Rank rank points scored and allowed per game. Penalties are yards per game; Pace is offensive plays per game. Touchdowns count only offensive rushing and passing scores.'}
     ${((DATA.checks || {})[league] || []).map(c => `${esc(c.source)}: ${c.verified ? `${c.verified} checked${c.problems ? `, ${c.problems} to review` : ', all match'}` : esc(c.note)}${c.verified && c.note ? ` (${esc(c.note)})` : ''}`).join(' · ')}<br>
-    Overall Rank and the confidence levels come from a team-rating model fit to every score this season, adjusted for opponent and home court or field. It doesn't know about injuries or motivation, and lines move after this page is built, so check the live price before you bet.`;
+    Confidence levels start from the stat matchup (each offense against the matching defense, recent games) and the price model adds or subtracts: Stats is the matchup score, Price is how far the line looks mispriced.
+    Overall Rank and the price model come from a team-rating model fit to every score this season, adjusted for opponent and home court or field. It doesn't know about injuries or motivation, and lines move after this page is built, so check the live price before you bet.`;
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { league = b.dataset.lg; pgame = 'all'; setMode(mode === 'props' && LEAGUES[league].cats ? 'props' : 'games'); });
 $('myplays').onclick = () => setMode('plays');

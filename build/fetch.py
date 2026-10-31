@@ -1292,6 +1292,9 @@ SPORT = {"cfb": "fb", "nfl": "fb", "nba": "bb", "cbb": "bb"}
 
 
 def side_of(g, kind):
+    pk = (g.get("pick") or {}).get(kind)
+    if pk:
+        return pk["side"]
     m = g.get("model") or {}
     if kind == "total":
         t = m.get("totalSide")
@@ -1333,6 +1336,134 @@ def weather_of(g):
     return {"indoor": "Indoors" in w, "rain": int(rain.group(1)) if rain else 0, "wind": int(wind.group(1)) if wind else 0}
 
 
+SM_SPREAD = {"cfb": (0.15, 0.006), "nfl": (0.33, 0.03), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
+SM_TOTAL_UNIT = {"cfb": 0.7, "nfl": 0.8, "nba": 0.5, "cbb": 0.6}
+
+
+UNIT_PAIRS = {
+    "fb": [("PPG", "PPG/A", 2, "scoring"), ("Pass YPG", "PassYPG/A", 1, "passing"), ("Rush YPG", "RushYPG/A", 1, "rushing"),
+           ("Pass TD/G", "Pass TD/A", 1, "passing TDs"), ("Rush TD/G", "Rush TD/A", 1, "rushing TDs"),
+           ("Sacks Allow/G", "Sacks/G", 0.5, "pass protection"), ("Off 3rd %", "Def 3rd %", 1, "third downs")],
+    "bb": [("PPG", "Opp PPG", 2, "scoring"), ("2PT%", "Opp 2PT%", 1, "2-point shooting"), ("3PT%", "Opp 3PT%", 1, "3-point shooting"),
+           ("FT%", "Opp FT%", 0.5, "free throws"), ("Paint PPG", "Opp Paint PPG", 1, "paint scoring")],
+}
+DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": "run defense", "passing TDs": "pass-TD defense",
+            "rushing TDs": "run-TD defense", "pass protection": "pass rush", "third downs": "third-down defense",
+            "2-point shooting": "2-point defense", "3-point shooting": "3-point defense", "free throws": "free-throw defense",
+            "paint scoring": "paint defense"}
+
+
+def stat_matchup(lg, g, nteams):
+    """Data-driven confidence for each bet type, from offense-vs-defense unit matchups.
+
+    Each team's offensive units are compared with the opposing defense's matching units (recent-game
+    ranks). A strong offense meeting an equally strong defense cancels out; a strong offense meeting a
+    weak defense is a mismatch. The spread version is helped by points received and hurt by big numbers
+    laid; the total compares recent scoring (each offense against the other defense) with the posted total.
+    """
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    tot = wsum = 0.0
+    edges = []  # (net, text, side)
+    a_better = h_better = 0
+    for r in R.values():
+        ra, rh = r[1][4], r[2][0]
+        if ra is not None and rh is not None:
+            a_better += ra < rh
+            h_better += rh < ra
+    for off, dfn, wt, unit in UNIT_PAIRS[SPORT[lg]]:
+        if off not in R or dfn not in R:
+            continue
+        ao, hd, ho, ad = R[off][1][4], R[dfn][2][0], R[off][2][0], R[dfn][1][4]
+        if None in (ao, hd, ho, ad):
+            continue
+        away_mm, home_mm = (hd - ao) / nteams, (ad - ho) / nteams  # > 0: the offense out-ranks the defense it faces
+        tot += wt * (away_mm - home_mm)
+        wsum += wt
+        for mm, team, opp, o_rank, d_rank in ((away_mm, g["away"], g["home"], ao, hd), (home_mm, g["home"], g["away"], ho, ad)):
+            if mm > 0.25:
+                edges.append((mm, f"{team['abbr']} {unit} ({ordn(o_rank)}) vs {opp['abbr']} {DEF_NAME[unit]} ({ordn(d_rank)})",
+                              "away" if team is g["away"] else "home"))
+    out = {}
+    ln = g["lines"]
+    if wsum:
+        u = tot / wsum
+        share = a_better / (a_better + h_better) if a_better + h_better else 0.5
+        strength = 12 * u + 4 * (share - 0.5)  # > 0 favors the away team
+        side = "away" if strength > 0 else "home"
+        base = min(10.0, abs(strength))
+        team = g[side]
+        notes = [(t, sd) for _, t, sd in sorted(edges, reverse=True)[:3]]
+        price = pnum(ln.get("homeML" if side == "home" else "awayML"))
+        ml = base * (min(1.0, 600 / abs(price)) ** 0.25 if price is not None and price <= -500 else 1.0)
+        out["moneyline"] = {"score": round(ml, 1), "side": side, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
+        if ln.get("spreadNum") is not None:
+            line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
+            k1, k2 = SM_SPREAD[lg]
+            sp = base + k1 * line_side if line_side > 0 else base - (k1 * abs(line_side) + k2 * line_side ** 2)
+            out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": side, "call": f"{team['abbr']} {fsp(line_side)}", "notes": notes}
+    off, dfn = R.get("PPG"), R.get("PPG/A") or R.get("Opp PPG")
+    if off and dfn and ln.get("totalNum") is not None and None not in (off[1][3], off[2][1], dfn[1][3], dfn[2][1]):
+        proj = (off[1][3] + dfn[2][1]) / 2 + (off[2][1] + dfn[1][3]) / 2  # recent window: last 3 (football) / last 5 (hoops)
+        diff = proj - ln["totalNum"]
+        side = "over" if diff > 0 else "under"
+        out["total"] = {"score": round(min(10.0, abs(diff) / SM_TOTAL_UNIT[lg]), 1), "side": side, "proj": round(proj, 1),
+                        "call": f"{'Over' if diff > 0 else 'Under'} {ln['totalNum']:g}",
+                        "notes": [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}", side)]}
+    return out
+
+
+def blend_confidence(lg, g, n):
+    """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
+
+    The price model (projected score vs the line, weighted against the market) can flip the side when
+    its edge is bigger than what the stats show. Scores are 0-10: 7+ is a Play, 4+ a Lean.
+    """
+    sm = stat_matchup(lg, g, n)
+    g["matchup"] = sm
+    g["valueConf"] = g.get("confidence")
+    if not g.get("confidence") or not g.get("model"):
+        return
+    m = g["model"]
+    model_side = {"moneyline": side_from_text(g, m.get("mlSide")), "spread": side_from_text(g, m.get("spreadSide")),
+                  "total": None if not m.get("totalSide") else ("over" if m["totalSide"].startswith("Over") else "under")}
+    conf, pick = {}, {}
+    for kind in ("moneyline", "spread", "total"):
+        v = g["valueConf"][kind][0]
+        vs = model_side[kind]
+        st = sm.get(kind)
+        pos = "away" if kind != "total" else "over"
+        sig = 0.0
+        if st:
+            sig += st["score"] * (1 if st["side"] == pos else -1)
+        if vs:
+            sig += 0.35 * v * (1 if vs == pos else -1)
+        side = pos if sig > 0 else ("home" if kind != "total" else "under")
+        score = round(min(10.0, abs(sig)), 1)
+        ln = g["lines"]
+        if kind == "total":
+            call = f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}" if ln.get("totalNum") is not None else None
+        elif kind == "spread":
+            call = f"{g[side]['abbr']} {fsp(ln['spreadNum'] if side == 'home' else -ln['spreadNum'])}" if ln.get("spreadNum") is not None else None
+        else:
+            price = ln.get("homeML" if side == "home" else "awayML")
+            call = f"{g[side]['abbr']} {price}" if price and price != "—" else None
+        if not call:
+            conf[kind] = [0.0, "Pass"]
+            continue
+        if kind == "moneyline" and (pnum(price) or 0) > 500:
+            score = min(score, 5.0)  # long shots: cap at a lean
+        conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
+        pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
+                      "value": v, "valueSide": vs}
+    g["confidence"], g["pick"] = conf, pick
+
+
+def side_from_text(g, t):
+    if not t:
+        return None
+    return "home" if t.startswith(g["home"]["abbr"] + " ") else "away"
+
+
 def analyze_game(lg, g, kind, nteams):
     c = (g.get("confidence") or {}).get(kind)
     m, ln = g.get("model"), g["lines"]
@@ -1347,7 +1478,7 @@ def analyze_game(lg, g, kind, nteams):
     k = kalshi_for(g, kind)
     if kind == "total":
         tot = m["away"] + m["home"]
-        why.append(f"Model projects {tot:.1f} points against a total of {ln['totalNum']:g}.")
+        ((why if (tot > ln["totalNum"]) == (side == "over") else against)).append(f"Price model projects {tot:.1f} points against a total of {ln['totalNum']:g}.")
         rows = {r[0]: r for s in g.get("sections") or [] for r in s["rows"]}
         off, dfn = rows.get("PPG"), rows.get("PPG/A") or rows.get("Opp PPG")
         if off and dfn:
@@ -1371,11 +1502,14 @@ def analyze_game(lg, g, kind, nteams):
         proj = (m["home"] - m["away"]) if side == "home" else (m["away"] - m["home"])
         line_num = None if ln.get("spreadNum") is None else (ln["spreadNum"] if side == "home" else -ln["spreadNum"])
         if kind == "spread":
-            why.append(f"Model has {team['abbr']} {'winning' if proj >= 0 else 'losing'} by {abs(proj):.1f}; the line is {team['abbr']} {fsp(line_num)}.")
+            (why if line_num is not None and proj + line_num > 0 else against).append(
+                f"Price model has {team['abbr']} {'winning' if proj >= 0 else 'losing'} by {abs(proj):.1f}; the line is {team['abbr']} {fsp(line_num)}.")
         else:
             ph = m["pHome"] if side == "home" else 1 - m["pHome"]
             price = ln["homeML"] if side == "home" else ln["awayML"]
-            why.append(f"Model gives {team['abbr']} a {round(ph * 100)}% chance to win at {price}.")
+            imp = None if pnum(price) is None else (100 / (pnum(price) + 100) if pnum(price) > 0 else -pnum(price) / (-pnum(price) + 100))
+            (why if imp is None or ph >= imp else against).append(f"Price model gives {team['abbr']} a {round(ph * 100)}% chance to win at {price}"
+                + (f" (the price implies {round(imp * 100)}%)." if imp is not None else "."))
             if (pnum(price) or 0) >= 300:
                 warn.append(f"Long shot ({price}): it loses most of the time even when the price is right.")
         mine, theirs, best = stat_edge(g, side)
@@ -1403,10 +1537,17 @@ def analyze_game(lg, g, kind, nteams):
             f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']})" + ("." if k["p"] >= 0.5 else ", so the market leans the other way."))
     if m.get("trust") is not None and m["trust"] < 0.3:
         warn.append(f"Early season: the model only counts {round(m['trust'] * 100)}% against the market with this few games played.")
+    sm = (g.get("matchup") or {}).get(kind)
+    oppose = False
+    if sm:
+        for txt, sd in sm.get("notes") or []:
+            (why if sd == side else against).append(txt + ".")
+        if sm["side"] != side and sm["score"] >= 4:
+            oppose = True
     if score >= 7:
-        verdict = "Take small" if len(warn) >= 2 else "Take"
+        verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
     elif score >= 4:
-        verdict = "Take" if (not warn and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
+        verdict = "Take" if (not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
@@ -1443,6 +1584,7 @@ def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
         for g in OUT_DATA.get(key) or []:
+            blend_confidence(key, g, n)
             a = {kind: analyze_game(key, g, kind, n) for kind in ("moneyline", "spread", "total")}
             g["analysis"] = {k2: v for k2, v in a.items() if v}
             for p in g.get("props") or []:
@@ -1480,9 +1622,9 @@ def pick_from_game(lg, g, kind, a):
                 "grade": {"league": lg, "game": g["id"], "kind": "ml", "side": side}}
     if kind == "spread":
         line = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
-        return {**base, "play": m["spreadSide"], "price": pnum(ln["homeSpreadOdds" if side == "home" else "awaySpreadOdds"]) or -110,
+        return {**base, "play": g["pick"]["spread"]["call"], "price": pnum(ln["homeSpreadOdds" if side == "home" else "awaySpreadOdds"]) or -110,
                 "grade": {"league": lg, "game": g["id"], "kind": "spread", "side": side, "line": line}}
-    return {**base, "play": m["totalSide"], "price": pnum(ln["overOdds" if side == "over" else "underOdds"]) or -110,
+    return {**base, "play": g["pick"]["total"]["call"], "price": pnum(ln["overOdds" if side == "over" else "underOdds"]) or -110,
             "grade": {"league": lg, "game": g["id"], "kind": "total", "side": side, "line": ln["totalNum"]}}
 
 
