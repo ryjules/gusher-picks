@@ -1574,7 +1574,20 @@ def fetch_text(url, headers=None, cache_name=None):
         return txt
     except Exception as e:
         print("check fetch failed", url.split("?")[0], e, file=sys.stderr)
+        LAST_ERR[url.split("/")[2]] = str(e)[:120]
         return None
+
+
+LAST_ERR = {}  # host -> last error, shown in the data-check summary
+
+
+def as_list(x, host):
+    """API lists come back as JSON arrays; anything else is an error message worth showing."""
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict) and x:
+        LAST_ERR[host] = str(x.get("message") or x.get("error") or x)[:120]
+    return []
 
 
 def fetch_json(url, headers=None, cache_name=None):
@@ -1673,7 +1686,7 @@ def check_cfbd():
         return
     H = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     year = datetime.now(ET).year if datetime.now(ET).month >= 6 else datetime.now(ET).year - 1
-    games = fetch_json(f"https://api.collegefootballdata.com/games?year={year}&seasonType=regular", H, f"cfbd_games_{year}.json") or []
+    games = as_list(fetch_json(f"https://api.collegefootballdata.com/games?year={year}&seasonType=regular", H, f"cfbd_games_{year}.json"), "api.collegefootballdata.com")
     by_ids = {}
     for x in games:
         h, a = x.get("homeTeam") or x.get("home_team"), x.get("awayTeam") or x.get("away_team")
@@ -1702,7 +1715,7 @@ def check_cfbd():
             problems += 1
             add_check(g, False, f"Final score differs from CollegeFootballData ({cand[-1][1]}-{cand[-1][2]})")
     week = (OUT_DATA.get("cfb_meta") or {}).get("week")
-    lines = fetch_json(f"https://api.collegefootballdata.com/lines?year={year}&week={week}&seasonType=regular", H) or []
+    lines = as_list(fetch_json(f"https://api.collegefootballdata.com/lines?year={year}&week={week}&seasonType=regular", H), "api.collegefootballdata.com")
     lc = 0
     for x in lines:
         h, a = norm_team(x.get("homeTeam") or x.get("home_team")), norm_team(x.get("awayTeam") or x.get("away_team"))
@@ -1721,7 +1734,11 @@ def check_cfbd():
             med = sorted(tts)[len(tts) // 2]
             d = abs(med - g["lines"]["totalNum"])
             add_check(g, d < 2, f"Total: DraftKings {g['lines']['totalNum']:g} vs median {med:g}" + ("" if d < 2 else " — differs"))
-    summary_add("cfb", "CollegeFootballData", verified, problems, f"final scores · {lc} lines compared across books")
+    err = LAST_ERR.get("api.collegefootballdata.com")
+    sample = next((f"{x.get('awayTeam') or x.get('away_team')} @ {x.get('homeTeam') or x.get('home_team')}" for x in games), "none")
+    summary_add("cfb", "CollegeFootballData", verified, problems,
+                f"final scores · {lc} lines compared across books · {len(games)} games and {len(lines)} line sets received"
+                + (f" · error: {err}" if err else f" · e.g. {sample}"))
     # stadium coordinates for the weather check
     venues = fetch_json("https://api.collegefootballdata.com/venues", H, "cfbd_venues.json") or []
     return {norm_team(v.get("name")): (v.get("location") or {}) for v in venues}
@@ -1735,7 +1752,7 @@ def check_cbbd():
     H = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
     now = datetime.now(ET)
     season = now.year + 1 if now.month >= 8 else now.year
-    games = fetch_json(f"https://api.collegebasketballdata.com/games?season={season}", H) or []
+    games = as_list(fetch_json(f"https://api.collegebasketballdata.com/games?season={season}", H), "api.collegebasketballdata.com")
     done = [x for x in games if x.get("homePoints") is not None and x.get("awayPoints") is not None]
     names = {}
     for g in OUT_DATA.get("cbb") or []:
@@ -1754,7 +1771,8 @@ def check_cbbd():
         if (float(x["awayPoints"]), float(x["homePoints"])) != (f["away"], f["home"]):
             problems += 1
             add_check(g, False, f"Final score differs from CollegeBasketballData ({x['awayPoints']}-{x['homePoints']})")
-    summary_add("cbb", "CollegeBasketballData", verified, problems, f"{len(done)} completed games in their feed")
+    err = LAST_ERR.get("api.collegebasketballdata.com")
+    summary_add("cbb", "CollegeBasketballData", verified, problems, f"{len(done)} completed games in their feed" + (f" · error: {err}" if err else ""))
 
 
 ODDS_SPORT = {"nfl": "americanfootball_nfl", "nba": "basketball_nba", "cbb": "basketball_ncaab"}
