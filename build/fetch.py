@@ -2043,24 +2043,24 @@ def run_checks():
     try:
         check_nfl()
     except Exception as e:
-        print("nfl check failed", e, file=sys.stderr); summary_add("nfl", "nflverse", 0, 0, "check failed")
+        print("nfl check failed", safe_error(e), file=sys.stderr); summary_add("nfl", "nflverse", 0, 0, "check failed")
     venues = None
     try:
         venues = check_cfbd()
     except Exception as e:
-        print("cfbd check failed", e, file=sys.stderr); summary_add("cfb", "CollegeFootballData", 0, 0, "check failed")
+        print("cfbd check failed", safe_error(e), file=sys.stderr); summary_add("cfb", "CollegeFootballData", 0, 0, "check failed")
     try:
         check_cbbd()
     except Exception as e:
-        print("cbbd check failed", e, file=sys.stderr); summary_add("cbb", "CollegeBasketballData", 0, 0, "check failed")
+        print("cbbd check failed", safe_error(e), file=sys.stderr); summary_add("cbb", "CollegeBasketballData", 0, 0, "check failed")
     try:
         check_odds()
     except Exception as e:
-        print("odds check failed", e, file=sys.stderr)
+        print("odds check failed", safe_error(e), file=sys.stderr)
     try:
         check_weather(venues)
     except Exception as e:
-        print("weather check failed", e, file=sys.stderr)
+        print("weather check failed", safe_error(e), file=sys.stderr)
     OUT_DATA["checks"] = CHECKS
 
 
