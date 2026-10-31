@@ -651,6 +651,8 @@ def rescore_prop(pr):
         market = 0.5
     form = 0.5 * pr["avg5"] + 0.5 * pr["season"]
     gap = abs(form - pr["line"]) / max(pr["line"], 1.0)
+    if pr["cat"] == "FG Made":
+        gap /= 3  # kicker volume swings a lot game to game, so a line well below the average is normal
     pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns"
     w = 0.35 * max(0.0, 1 - gap / 0.5)
     blend = w * pr["prob"] + (1 - w) * market
@@ -679,6 +681,40 @@ def record_finals(key, games):
         for r in g["teams"].values():
             players.update(r.get("players") or {})
         out[g["id"]] = {"away": side["away"]["pts"], "home": side["home"]["pts"], "players": players}
+
+
+KEY_POS = {"QB": 3, "RB": 1, "WR": 1, "TE": 1, "OT": 1, "T": 1, "C": 1, "G": 1, "CB": 1, "S": 1, "LB": 1, "DE": 1, "DT": 1, "EDGE": 1}
+
+
+def injury_report(summ, away, home):
+    """{side: [{"id", "name", "pos", "status"}]} for questionable, doubtful and out players (ESPN injury report)."""
+    out = {"away": [], "home": []}
+    ids = {away["id"]: "away", home["id"]: "home"}
+    for tm in summ.get("injuries", []) or []:
+        side = ids.get(((tm.get("team") or {}).get("id")))
+        if not side:
+            continue
+        for i in tm.get("injuries", []) or []:
+            st = (i.get("status") or "").strip()
+            if st.lower() not in ("questionable", "doubtful", "out"):
+                continue
+            ath = i.get("athlete") or {}
+            pos = ((ath.get("position") or {}).get("abbreviation") or "").upper()
+            out[side].append({"id": ath.get("id"), "name": ath.get("shortName") or ath.get("displayName"), "pos": pos, "status": st})
+    return out
+
+
+def injury_notes(g, side):
+    """Warnings about the chosen team's injuries (football)."""
+    inj = (g.get("inj") or {}).get(side) or []
+    notes = []
+    qb = [p for p in inj if p["pos"] == "QB" and p["status"].lower() in ("questionable", "doubtful", "out")]
+    if qb:
+        notes.append(f"{g[side]['abbr']} QB {qb[0]['name']} is {qb[0]['status'].lower()}.")
+    hurt = [p for p in inj if p["pos"] != "QB" and p["pos"] in KEY_POS and p["status"].lower() in ("doubtful", "out")]
+    if len(hurt) >= 3:
+        notes.append(f"{g[side]['abbr']} has {len(hurt)} starters-level players listed doubtful or out ({', '.join(p['pos'] for p in hurt[:5])}).")
+    return notes
 
 
 # --- main ----------------------------------------------------------------------
@@ -878,7 +914,9 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             confidence = cs
 
         props = []
+        inj = None
         if key == "nfl" and status.get("state") == "pre":
+            inj = injury_report(summ, away, home)
             injured = {(i.get("athlete") or {}).get("id") for tm in summ.get("injuries", []) for i in tm.get("injuries", [])
                        if (i.get("status") or "").lower() in OUT_STATUSES}
             lines = prop_lines(lg, e["id"])
@@ -921,7 +959,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
                       "spreadNum": spread, "totalNum": total},
             "sections": sections, "confidence": confidence, "model": model,
             "state": status.get("state"), "score": score,
-            "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final,
+            "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final, "inj": inj,
         })
     enrich(key, slate)
     OUT_DATA[key] = slate
@@ -1336,8 +1374,8 @@ def weather_of(g):
     return {"indoor": "Indoors" in w, "rain": int(rain.group(1)) if rain else 0, "wind": int(wind.group(1)) if wind else 0}
 
 
-SM_SPREAD = {"cfb": (0.15, 0.006), "nfl": (0.33, 0.03), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
-SM_TOTAL_UNIT = {"cfb": 0.7, "nfl": 0.8, "nba": 0.5, "cbb": 0.6}
+SM_SPREAD = {"cfb": (0.15, 0.006), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
+SM_TOTAL_UNIT = {"cfb": 0.7, "nfl": 2.0, "nba": 0.5, "cbb": 0.6}  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -1394,7 +1432,8 @@ def stat_matchup(lg, g, nteams):
         team = g[side]
         notes = [(t, sd) for _, t, sd in sorted(edges, reverse=True)[:3]]
         price = pnum(ln.get("homeML" if side == "home" else "awayML"))
-        ml = base * (min(1.0, 600 / abs(price)) ** 0.25 if price is not None and price <= -500 else 1.0)
+        # Laying a big price has little value even when the team should win: shrink the moneyline score.
+        ml = base * ((150 / abs(price)) ** 0.5 if price is not None and price <= -150 else 1.0)
         out["moneyline"] = {"score": round(ml, 1), "side": side, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
         if ln.get("spreadNum") is not None:
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
@@ -1524,6 +1563,10 @@ def analyze_game(lg, g, kind, nteams):
             ot = fsp(pnum(o_s)) if kind == "spread" else o_s
             ct = fsp(c_s) if kind == "spread" else fmt_ml(c_s)
             (why if steam else against).append(f"Line moved {ot} → {ct}: money has come in on {team['abbr'] if steam else opp['abbr']}.")
+        for t in injury_notes(g, side):
+            warn.append(t)
+        if lg == "nfl" and side == "away" and not g.get("neutral") and score < 7:
+            warn.append("Road team: back road sides only when the edge is clear.")
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
             warn.append("Road favorite in college: road teams have struggled to cover this season.")
         if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
@@ -1554,7 +1597,11 @@ def analyze_game(lg, g, kind, nteams):
             "call": re.sub(r"^(Play|Lean) ", "", call), "side": side}
 
 
-def analyze_prop(p):
+AIR_CATS = {"Passing", "Receiving", "Receptions", "Rush + Rec"}
+GROUND_CATS = {"Rushing"}
+
+
+def analyze_prop(p, g=None, lg=None):
     if p.get("line") is None or p.get("score") is None:
         return None
     under = p.get("side") == "Under"
@@ -1571,6 +1618,20 @@ def analyze_prop(p):
         warn.append("Line is far from his recent numbers: check injury or role news.")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
+    if g is not None:
+        w = g.get("wx") or weather_of(g)
+        wet = SPORT.get(lg) == "fb" and not w["indoor"] and (w["rain"] >= 35 or w["wind"] >= 15)
+        if wet and not under and p["cat"] in AIR_CATS:
+            warn.append(f"Weather: {w['rain']}% rain, {w['wind']} mph wind outdoors can cut passing and catches.")
+        if wet and not under and p["cat"] in GROUND_CATS:
+            why.append(f"Weather ({w['rain']}% rain, {w['wind']} mph wind) tends to push teams toward the run.")
+        n = (OUT_DATA.get((lg or "") + "_meta") or {}).get("teams") or 32
+        if not under and p.get("oppRank") is not None and p["oppRank"] <= max(3, round(n * 0.1)) and p["cat"] not in ("Touchdowns", "FG Made"):
+            warn.append(f"Facing a top-{p['oppRank']} defense in this category.")
+        side = "home" if p.get("home") else "away"
+        q = next((x for x in ((g.get("inj") or {}).get(side) or []) if x.get("id") == p.get("pid")), None)
+        if q:
+            warn.append(f"{p['player']} is listed {q['status'].lower()}.")
     if p["score"] >= 7:
         verdict = "Take small" if warn else "Take"
     elif p["score"] >= 4:
@@ -1588,7 +1649,7 @@ def attach_analysis():
             a = {kind: analyze_game(key, g, kind, n) for kind in ("moneyline", "spread", "total")}
             g["analysis"] = {k2: v for k2, v in a.items() if v}
             for p in g.get("props") or []:
-                p["analysis"] = analyze_prop(p)
+                p["analysis"] = analyze_prop(p, g, key)
 
 
 # --- model picks history: hypothetical P/L of every green (Take) pick ---------------------
