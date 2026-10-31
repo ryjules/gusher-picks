@@ -1715,12 +1715,22 @@ def fetch_text(url, headers=None, cache_name=None):
             open(path, "w").write(txt)
         return txt
     except Exception as e:
-        print("check fetch failed", url.split("?")[0], e, file=sys.stderr)
-        LAST_ERR[url.split("/")[2]] = str(e)[:120]
+        print("check fetch failed", url.split("?")[0], safe_error(e), file=sys.stderr)
+        LAST_ERR[url.split("/")[2]] = safe_error(e)
         return None
 
 
 LAST_ERR = {}  # host -> last error, shown in the data-check summary
+
+
+def safe_error(e):
+    """A short error description that can't leak credentials (no header values or URLs with keys)."""
+    code = getattr(e, "code", None)
+    if code:
+        return f"HTTP {code}" + {401: " (the API key was rejected)", 403: " (access denied)", 429: " (rate limited)"}.get(code, "")
+    if isinstance(e, ValueError) and "header" in str(e).lower():
+        return "the API key is malformed (check for extra spaces or line breaks)"
+    return type(e).__name__
 
 
 def as_list(x, host):
@@ -1728,7 +1738,8 @@ def as_list(x, host):
     if isinstance(x, list):
         return x
     if isinstance(x, dict) and x:
-        LAST_ERR[host] = str(x.get("message") or x.get("error") or x)[:120]
+        msg = str(x.get("message") or x.get("error") or "unexpected response")
+        LAST_ERR[host] = re.sub(r"[A-Za-z0-9+/=_-]{20,}", "[hidden]", msg)[:120]
     return []
 
 
@@ -1822,7 +1833,7 @@ def check_nfl():
 
 
 def check_cfbd():
-    key = os.environ.get("CFBD_API_KEY")
+    key = (os.environ.get("CFBD_API_KEY") or "").strip() or None
     if not key:
         summary_add("cfb", "CollegeFootballData", 0, 0, "no API key in this session")
         return
@@ -1887,7 +1898,7 @@ def check_cfbd():
 
 
 def check_cbbd():
-    key = os.environ.get("CFBD_API_KEY") or os.environ.get("CBBD_API_KEY")
+    key = ((os.environ.get("CFBD_API_KEY") or os.environ.get("CBBD_API_KEY") or "").strip()) or None
     if not key:
         summary_add("cbb", "CollegeBasketballData", 0, 0, "no API key in this session")
         return
@@ -1921,7 +1932,7 @@ ODDS_SPORT = {"nfl": "americanfootball_nfl", "nba": "basketball_nba", "cbb": "ba
 
 
 def check_odds():
-    key = os.environ.get("ODDS_API_KEY")
+    key = (os.environ.get("ODDS_API_KEY") or "").strip() or None
     if not key:
         for lg in ODDS_SPORT:
             summary_add(lg, "The Odds API", 0, 0, "no API key in this session")
