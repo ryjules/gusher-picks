@@ -1,0 +1,47 @@
+name: Refresh picks
+
+on:
+  schedule:
+    # GitHub runs schedules in UTC. 12:40 and 20:40 UTC are 8:40 AM and 4:40 PM Eastern
+    # during daylight time (7:40 AM and 3:40 PM in winter).
+    - cron: "40 12 * * *"
+    - cron: "40 20 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install numpy==2.1.3 tzdata==2024.2
+
+      - name: Build the site
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          mkdir -p cache docs/data
+          python build/fetch.py cache games.json docs/data/modelpicks.json docs/data/modelpicks.json
+          python build/inject.py build/board.template.html games.json docs/index.html
+
+      - name: Publish
+        run: |
+          git config user.name "gushers-picks-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git diff --cached --quiet || git commit -m "Refresh picks $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push

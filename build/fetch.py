@@ -1,0 +1,1902 @@
+"""Pull ESPN data for this week's FBS + NFL slates and build the matchup board's data file.
+
+Usage: python3 -I fetch.py <cache_dir> <out_json>
+"""
+import json, math, os, re, sys, time, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+import numpy as np
+
+CACHE, OUT = sys.argv[1], sys.argv[2]
+os.makedirs(CACHE, exist_ok=True)
+BASE = "https://site.api.espn.com/apis/site/v2/sports/football"
+ET = ZoneInfo("America/New_York")
+PASS_TYPES = {"Pass Reception", "Passing Touchdown", "Pass Incompletion", "Sack", "Interception", "Pass Interception Return",
+              "Interception Return Touchdown", "Pass"}
+RUSH_TYPES = {"Rush", "Rushing Touchdown"}
+# NFL play-by-play uses older team codes in penalty descriptions.
+PBP_ALIASES = {"ARZ": "ARI", "BLT": "BAL", "CLV": "CLE", "HST": "HOU", "SL": "LAR", "LA": "LAR"}
+TO_TYPES = {"Interception", "Pass Interception Return", "Interception Return Touchdown", "Fumble Recovery (Opponent)",
+            "Fumble Return Touchdown", "Sack Fumble Recovery (Opponent)"}
+
+
+def get(url, cache_name=None, retries=4):
+    path = os.path.join(CACHE, cache_name) if cache_name else None
+    if path and os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    for i in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                data = json.load(r)
+            if path:
+                with open(path, "w") as f:
+                    json.dump(data, f)
+            return data
+        except Exception as e:  # network hiccup: back off and retry (longer when rate-limited)
+            if i == retries - 1:
+                print("FAIL", url, e, file=sys.stderr)
+                return None
+            time.sleep((5 if "429" in str(e) else 1) * 2 ** i)
+
+
+def num(s, default=0.0):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_summary(d, lg):
+    """Reduce one completed game's summary to a record per team."""
+    comp = d["header"]["competitions"][0]
+    teams = {}
+    for c in comp["competitors"]:
+        ls = [num(x.get("displayValue")) for x in (c.get("linescores") or [])]
+        teams[c["team"]["id"]] = {"id": c["team"]["id"], "abbr": c["team"].get("abbreviation", "?"), "ha": c["homeAway"],
+                                  "pts": num(c.get("score")), "h1": sum(ls[:2]) if ls else None}
+    ids = list(teams)
+    if len(ids) != 2:
+        return None
+    for t in d.get("boxscore", {}).get("teams", []):
+        rec = teams.get(t["team"]["id"])
+        if rec is None:
+            continue
+        st = {s["name"]: s.get("displayValue") for s in t.get("statistics", [])}
+        rec["passY"] = num(st.get("netPassingYards"))
+        rec["rushY"] = num(st.get("rushingYards"))
+        ca = (st.get("completionAttempts") or "0/0").replace("-", "/").split("/")
+        rec["passAtt"] = num(ca[1] if len(ca) > 1 else 0)
+        rec["rushAtt"] = num(st.get("rushingAttempts"))
+        td = (st.get("thirdDownEff") or "0-0").split("-")
+        rec["d3c"], rec["d3a"] = num(td[0]), num(td[1] if len(td) > 1 else 0)
+        rec["to"] = num(st.get("turnovers"))
+        pen = (st.get("totalPenaltiesYards") or "0-0").split("-")
+        rec["penY"] = num(pen[1] if len(pen) > 1 else 0)
+        if st.get("sacksYardsLost"):
+            rec["sacksTaken"] = num(st["sacksYardsLost"].split("-")[0])
+    for t in d.get("boxscore", {}).get("players", []):
+        rec = teams.get(t["team"]["id"])
+        if rec is None:
+            continue
+        for cat in t.get("statistics", []):
+            labels = cat.get("labels") or []
+            tot = cat.get("totals") or []
+            if not tot:
+                tot = [sum(num(a["stats"][i]) for a in cat.get("athletes", []) if i < len(a.get("stats", [])))
+                       for i in range(len(labels))]
+            vals = dict(zip(labels, tot))
+            if cat["name"] == "passing":
+                rec["passTD"] = num(vals.get("TD"))
+            elif cat["name"] == "rushing":
+                rec["rushTD"] = num(vals.get("TD"))
+            elif cat["name"] == "defensive":
+                rec["sacks"] = num(vals.get("SACKS"))
+    if any("passY" not in teams[i] for i in ids):
+        return None
+    if lg == "nfl":
+        for t in d.get("boxscore", {}).get("players", []):
+            rec = teams.get(t["team"]["id"])
+            if rec is None:
+                continue
+            pl = rec.setdefault("players", {})
+            for cat in t.get("statistics", []):
+                labels = cat.get("labels") or []
+                for a in cat.get("athletes", []):
+                    ath = a.get("athlete") or {}
+                    if not ath.get("id"):
+                        continue
+                    v = dict(zip(labels, a.get("stats", [])))
+                    p = pl.setdefault(ath["id"], {"name": ath.get("shortName") or ath.get("displayName"),
+                                                  "full": ath.get("displayName")})
+                    if cat["name"] == "passing":
+                        p["passYds"] = num(v.get("YDS")); p["passTD"] = num(v.get("TD"))
+                        p["passAtt"] = num((v.get("C/ATT") or "0/0").split("/")[-1])
+                    elif cat["name"] == "rushing":
+                        p["rushYds"] = num(v.get("YDS")); p["rushTD"] = num(v.get("TD")); p["car"] = num(v.get("CAR"))
+                    elif cat["name"] == "receiving":
+                        p["recYds"] = num(v.get("YDS")); p["recTD"] = num(v.get("TD")); p["rec"] = num(v.get("REC"))
+                    elif cat["name"] == "defensive":
+                        p["tackles"] = num(v.get("TOT")); p["sacks"] = num(v.get("SACKS"))
+                    elif cat["name"] == "kicking":
+                        p["fg"] = num((v.get("FG") or "0/0").split("/")[0])
+    # Play-by-play: first-half splits, plus full-game sacks (box-score sack totals are unreliable).
+    names = {}
+    for c in comp["competitors"]:
+        t = c["team"]
+        names[t["id"]] = {re.sub(r"[^A-Z&]", "", x.upper()) for x in [t.get("abbreviation"), t.get("location"), t.get("name"),
+                          t.get("nickname"), t.get("shortDisplayName"), t.get("displayName")] if x}
+        # Initials as play-by-play writers use them: Wake Forest -> WF/WFU, Missouri -> MU, Maryland -> UMD.
+        ini = "".join(w[0] for w in re.findall(r"[A-Za-z]+", t.get("location") or "")).upper()
+        ab = (t.get("abbreviation") or "").upper()
+        names[t["id"]] |= {x for x in [ini, ini + "U", "U" + ini, "U" + ab] if len(x) >= 2}
+
+    def who(token):
+        """Match the team token in a penalty description ("UNC", "Akron", "LU") to a team id."""
+        tok = PBP_ALIASES.get(token.upper(), token.upper())
+        hits = [i for i in ids if tok in names.get(i, ())]
+        if not hits:
+            hits = [i for i in ids if len(tok) >= 3 and any(n.startswith(tok) or (len(tok) >= 4 and tok in n) for n in names.get(i, ()))]
+        return hits[0] if len(hits) == 1 else None
+    h1 = {i: dict(passY=0.0, rushY=0.0, passTD=0, rushTD=0, sacks=0, plays=0, d3c=0, d3a=0, to=0, penY=0.0) for i in ids}
+    full_plays = {i: 0 for i in ids}
+    full_sacks = {i: 0 for i in ids}
+    have_pbp = False
+    for drive in d.get("drives", {}).get("previous", []):
+        off = (drive.get("team") or {}).get("id")
+        plays = drive.get("plays", [])
+        for n, p in enumerate(plays):
+            have_pbp = True
+            ty = (p.get("type") or {}).get("text", "")
+            per = (p.get("period") or {}).get("number", 0)
+            text = p.get("text") or ""
+            if per <= 2 and "PENALTY" in text.upper() and not re.search(r"declined|offsetting", text, re.I):
+                for ab, yds in re.findall(r"PENALTY (?:on )?([A-Za-z&]+)[\s-].*?(\d+) yards?", text, re.I):
+                    tid = who(ab)
+                    if tid:
+                        h1[tid]["penY"] += float(yds)
+            if off not in h1:
+                continue
+            is_pass, is_rush = ty in PASS_TYPES, ty in RUSH_TYPES
+            if is_pass or is_rush:
+                full_plays[off] += 1
+            if ty.startswith("Sack"):
+                full_sacks[off] += 1
+            if per > 2:
+                continue
+            o = h1[off]
+            y = num(p.get("statYardage"))
+            if is_pass or is_rush:
+                o["plays"] += 1
+                # College stats count sack yardage as rushing; the NFL counts it against passing.
+                if is_rush or (ty.startswith("Sack") and lg == "cfb"):
+                    o["rushY"] += y
+                else:
+                    o["passY"] += y
+                start = p.get("start") or {}
+                if start.get("down") == 3:
+                    o["d3a"] += 1
+                    nxt = next((q for q in plays[n + 1:] if (q.get("start") or {}).get("down")), None)
+                    if "Touchdown" in ty or (nxt and nxt["start"].get("down") == 1
+                                             and (nxt["start"].get("team") or {}).get("id") == (start.get("team") or {}).get("id")):
+                        o["d3c"] += 1
+            if ty == "Passing Touchdown":
+                o["passTD"] += 1
+            elif ty == "Rushing Touchdown":
+                o["rushTD"] += 1
+            if ty.startswith("Sack"):
+                o["sacks"] += 1  # sacks allowed by the offense
+            if ty in TO_TYPES:
+                o["to"] += 1
+    for i in ids:
+        rec, opp = teams[i], teams[ids[1] if i == ids[0] else ids[0]]
+        rec["plays"] = full_plays[i] if have_pbp and full_plays[i] else rec["passAtt"] + rec["rushAtt"]
+        rec.setdefault("passTD", 0.0); rec.setdefault("rushTD", 0.0); rec.setdefault("sacks", 0.0)
+        if have_pbp:
+            rec["sacks"] = float(full_sacks[ids[1] if i == ids[0] else ids[0]])  # sacks made = opponent's sacks taken
+        if "sacksTaken" in opp:
+            rec["sacks"] = opp["sacksTaken"]
+        rec["h1x"] = h1[i] if have_pbp else None
+    return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams, "lg": lg}
+
+
+def scoreboard(lg, week):
+    q = f"groups=80&limit=400&week={week}&seasontype=2" if lg == "college-football" else f"week={week}&seasontype=2"
+    return get(f"{BASE}/{lg}/scoreboard?{q}", f"sb_{lg}_{week}.json" if week < CUR[lg] else None)
+
+
+def avg(xs):
+    xs = [x for x in xs if x is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
+# --- per-team stat lines -------------------------------------------------------
+# Each row: (label, key, higher_is_better). Offense/defense values come from the team's own perspective.
+OFF = [("PPG", "pts", True), ("Pass YPG", "passY", True), ("Pass TD/G", "passTD", True), ("Rush YPG", "rushY", True),
+       ("Rush TD/G", "rushTD", True), ("Sacks Allow/G", "sacksA", False)]
+DEF = [("PPG/A", "o_pts", False), ("PassYPG/A", "o_passY", False), ("Pass TD/A", "o_passTD", False),
+       ("RushYPG/A", "o_rushY", False), ("Rush TD/A", "o_rushTD", False), ("Sacks/G", "sacks", True)]
+SIT = [("Off 3rd %", "d3pct", True), ("Def 3rd %", "o_d3pct", False), ("TO Margin", "toM", True),
+       ("Penalties", "penY", False), ("Pace", "plays", True)]
+
+
+def game_line(g, tid):
+    """Flatten a game into full-game and first-half values from one team's perspective."""
+    ids = list(g["teams"])
+    me, op = g["teams"][tid], g["teams"][ids[1] if ids[0] == tid else ids[0]]
+    full = {"pts": me["pts"], "passY": me["passY"], "passTD": me["passTD"], "rushY": me["rushY"], "rushTD": me["rushTD"],
+            "sacksA": op["sacks"], "o_pts": op["pts"], "o_passY": op["passY"], "o_passTD": op["passTD"],
+            "o_rushY": op["rushY"], "o_rushTD": op["rushTD"], "sacks": me["sacks"],
+            "d3c": me["d3c"], "d3a": me["d3a"], "o_d3c": op["d3c"], "o_d3a": op["d3a"],
+            "toM": op["to"] - me["to"], "penY": me["penY"], "plays": me["plays"]}
+    half = None
+    if me.get("h1x") and op.get("h1x"):
+        a, b = me["h1x"], op["h1x"]
+        half = {"pts": me["h1"], "passY": a["passY"], "passTD": a["passTD"], "rushY": a["rushY"], "rushTD": a["rushTD"],
+                "sacksA": a["sacks"], "o_pts": op["h1"], "o_passY": b["passY"], "o_passTD": b["passTD"],
+                "o_rushY": b["rushY"], "o_rushTD": b["rushTD"], "sacks": b["sacks"],
+                "d3c": a["d3c"], "d3a": a["d3a"], "o_d3c": b["d3c"], "o_d3a": b["d3a"],
+                "toM": b["to"] - a["to"],
+                # Zero matched first-half penalty yards in a heavily penalized game means the play-by-play
+                # names the team in a way we couldn't match: leave that game out rather than count a zero.
+                "penY": None if a["penY"] == 0 and me["penY"] >= 30 else a["penY"], "plays": a["plays"]}
+    return full, half, me["ha"], g["neutral"]
+
+
+def summarize(lines):
+    """Average a list of per-game dicts; 3rd-down % is pooled (conversions / attempts)."""
+    if not lines:
+        return {}
+    out = {}
+    for k in ["pts", "passY", "passTD", "rushY", "rushTD", "sacksA", "o_pts", "o_passY", "o_passTD", "o_rushY",
+              "o_rushTD", "sacks", "toM", "penY", "plays"]:
+        out[k] = avg([l.get(k) for l in lines])
+    a, oa = sum(l["d3a"] for l in lines), sum(l["o_d3a"] for l in lines)
+    out["d3pct"] = 100 * sum(l["d3c"] for l in lines) / a if a else None
+    out["o_d3pct"] = 100 * sum(l["o_d3c"] for l in lines) / oa if oa else None
+    return out
+
+
+def rank_map(values, higher_better):
+    """values: {team_id: value}. Returns {team_id: rank} with ties sharing the best rank."""
+    vals = {k: v for k, v in values.items() if v is not None}
+    order = sorted(vals.values(), reverse=higher_better)
+    return {k: order.index(v) + 1 for k, v in vals.items()}
+
+
+HFA = {"cfb": 2.5, "nfl": 1.5, "nba": 2.5, "cbb": 3.5}  # home edge in points (standard values)
+
+
+def fit_ratings(games, lg, universe=None):
+    """Ridge least squares: points = mu + off[team] - def[opp], with a fixed home edge.
+
+    Opponents outside the universe (FCS teams on an FBS schedule) share one pooled rating,
+    so a cupcake win counts as beating a weak team instead of inflating home-field advantage.
+    """
+    key = lambda t: t if universe is None or t in universe else "_other"
+    teams = sorted({key(t) for g in games for t in g["teams"]})
+    idx = {t: i for i, t in enumerate(teams)}
+    n = len(teams)
+    hfa = HFA.get(lg, 2.0)
+    rows, y = [], []
+    for g in games:
+        ids = list(g["teams"])
+        for a, b in [(ids[0], ids[1]), (ids[1], ids[0])]:
+            r = np.zeros(2 * n + 1)
+            r[0] = 1
+            r[1 + idx[key(a)]] = 1
+            r[1 + n + idx[key(b)]] = -1
+            home = 0 if g["neutral"] else (0.5 if g["teams"][a]["ha"] == "home" else -0.5)
+            rows.append(r); y.append(g["teams"][a]["pts"] - home * hfa)
+    X, y = np.array(rows), np.array(y)
+    lam = {"nfl": 3.0, "cfb": 2.0, "nba": 10.0, "cbb": 4.0}.get(lg, 2.0)
+    reg = np.full(2 * n + 1, lam); reg[0] = 1e-6
+    beta = np.linalg.solve(X.T @ X + np.diag(reg), X.T @ y)
+    rat = {t: (beta[1 + i], beta[1 + n + i]) for t, i in idx.items()}
+    return beta[0], hfa, {t: rat[key(t)] for g in games for t in g["teams"]}
+
+
+TRUST_K = {"cfb": 4, "nfl": 6, "nba": 25, "cbb": 10}  # games of evidence the model needs to count half
+
+
+def trust(n, key):
+    """Share of weight the model gets against the betting market, growing with games played."""
+    return n / (n + TRUST_K.get(key, 6))
+
+
+def american(ml):
+    return None if ml in (None, 0) else (1 + ml / 100 if ml > 0 else 1 + 100 / -ml)
+
+
+def phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+def fmt_ml(v):
+    return "—" if v is None else (f"+{int(v)}" if v > 0 else str(int(v)))
+
+
+def fmt_spread(v):
+    if v is None:
+        return "—"
+    if v == 0:
+        return "PK"
+    return f"+{v:g}" if v > 0 else f"{v:g}"
+
+
+def conf(score):
+    return round(min(10.0, max(0.0, score)), 1)
+
+
+def call(score, text):
+    return text if score >= 4 else "Pass"
+
+
+def label(score, text):
+    return ("Play " if score >= 7 else "Lean ") + text if score >= 4 else "Pass"
+
+
+# --- NFL player props ------------------------------------------------------------
+# key: (label, value from a player game, team stat the opponent allows, higher allowed = easier matchup,
+#       minimum per-game average to list the player)
+PROP_CATS = [
+    ("Passing", lambda p: p.get("passYds"), "o_passY", True, 120, lambda p: p.get("passAtt", 0) >= 10),
+    ("Rushing", lambda p: p.get("rushYds"), "o_rushY", True, 25, lambda p: p.get("car", 0) >= 4),
+    ("Receiving", lambda p: p.get("recYds"), "o_passY", True, 25, lambda p: "rec" in p),
+    ("Receptions", lambda p: p.get("rec"), "o_passY", True, 2.5, lambda p: "rec" in p),
+    ("Rush + Rec", lambda p: (p.get("rushYds", 0) + p.get("recYds", 0)) if ("rushYds" in p or "recYds" in p) else None,
+     "o_totY", True, 45, lambda p: p.get("car", 0) >= 4 or p.get("rec", 0) >= 2),
+    ("Touchdowns", lambda p: (p.get("rushTD", 0) + p.get("recTD", 0)) if ("rushYds" in p or "recYds" in p) else None,
+     "o_td", True, 0.25, lambda p: p.get("car", 0) >= 3 or p.get("rec", 0) >= 2),
+    ("Sacks", lambda p: p.get("sacks") if "tackles" in p else None, "sacksA", True, 0.3, lambda p: "tackles" in p),
+    ("Tackles + Ast", lambda p: p.get("tackles"), "plays", True, 4, lambda p: "tackles" in p),
+    ("FG Made", lambda p: p.get("fg"), "o_pts", False, 1.0, lambda p: "fg" in p),
+]
+# ESPN prop market for each category (DraftKings lines via ESPN's odds feed).
+PROP_MARKETS = {
+    "Passing": "Total Passing Yards (incl. overtime)", "Rushing": "Total Rushing Yards (incl. overtime)",
+    "Receiving": "Total Receiving Yards (incl. overtime)", "Receptions": "Total Receptions (incl. overtime)",
+    "Rush + Rec": "Total Rushing Plus Receiving Yards (incl. overtime)", "Touchdowns": "Anytime Touchdown Scorer",
+    "Sacks": "Total Sacks (incl. overtime)", "Tackles + Ast": "Total Tackles Plus Assists (incl. overtime)",
+    "FG Made": "Total Field Goals Made (incl. overtime)",
+}
+COUNT_CATS = {"Touchdowns", "Sacks"}  # modeled as Poisson counts
+SD_FLOOR = {"Passing": 35, "Rushing": 15, "Receiving": 15, "Receptions": 1.2, "Rush + Rec": 18, "Tackles + Ast": 1.5,
+            "FG Made": 0.8}
+CORE = "https://sports.core.api.espn.com/v2/sports/football/leagues"
+
+
+def prop_lines(lg, eid):
+    """{(market name, athlete id): line} for one game, from the first sportsbook ESPN lists."""
+    odds = get(f"{CORE}/{lg}/events/{eid}/competitions/{eid}/odds?lang=en&region=us")
+    items = (odds or {}).get("items") or []
+    if not items or "propBets" not in items[0]:
+        return {}
+    url = items[0]["propBets"]["$ref"].replace("http://", "https://")
+    out, page = {}, 1
+    while True:
+        d = get(f"{url}&limit=1000&page={page}")
+        for it in (d or {}).get("items", []):
+            name = (it.get("type") or {}).get("name")
+            aid = ((it.get("athlete") or {}).get("$ref") or "").split("/athletes/")[-1].split("?")[0]
+            if not aid or name not in PROP_MARKETS.values():
+                continue
+            tgt = ((it.get("current") or {}).get("target") or {}).get("value")
+            opn = ((it.get("open") or {}).get("target") or {}).get("value")
+            out[(name, aid)] = (0.5, None) if name == "Anytime Touchdown Scorer" else (tgt, opn)
+        if not d or page >= d.get("pageCount", 1):
+            break
+        page += 1
+    return out
+
+
+def prop_score(cat, proj, line, hist, count_cats=COUNT_CATS, sd_floor=SD_FLOOR):
+    """Blend the model's over probability with the last-5 hit rate; 0 = coin flip, 10 = strongest."""
+    if line is None:
+        return None, None, None
+    if cat in count_cats:
+        lam = max(proj, 0.01)
+        k = math.floor(line)  # P(X > line) for a Poisson count
+        p_over = 1 - sum(math.exp(-lam) * lam ** i / math.factorial(i) for i in range(k + 1))
+    else:
+        m = sum(hist) / len(hist)
+        sd = math.sqrt(sum((x - m) ** 2 for x in hist) / max(1, len(hist) - 1))
+        sd = max(sd, sd_floor.get(cat, 1.0), 0.15 * abs(proj))
+        p_over = 1 - phi((line - proj) / sd)
+    l5 = hist[-5:]
+    hit = sum(1 for x in l5 if x > line) / len(l5)
+    p = 0.7 * p_over + 0.3 * hit
+    if cat == "Touchdowns":  # anytime TD props are effectively "yes" only
+        return round(min(10.0, max(0.0, p - 0.5) * 20), 1), "Over", round(p, 3)
+    side = "Over" if p >= 0.5 else "Under"
+    return round(min(10.0, abs(p - 0.5) * 20), 1), side, round(p if p >= 0.5 else 1 - p, 3)
+
+
+ZERO_FILL = {"Rushing", "Receiving", "Receptions", "Rush + Rec", "Touchdowns"}
+OUT_STATUSES = {"out", "doubtful", "injured reserve", "suspended", "physically unable to perform"}
+
+
+def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
+    """Rows for one team's players in one upcoming game."""
+    tid = team["id"]
+    gl = per_team.get(tid, [])
+    if not gl:
+        return []
+    latest = gl[-1]["teams"][tid].get("players", {})
+    n = len(agg)
+    rows = []
+    for label, val, opp_key, easy_high, min_avg, active in PROP_CATS:
+        allowed = {t: (a["season"].get("o_passY", 0) + a["season"].get("o_rushY", 0)) if opp_key == "o_totY" else
+                   (a["season"].get("o_passTD", 0) + a["season"].get("o_rushTD", 0)) if opp_key == "o_td" else
+                   a["season"].get(opp_key) for t, a in agg.items()}
+        # Rank 1 = the toughest matchup (allows the least), as on the video's board.
+        rk = rank_map(allowed, not easy_high)
+        orank = rk.get(opp_id)
+        league = sum(v for v in allowed.values() if v is not None) / max(1, len([v for v in allowed.values() if v is not None]))
+        factor = min(1.2, max(0.8, (allowed.get(opp_id) or league) / league)) if league else 1.0
+        for pid, p in latest.items():
+            if pid in injured or not active(p):
+                continue
+            hist = []
+            for g in gl:
+                q = g["teams"][tid].get("players", {}).get(pid)
+                v = val(q) if q else None
+                # ESPN leaves a player out of a stat table when he records nothing in it; if he shows up
+                # elsewhere in the box score he played, so count the skill-position stats as zero.
+                if v is None and q and label in ZERO_FILL:
+                    v = 0.0
+                if v is not None:
+                    hist.append(v)
+            if len(hist) < 3:
+                continue
+            l5 = hist[-5:]
+            avg5, season = sum(l5) / len(l5), sum(hist) / len(hist)
+            if season < min_avg:
+                continue
+            proj = (0.5 * avg5 + 0.5 * season) * factor
+            line, opn = lines.get((PROP_MARKETS[label], pid)) or (None, None)
+            score, side, prob = prop_score(label, proj, line, hist)
+            rows.append({"pid": pid, "line": line, "open": opn, "score": score, "side": side, "prob": prob,
+                         "hits": sum(1 for x in l5 if line is not None and x > line) if line is not None else None,"cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
+                         "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home",
+                         "oppRank": orank, "matchup": round(10 * (orank - 1) / (n - 1), 1) if orank else None,
+                         "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
+                         "games": len(hist), "proj": round(proj, 1), "game": game})
+    return rows
+
+
+# --- market data: opening lines (DraftKings via ESPN) and Kalshi prices ------------
+KALSHI = "https://api.elections.kalshi.com/trade-api/v2"
+CORE_PATH = {"cfb": "football/leagues/college-football", "nfl": "football/leagues/nfl",
+             "nba": "basketball/leagues/nba", "cbb": "basketball/leagues/mens-college-basketball"}
+KSERIES = {
+    "nfl": ("KXNFL", {"Passing": "KXNFLPASSYDS", "Rushing": "KXNFLRSHYDS", "Receiving": "KXNFLRECYDS", "Receptions": "KXNFLREC",
+                      "Rush + Rec": "KXNFLRRYDS", "Touchdowns": "KXNFLTD", "Sacks": "KXNFLSACK", "FG Made": "KXNFLFG"}),
+    "cfb": ("KXNCAAF", {}),
+    "nba": ("KXNBA", {"Points": "KXNBAPTS", "Rebounds": "KXNBAREB", "Assists": "KXNBAAST", "PRA": "KXNBAPRA", "Pts+Reb": "KXNBAPR",
+                      "Pts+Ast": "KXNBAPA", "Reb+Ast": "KXNBARA", "3PT Made": "KXNBA3PT", "Blk+Stl": "KXNBASTOCKS"}),
+    "cbb": ("KXNCAAMB", {}),
+}
+
+
+def norm(x):
+    x = re.sub(r"\b(jr|sr|ii|iii|iv)\b\.?", "", (x or "").lower())
+    return re.sub(r"[^a-z0-9]", "", x)
+
+
+def kalshi_paged(path, key):
+    out, cursor = [], ""
+    for _ in range(20):
+        time.sleep(0.4)  # stay under Kalshi's public rate limit
+        d = get(f"{KALSHI}/{path}&limit={1000 if key == 'markets' else 200}" + (f"&cursor={cursor}" if cursor else ""))
+        if not d:
+            break
+        out += d.get(key) or []
+        cursor = d.get("cursor")
+        if not cursor:
+            break
+    return out
+
+
+def kmid(m):
+    """Midpoint of the yes bid/ask, or None when the market is too thin to trust."""
+    try:
+        b, a = float(m.get("yes_bid_dollars") or 0), float(m.get("yes_ask_dollars") or 0)
+    except ValueError:
+        return None
+    if a <= 0 or a - b > 0.2:
+        return None
+    return (a + b) / 2
+
+
+def ladder_p(markets, line):
+    """P(stat > line) read off a Kalshi strike ladder ("X+" markets), interpolating between rungs."""
+    pts = sorted((m["floor_strike"], kmid(m)) for m in markets if m.get("floor_strike") is not None and kmid(m) is not None)
+    if not pts or line is None:
+        return None
+    clean, lo = [], 1.0  # probabilities must fall as the strike rises
+    for k, p in pts:
+        lo = min(lo, p); clean.append((k, lo))
+    if line < clean[0][0] - 1 or line > clean[-1][0] + 1:
+        return None
+    if line <= clean[0][0]:
+        return clean[0][1]
+    if line >= clean[-1][0]:
+        return clean[-1][1]
+    for (k1, p1), (k2, p2) in zip(clean, clean[1:]):
+        if k1 <= line <= k2:
+            return p1 + (p2 - p1) * (line - k1) / (k2 - k1) if k2 > k1 else p1
+
+
+def fair(p):
+    if p is None or p <= 0.01 or p >= 0.99:
+        return None
+    return fmt_ml(round(-100 * p / (1 - p)) if p >= 0.5 else round(100 * (1 - p) / p))
+
+
+def enrich(key, slate):
+    """Attach opening lines (DraftKings via ESPN) and Kalshi fair prices to games and props."""
+    for g in slate:
+        it = ((get(f"https://sports.core.api.espn.com/v2/sports/{CORE_PATH[key]}/events/{g['id']}/competitions/{g['id']}/odds?lang=en&region=us") or {})
+              .get("items") or [{}])[0]
+        am = lambda d, *ks: next((v for v in [_dig(d, *ks)] if v not in (None, "")), None)
+        g["lines"]["open"] = {
+            "awaySpread": am(it, "awayTeamOdds", "open", "pointSpread", "american"), "homeSpread": am(it, "homeTeamOdds", "open", "pointSpread", "american"),
+            "awayML": am(it, "awayTeamOdds", "open", "moneyLine", "american"), "homeML": am(it, "homeTeamOdds", "open", "moneyLine", "american"),
+            "total": am(it, "open", "total", "american")}
+    prefix, prop_series = KSERIES[key]
+    events = kalshi_paged(f"events?series_ticker={prefix}GAME&status=open", "events")
+    if not events:
+        for g in slate:
+            for pr in g.get("props") or []:
+                rescore_prop(pr)
+        return
+    series = {"GAME": f"{prefix}GAME", "SPREAD": f"{prefix}SPREAD", "TOTAL": f"{prefix}TOTAL", **prop_series}
+    by = {}
+    for name, tick in series.items():
+        for m in kalshi_paged(f"markets?series_ticker={tick}&status=open", "markets"):
+            suf = m["event_ticker"].split("-", 1)[-1]
+            by.setdefault(name, {}).setdefault(suf, []).append(m)
+
+    def names(t):
+        return {norm(x) for x in [t.get("loc"), t.get("name"), t.get("full"), t.get("abbr")] if x}
+
+    def same(label, t):
+        n = norm(label)
+        return bool(n) and any(n == x or (len(n) > 3 and (x.startswith(n) or n.startswith(x))) for x in names(t))
+
+    matched = 0
+    for g in slate:
+        if g.get("state") != "pre":
+            continue
+        now = datetime.now(ET)
+        when = datetime.strptime(g["date"].split(" · ")[0] + f" {now.year}", "%b %d %Y")
+        if when.month < 6 and now.month > 8:  # a January game seen from December
+            when = when.replace(year=now.year + 1)
+        codes = {(when + timedelta(days=d)).strftime("%y%b%d").upper() for d in (-1, 0, 1)}
+        ev = None
+        for e in events:
+            suf = e["event_ticker"].split("-", 1)[-1]
+            if suf[:7] not in codes:
+                continue
+            a, _, b = (e.get("title") or "").partition(" vs ")
+            if (same(a, g["away"]) and same(b, g["home"])) or (same(a, g["home"]) and same(b, g["away"])):
+                ev = suf
+                break
+        if not ev:
+            continue
+        matched += 1
+        k = {}
+        side_of = lambda label: "away" if same(label, g["away"]) else "home" if same(label, g["home"]) else None
+        ml = {}
+        for m in by.get("GAME", {}).get(ev, []):
+            sd, p = side_of((m.get("title") or "").replace(" wins", "")), kmid(m)
+            if sd and p is not None:
+                ml[sd] = p
+        if len(ml) == 2 and sum(ml.values()) > 0:
+            tot = sum(ml.values())
+            k["ml"] = {sd: {"p": round(p / tot, 3), "odds": fair(p / tot)} for sd, p in ml.items()}
+        ladders = {}
+        for m in by.get("SPREAD", {}).get(ev, []):
+            sd = side_of((m.get("title") or "").split(" wins by")[0])
+            if sd:
+                ladders.setdefault(sd, []).append(m)
+        hs = g["lines"].get("spreadNum")
+        if hs is not None and ladders:
+            # home covers when (home - away) > -hs
+            need = -hs
+            p_home = ladder_p(ladders.get("home", []), need) if need >= 0 else (
+                1 - ladder_p(ladders.get("away", []), -need) if ladder_p(ladders.get("away", []), -need) is not None else None)
+            if p_home is not None:
+                k["spread"] = {"home": {"p": round(p_home, 3), "odds": fair(p_home)}, "away": {"p": round(1 - p_home, 3), "odds": fair(1 - p_home)}}
+        tl = g["lines"].get("totalNum")
+        po = ladder_p(by.get("TOTAL", {}).get(ev, []), tl)
+        if po is not None:
+            k["total"] = {"over": {"p": round(po, 3), "odds": fair(po)}, "under": {"p": round(1 - po, 3), "odds": fair(1 - po)}}
+        if k:
+            g["kalshi"] = k
+        # player props: ladder for the player at DraftKings' line
+        for pr in g.get("props") or []:
+            ms = [m for m in by.get(pr["cat"], {}).get(ev, []) if norm((m.get("title") or "").split(":")[0]) == norm(pr.get("full") or pr["player"])]
+            if not ms or pr.get("line") is None:
+                continue
+            po = ladder_p(ms, pr["line"])
+            if po is None:
+                continue
+            ps = po if pr.get("side") != "Under" else 1 - po
+            pr["kalshiP"], pr["kalshiOdds"] = round(ps, 3), fair(ps)
+    print(key, "kalshi matched", matched, "of", len(slate), file=sys.stderr)
+    for g in slate:
+        for pr in g.get("props") or []:
+            rescore_prop(pr)
+
+
+def rescore_prop(pr):
+    """Final prop score: how far a market-anchored blend beats the market price.
+
+    The market price is Kalshi's when there is one, otherwise a coin flip at DraftKings' line
+    (anytime TDs without Kalshi stay unscored: their fair price varies too much). The model's
+    weight shrinks as the line moves away from the player's recent form, because a line far from
+    form that the market agrees with usually reflects injury or role news the box scores lack.
+    10 means the blend beats the market by 12 percentage points or more.
+    """
+    if pr.get("line") is None or pr.get("prob") is None:
+        return
+    market = pr.get("kalshiP")
+    if market is None:
+        if pr["cat"] == "Touchdowns":
+            pr["score"], pr["edge"] = None, None
+            return
+        market = 0.5
+    form = 0.5 * pr["avg5"] + 0.5 * pr["season"]
+    gap = abs(form - pr["line"]) / max(pr["line"], 1.0)
+    pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns"
+    w = 0.35 * max(0.0, 1 - gap / 0.5)
+    blend = w * pr["prob"] + (1 - w) * market
+    pr["edge"] = round(blend - market, 3)
+    pr["score"] = round(min(10.0, max(0.0, blend - market) * 100 / 1.2), 1)
+
+
+def _dig(d, *ks):
+    for k in ks:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+
+FIN = {}  # league -> espn game id -> final scores (and player box lines for props)
+
+
+def record_finals(key, games):
+    out = FIN.setdefault(key, {})
+    for g in games:
+        side = {r["ha"]: r for r in g["teams"].values()}
+        if "home" not in side or "away" not in side:
+            continue
+        players = {}
+        for r in g["teams"].values():
+            players.update(r.get("players") or {})
+        out[g["id"]] = {"away": side["away"]["pts"], "home": side["home"]["pts"], "players": players}
+
+
+# --- main ----------------------------------------------------------------------
+CUR = {}
+OUT_DATA = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")}
+for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
+    cur = get(f"{BASE}/{lg}/scoreboard" + ("?groups=80&limit=400" if lg == "college-football" else ""))
+    CUR[lg] = cur["week"]["number"]
+    events = {}
+    fbs = set()
+    for w in range(1, CUR[lg] + 1):
+        sb = scoreboard(lg, w) if w < CUR[lg] else cur
+        for e in (sb or {}).get("events", []):
+            events[e["id"]] = e
+            if lg == "college-football":
+                c = e["competitions"][0]
+                # FBS membership: a team listed by the FBS scoreboard with a conference in group 80.
+                for x in c["competitors"]:
+                    fbs.add(x["team"]["id"])
+    done = [eid for eid, e in events.items() if e["status"]["type"].get("completed")]
+    print(lg, "weeks", CUR[lg], "events", len(events), "completed", len(done), file=sys.stderr)
+
+    def load(eid):
+        d = get(f"{BASE}/{lg}/summary?event={eid}", f"sum_{lg}_{eid}.json")
+        return parse_summary(d, key) if d else None
+
+    with ThreadPoolExecutor(16) as ex:
+        games = [g for g in ex.map(load, done) if g]
+    record_finals(key, games)
+    print(lg, "parsed", len(games), file=sys.stderr)
+
+    # FBS universe: teams with 4+ games in the FBS scoreboard (drops FCS teams that appear only as opponents).
+    counts = {}
+    for g in games:
+        for t in g["teams"]:
+            counts[t] = counts.get(t, 0) + 1
+    if lg == "college-football":
+        fbs = {t for t in fbs if counts.get(t, 0) >= 4}
+    else:
+        fbs = set(counts)
+
+    per_team = {t: [] for t in fbs}
+    for g in sorted(games, key=lambda g: g["date"]):
+        for t in g["teams"]:
+            if t in per_team:
+                per_team[t].append(g)
+
+    agg = {}
+    for t, gl in per_team.items():
+        lines = [game_line(g, t) for g in gl]
+        agg[t] = {
+            "season": summarize([l[0] for l in lines]),
+            "home": summarize([l[0] for l in lines if l[2] == "home" and not l[3]]),
+            "away": summarize([l[0] for l in lines if l[2] == "away" and not l[3]]),
+            "half": summarize([l[1] for l in lines if l[1]]) if any(l[1] for l in lines) else {},
+            "last3": summarize([l[0] for l in lines[-3:]]),
+        }
+    ranks = {}
+    for _, k, hb in OFF + DEF + SIT:
+        ranks[k] = rank_map({t: a["last3"].get(k) for t, a in agg.items()}, hb)
+    season_rank = {
+        "off": rank_map({t: a["season"].get("pts") for t, a in agg.items()}, True),
+        "def": rank_map({t: a["season"].get("o_pts") for t, a in agg.items()}, False),
+    }
+    mu, hfa, rat = fit_ratings(games, key, fbs if key == "cfb" else None)
+    season_rank["overall"] = rank_map({t: rat[t][0] + rat[t][1] for t in fbs if t in rat}, True)
+    sigma = 13.5 if key == "nfl" else 15.5
+
+    slate = []
+    for e in sorted(cur["events"], key=lambda e: e["date"]):
+        c = e["competitions"][0]
+        comp = {x["homeAway"]: x for x in c["competitors"]}
+        if "home" not in comp or "away" not in comp:
+            continue
+        summ = get(f"{BASE}/{lg}/summary?event={e['id']}")
+        if not summ:
+            continue
+        gi = summ.get("gameInfo", {})
+        pc = (summ.get("pickcenter") or [{}])[0]
+        venue = gi.get("venue") or c.get("venue") or {}
+        addr = venue.get("address") or {}
+        w = gi.get("weather") or {}
+        if c.get("venue", {}).get("indoor"):
+            weather = "Indoors"
+        elif w:
+            parts = [f"{w['temperature']}°" if w.get("temperature") is not None else None,
+                     f"{w['precipitation']}% Rain" if w.get("precipitation") is not None else None,
+                     f"{w['gust']}mph gusts" if w.get("gust") is not None else None]
+            weather = " · ".join(p for p in parts if p) or "—"
+        else:
+            weather = "—"
+        when = datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET)
+        status = e["status"]["type"]
+
+        def team_block(x):
+            t = x["team"]; tid = t["id"]
+            gl = per_team.get(tid, [])
+            results = []
+            for g in reversed(gl):
+                me = g["teams"][tid]
+                op = next(v for k, v in g["teams"].items() if k != tid)
+                pre = "vs " if g["neutral"] else ("@" if me["ha"] == "away" else "")
+                res = "W" if me["pts"] > op["pts"] else "L" if me["pts"] < op["pts"] else "T"
+                results.append([pre + op["abbr"], f"{int(me['pts'])}-{int(op['pts'])}", res])
+            last5 = results[:5]
+            streak = ""
+            if results:
+                r0 = results[0][2]; n = 0
+                for r in results:
+                    if r[2] != r0:
+                        break
+                    n += 1
+                streak = f"{r0}{n}"
+            rest = None
+            if gl:
+                # Calendar days between games in Eastern time (Sunday to Sunday = 7).
+                day = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).date()
+                rest = (day(e["date"]) - day(gl[-1]["date"])).days
+            rank = (x.get("curatedRank") or {}).get("current")
+            overall = next((r["summary"] for r in x.get("records", []) if r.get("type") == "total"), "")
+            return {"id": tid, "name": t.get("shortDisplayName") or t.get("location"), "full": t.get("displayName"),
+                    "abbr": t.get("abbreviation", "?"), "rank": rank if rank and rank <= 25 else None,
+                    "color": "#" + (t.get("color") or "333333"), "alt": "#" + (t.get("alternateColor") or "ffffff"),
+                    "overall": overall, "streak": streak, "rest": rest, "last5": last5, "ha": x["homeAway"],
+                    "loc": t.get("location")}
+
+        away, home = team_block(comp["away"]), team_block(comp["home"])
+
+        def stat_rows(tid, ha, spec):
+            a = agg.get(tid)
+            if not a:
+                return [[None] * 5 for _ in spec]
+            split = a["home"] if ha == "home" else a["away"]
+            out = []
+            for _, k, _hb in spec:
+                out.append([a["season"].get(k), split.get(k), a["half"].get(k) if a["half"] else None,
+                            a["last3"].get(k), ranks[k].get(tid)])
+            return out
+
+        sections = []
+        for title, spec in [("Offense", OFF), ("Defense", DEF), ("Situational", SIT)]:
+            A = stat_rows(away["id"], "away", spec)
+            H = stat_rows(home["id"], "home", spec)
+            rows = []
+            rnd = lambda xs: [round(v, 2) if isinstance(v, float) else v for v in xs]
+            for (name, _k, _hb), a, h in zip(spec, A, H):
+                # Left: season, split, 1st half, last 3, L3 rank. Right mirrors it: L3 rank, last 3, 1st half, split, season.
+                rows.append([name, rnd(a), rnd(h[::-1])])
+            sections.append({"title": title, "rows": rows})
+
+        spread = pc.get("spread")  # home team's line
+        total = pc.get("overUnder")
+        aml = (pc.get("awayTeamOdds") or {}).get("moneyLine")
+        hml = (pc.get("homeTeamOdds") or {}).get("moneyLine")
+
+        # Model projection.
+        model = None
+        confidence = None
+        ra, rh = rat.get(away["id"]), rat.get(home["id"])
+        if ra and rh:
+            adj = 0 if c.get("neutralSite") else hfa / 2
+            pa = mu - adj + ra[0] - rh[1]
+            ph = mu + adj + rh[0] - ra[1]
+            margin = ph - pa
+            p_home = phi(margin / sigma)
+            model = {"away": round(pa, 1), "home": round(ph, 1), "pHome": round(p_home, 3)}
+            unit = 0.5 if key == "nfl" else 1.0  # points of weighted edge per confidence point
+            # Edges count only as much as the model is trusted with this many games of evidence.
+            w = trust(min(len(per_team.get(away["id"], [])), len(per_team.get(home["id"], []))), key)
+            model["trust"] = round(w, 2)
+            cs = {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
+            if spread is not None:
+                edge = w * (margin + spread)  # >0 means home covers
+                s = conf(abs(edge) / unit)
+                side = f"{home['abbr']} {fmt_spread(spread)}" if edge > 0 else f"{away['abbr']} {fmt_spread(-spread)}"
+                cs["spread"] = [s, label(s, side)]
+                model["spreadEdge"] = round(abs(edge), 1); model["spreadSide"] = side
+            if total is not None:
+                edge = w * ((pa + ph) - total)
+                s = conf(abs(edge) / unit)
+                side = ("Over " if edge > 0 else "Under ") + f"{total:g}"
+                cs["total"] = [s, label(s, side)]
+                model["totalEdge"] = round(abs(edge), 1); model["totalSide"] = side
+            da, dh = american(aml), american(hml)
+            if da and dh:
+                pm = (1 / dh) / (1 / dh + 1 / da)  # market's no-vig home win probability
+                pb = w * p_home + (1 - w) * pm
+                ev_h, ev_a = pb * dh - 1, (1 - pb) * da - 1
+                best, side, ev = (home, hml, ev_h) if ev_h >= ev_a else (away, aml, ev_a)
+                s = conf(max(0, ev) * 100 / 5)
+                if (side or 0) > 500:
+                    s = min(s, 5.0)  # long shots: the model is least reliable here, so cap at a lean
+                cs["moneyline"] = [s, label(s, f"{best['abbr']} {fmt_ml(side)}")]
+                ih, ia = 1 / dh, 1 / da
+                model["mlFair"] = round(ih / (ih + ia), 3)
+                model["mlEV"] = round(ev, 3); model["mlSide"] = f"{best['abbr']} {fmt_ml(side)}"
+            confidence = cs
+
+        props = []
+        if key == "nfl" and status.get("state") == "pre":
+            injured = {(i.get("athlete") or {}).get("id") for tm in summ.get("injuries", []) for i in tm.get("injuries", [])
+                       if (i.get("status") or "").lower() in OUT_STATUSES}
+            lines = prop_lines(lg, e["id"])
+            props = (build_props(e["id"], home["id"], away, home, per_team, agg, injured, lines)
+                     + build_props(e["id"], away["id"], home, away, per_team, agg, injured, lines))
+        score = None
+        if status.get("state") in ("in", "post"):
+            score = {"away": comp["away"].get("score"), "home": comp["home"].get("score"),
+                     "detail": status.get("shortDetail") or status.get("detail")}
+
+        # Final result for grading saved plays (scores, plus NFL player stats for props).
+        final = None
+        if status.get("completed"):
+            fg = parse_summary(summ, key)
+            if fg:
+                final = {"away": num(comp["away"].get("score")), "home": num(comp["home"].get("score"))}
+                if key == "nfl":
+                    final["players"] = {pid: {k: v for k, v in pl.items() if k not in ("name", "full")}
+                                        for t in fg["teams"].values() for pid, pl in t.get("players", {}).items()}
+
+        def rk(table, tid):
+            return table.get(tid)
+
+        slate.append({
+            "id": e["id"], "iso": e["date"], "away": away, "home": home,
+            "date": when.strftime("%b %-d · %-I:%M %p ET"),
+            "location": ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or venue.get("fullName", "—"),
+            "stadium": venue.get("fullName"), "neutral": c.get("neutralSite", False),
+            "weather": weather, "surface": ("Grass" if venue.get("grass") else "Turf") if "grass" in venue else "—",
+            "offRank": [rk(season_rank["off"], away["id"]), rk(season_rank["off"], home["id"])],
+            "defRank": [rk(season_rank["def"], away["id"]), rk(season_rank["def"], home["id"])],
+            "overallRank": [rk(season_rank["overall"], away["id"]), rk(season_rank["overall"], home["id"])],
+            "lines": {"book": (pc.get("provider") or {}).get("name"),
+                      "awaySpread": fmt_spread(-spread) if spread is not None else "—", "awayML": fmt_ml(aml),
+                      "total": f"{total:g}" if total is not None else "—", "homeML": fmt_ml(hml),
+                      "homeSpread": fmt_spread(spread) if spread is not None else "—",
+                      "awaySpreadOdds": fmt_ml((pc.get("awayTeamOdds") or {}).get("spreadOdds")),
+                      "homeSpreadOdds": fmt_ml((pc.get("homeTeamOdds") or {}).get("spreadOdds")),
+                      "overOdds": fmt_ml(pc.get("overOdds")), "underOdds": fmt_ml(pc.get("underOdds")),
+                      "spreadNum": spread, "totalNum": total},
+            "sections": sections, "confidence": confidence, "model": model,
+            "state": status.get("state"), "score": score,
+            "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final,
+        })
+    enrich(key, slate)
+    OUT_DATA[key] = slate
+    OUT_DATA[key + "_meta"] = {"week": CUR[lg], "teams": len(agg), "games": len(games)}
+    print(lg, "slate", len(slate), file=sys.stderr)
+
+# --- basketball (NBA + men's college) -------------------------------------------
+BB = "https://site.api.espn.com/apis/site/v2/sports/basketball"
+BB_PROPS = [  # label, value from a player game, markets, opponent-allowed keys, min season avg
+    ("Points", lambda p: p["pts"], "Total Points", ["pts"], 8),
+    ("Rebounds", lambda p: p["reb"], "Total Rebounds", ["reb"], 3),
+    ("Assists", lambda p: p["ast"], "Total Assists", ["ast"], 2),
+    ("PRA", lambda p: p["pts"] + p["reb"] + p["ast"], "Total Points, Rebounds, and Assists", ["pts", "reb", "ast"], 12),
+    ("Pts+Reb", lambda p: p["pts"] + p["reb"], "Total Points and Rebounds", ["pts", "reb"], 10),
+    ("Pts+Ast", lambda p: p["pts"] + p["ast"], "Total Points and Assists", ["pts", "ast"], 10),
+    ("Reb+Ast", lambda p: p["reb"] + p["ast"], "Total Assists and Rebounds", ["reb", "ast"], 5),
+    ("3PT Made", lambda p: p["tpm"], "Total 3-Point Field Goals", ["tpm"], 0.8),
+    ("Blk+Stl", lambda p: p["stl"] + p["blk"], "Total Steals and Blocks", ["stl", "blk"], 1),
+]
+BB_COUNT = {"3PT Made", "Blk+Stl"}
+BB_FLOOR = {"Points": 4, "Rebounds": 2, "Assists": 1.5, "PRA": 5, "Pts+Reb": 4.5, "Pts+Ast": 4.5, "Reb+Ast": 2.5}
+
+
+def mk(v):
+    a, _, b = (v or "0-0").partition("-")
+    return num(a), num(b)
+
+
+def parse_bb(d):
+    comp = d["header"]["competitions"][0]
+    teams = {}
+    for c in comp["competitors"]:
+        teams[c["team"]["id"]] = {"id": c["team"]["id"], "abbr": c["team"].get("abbreviation", "?"), "ha": c["homeAway"],
+                                  "pts": num(c.get("score"))}
+    if len(teams) != 2:
+        return None
+    for t in d.get("boxscore", {}).get("teams", []):
+        r = teams.get(t["team"]["id"])
+        if r is None:
+            continue
+        st = {x["name"]: x.get("displayValue") for x in t.get("statistics", [])}
+        r["fgm"], r["fga"] = mk(st.get("fieldGoalsMade-fieldGoalsAttempted"))
+        r["tpm"], r["tpa"] = mk(st.get("threePointFieldGoalsMade-threePointFieldGoalsAttempted"))
+        r["ftm"], r["fta"] = mk(st.get("freeThrowsMade-freeThrowsAttempted"))
+        for k, src in [("reb", "totalRebounds"), ("oreb", "offensiveRebounds"), ("ast", "assists"), ("stl", "steals"),
+                       ("blk", "blocks"), ("tov", "turnovers"), ("fb", "fastBreakPoints"), ("paint", "pointsInPaint")]:
+            r[k] = num(st.get(src) if st.get(src) is not None else st.get("turnovers") if k == "tov" else None)
+        r["poss"] = r["fga"] - r["oreb"] + r["tov"] + 0.44 * r["fta"]
+    for t in d.get("boxscore", {}).get("players", []):
+        r = teams.get(t["team"]["id"])
+        if r is None:
+            continue
+        for cat in t.get("statistics", [])[:1]:
+            labels = cat.get("labels") or []
+            for a in cat.get("athletes", []):
+                v = dict(zip(labels, a.get("stats", [])))
+                ath = a.get("athlete") or {}
+                if not ath.get("id") or not v or num(v.get("MIN")) <= 0:
+                    continue
+                r.setdefault("players", {})[ath["id"]] = {
+                    "name": ath.get("shortName") or ath.get("displayName"), "full": ath.get("displayName"),
+                    "min": num(v.get("MIN")), "pts": num(v.get("PTS")), "reb": num(v.get("REB")), "ast": num(v.get("AST")),
+                    "stl": num(v.get("STL")), "blk": num(v.get("BLK")), "tpm": mk(v.get("3PT"))[0]}
+    if any("fga" not in r for r in teams.values()):
+        return None
+    return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams}
+
+
+BB_ROWS = [  # (section, label, key, higher_is_better, kind)
+    ("Offense", "PPG", "pts", True, "n"), ("Offense", "2PT%", "p2", True, "pct"), ("Offense", "3PT%", "p3", True, "pct"),
+    ("Offense", "FT%", "pft", True, "pct"), ("Offense", "Paint PPG", "paint", True, "n"),
+    ("Defense", "Opp PPG", "o_pts", False, "n"), ("Defense", "Opp 2PT%", "o_p2", False, "pct"),
+    ("Defense", "Opp 3PT%", "o_p3", False, "pct"), ("Defense", "Opp FT%", "o_pft", False, "pct"),
+    ("Defense", "Opp Paint PPG", "o_paint", False, "n"),
+    ("Supporting Statistics", "Rebounds/G", "reb", True, "n"), ("Supporting Statistics", "Assists/G", "ast", True, "n"),
+    ("Supporting Statistics", "BLK+STL/G", "stlblk", True, "n"), ("Supporting Statistics", "Turnovers/G", "tov", False, "n"),
+    ("Supporting Statistics", "Fast Break", "fb", True, "n"), ("Supporting Statistics", "Team Pace", "pace", True, "n"),
+]
+
+
+def bb_window(gl, tid):
+    """Averages (pooled shooting percentages) over a list of games from team tid's perspective."""
+    if not gl:
+        return {}
+    S = lambda f: sum(f(g) for g in gl)
+    me = lambda g: g["teams"][tid]
+    op = lambda g: next(v for k, v in g["teams"].items() if k != tid)
+    n = len(gl)
+    pct = lambda m, a: 100 * m / a if a else None
+    return {
+        "pts": S(lambda g: me(g)["pts"]) / n, "paint": S(lambda g: me(g)["paint"]) / n,
+        "p2": pct(S(lambda g: me(g)["fgm"] - me(g)["tpm"]), S(lambda g: me(g)["fga"] - me(g)["tpa"])),
+        "p3": pct(S(lambda g: me(g)["tpm"]), S(lambda g: me(g)["tpa"])), "pft": pct(S(lambda g: me(g)["ftm"]), S(lambda g: me(g)["fta"])),
+        "o_pts": S(lambda g: op(g)["pts"]) / n, "o_paint": S(lambda g: op(g)["paint"]) / n,
+        "o_p2": pct(S(lambda g: op(g)["fgm"] - op(g)["tpm"]), S(lambda g: op(g)["fga"] - op(g)["tpa"])),
+        "o_p3": pct(S(lambda g: op(g)["tpm"]), S(lambda g: op(g)["tpa"])), "o_pft": pct(S(lambda g: op(g)["ftm"]), S(lambda g: op(g)["fta"])),
+        "reb": S(lambda g: me(g)["reb"]) / n, "ast": S(lambda g: me(g)["ast"]) / n,
+        "stlblk": S(lambda g: me(g)["stl"] + me(g)["blk"]) / n, "tov": S(lambda g: me(g)["tov"]) / n,
+        "fb": S(lambda g: me(g)["fb"]) / n, "pace": S(lambda g: (me(g)["poss"] + op(g)["poss"]) / 2) / n,
+        "o_reb": S(lambda g: op(g)["reb"]) / n, "o_ast": S(lambda g: op(g)["ast"]) / n, "o_tpm": S(lambda g: op(g)["tpm"]) / n,
+        "o_stl": S(lambda g: op(g)["stl"]) / n, "o_blk": S(lambda g: op(g)["blk"]) / n,
+        "ortg": 100 * S(lambda g: me(g)["pts"]) / max(1, S(lambda g: me(g)["poss"])),
+        "drtg": 100 * S(lambda g: op(g)["pts"]) / max(1, S(lambda g: op(g)["poss"])),
+    }
+
+
+def run_basketball(lg, key, start, groups):
+    today = datetime.now(ET).date()
+    q = f"&groups={groups}&limit=400" if groups else ""
+    events = {}
+    day = start
+    while day <= today:
+        ds = day.strftime("%Y%m%d")
+        sb = get(f"{BB}/{lg}/scoreboard?dates={ds}{q}", f"bsb_{lg}_{ds}.json" if day < today - timedelta(days=1) else None)
+        for e in (sb or {}).get("events", []):
+            if (e.get("season") or {}).get("type") in (2, 3) or "season" not in e:
+                events[e["id"]] = e
+        day += timedelta(days=1)
+    done = [eid for eid, e in events.items() if e["status"]["type"].get("completed")]
+
+    def load(eid):
+        d = get(f"{BB}/{lg}/summary?event={eid}", f"bsum_{lg}_{eid}.json")
+        return parse_bb(d) if d else None
+
+    with ThreadPoolExecutor(24) as ex:
+        games = sorted([g for g in ex.map(load, done) if g], key=lambda g: g["date"])
+    record_finals(key, games)
+    print(lg, "completed", len(games), file=sys.stderr)
+    counts = {}
+    for g in games:
+        for t in g["teams"]:
+            counts[t] = counts.get(t, 0) + 1
+    teams_in = {t for t, c in counts.items() if c >= (3 if key == "cbb" else 1)}
+    per_team = {t: [g for g in games if t in g["teams"]] for t in teams_in}
+    agg = {t: {"season": bb_window(gl, t), "home": bb_window([g for g in gl if g["teams"][t]["ha"] == "home" and not g["neutral"]], t),
+               "away": bb_window([g for g in gl if g["teams"][t]["ha"] == "away" and not g["neutral"]], t),
+               "l10": bb_window(gl[-10:], t), "l5": bb_window(gl[-5:], t)} for t, gl in per_team.items() if gl}
+    ranks = {k: rank_map({t: a["l5"].get(k) for t, a in agg.items()}, hb) for _, _, k, hb, _ in BB_ROWS}
+    nteams = len(agg)
+    mu, hfa, rat = fit_ratings(games, key, teams_in) if games else (0, 0, {})
+    net = {t: rat[t][0] + rat[t][1] for t in agg if t in rat}
+    srank = {"off": rank_map({t: a["season"].get("ortg") for t, a in agg.items()}, True),
+             "def": rank_map({t: a["season"].get("drtg") for t, a in agg.items()}, False),
+             "overall": rank_map(net, True),
+             # strength of schedule over the last 5: average opponent rating, 1st = toughest
+             "sos": rank_map({t: sum(net.get(next(k for k in g["teams"] if k != t), 0) for g in gl[-5:]) / max(1, len(gl[-5:]))
+                              for t, gl in per_team.items() if gl}, True)}
+    sigma, unit = (12.0, 0.45) if key == "nba" else (11.0, 0.6)
+
+    cur = get(f"{BB}/{lg}/scoreboard?{q.lstrip('&')}")
+    slate = []
+    for e in sorted((cur or {}).get("events", []), key=lambda e: e["date"]):
+        c = e["competitions"][0]
+        comp = {x["homeAway"]: x for x in c["competitors"]}
+        if "home" not in comp or "away" not in comp or (e.get("season") or {}).get("type", 2) not in (2, 3):
+            continue  # skip exhibitions and preseason
+        summ = get(f"{BB}/{lg}/summary?event={e['id']}")
+        if not summ:
+            continue
+        pc = (summ.get("pickcenter") or [{}])[0]
+        venue = (summ.get("gameInfo") or {}).get("venue") or c.get("venue") or {}
+        addr = venue.get("address") or {}
+        when = datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET)
+        status = e["status"]["type"]
+
+        def team_block(x):
+            t = x["team"]; tid = t["id"]
+            gl = per_team.get(tid, [])
+            res = []
+            for g in reversed(gl):
+                me, op = g["teams"][tid], next(v for k, v in g["teams"].items() if k != tid)
+                res.append([("vs " if g["neutral"] else "@" if me["ha"] == "away" else "") + op["abbr"],
+                            f"{int(me['pts'])}-{int(op['pts'])}", "W" if me["pts"] > op["pts"] else "L"])
+            streak = ""
+            if res:
+                n = 0
+                for r in res:
+                    if r[2] != res[0][2]:
+                        break
+                    n += 1
+                streak = f"{res[0][2]}{n}"
+            dday = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).date()
+            rank = (x.get("curatedRank") or {}).get("current")
+            return {"id": tid, "name": t.get("shortDisplayName") or t.get("location"), "full": t.get("displayName"),
+                    "abbr": t.get("abbreviation", "?"), "rank": rank if rank and rank <= 25 else None,
+                    "color": "#" + (t.get("color") or "333333"), "alt": "#" + (t.get("alternateColor") or "ffffff"),
+                    "overall": next((r["summary"] for r in x.get("records", []) if r.get("type") == "total"), ""),
+                    "streak": streak, "rest": (dday(e["date"]) - dday(gl[-1]["date"])).days if gl else None,
+                    "last5": res[:5], "ha": x["homeAway"], "loc": t.get("location")}
+
+        away, home = team_block(comp["away"]), team_block(comp["home"])
+        rnd = lambda v: round(v, 2) if isinstance(v, float) else v
+        sections = []
+        for title in ["Offense", "Defense", "Supporting Statistics"]:
+            rows = []
+            for sec, lab, k, _hb, kind in BB_ROWS:
+                if sec != title:
+                    continue
+                a, h = agg.get(away["id"], {}), agg.get(home["id"], {})
+                L = [rnd((a.get(w) or {}).get(k)) for w in ("season", "away", "l10", "l5")] + [ranks[k].get(away["id"])]
+                R = [rnd((h.get(w) or {}).get(k)) for w in ("season", "home", "l10", "l5")] + [ranks[k].get(home["id"])]
+                rows.append([lab, L, R[::-1], kind])
+            sections.append({"title": title, "rows": rows, "single": title.startswith("Supporting")})
+
+        spread, total = pc.get("spread"), pc.get("overUnder")
+        aml, hml = (pc.get("awayTeamOdds") or {}).get("moneyLine"), (pc.get("homeTeamOdds") or {}).get("moneyLine")
+        model, confidence = None, None
+        ra, rh = rat.get(away["id"]), rat.get(home["id"])
+        if ra and rh:
+            adj = 0 if c.get("neutralSite") else hfa / 2
+            pa, ph = mu - adj + ra[0] - rh[1], mu + adj + rh[0] - ra[1]
+            margin, p_home = ph - pa, phi((ph - pa) / sigma)
+            model = {"away": round(pa, 1), "home": round(ph, 1), "pHome": round(p_home, 3)}
+            w = trust(min(len(per_team.get(away["id"], [])), len(per_team.get(home["id"], []))), key)
+            model["trust"] = round(w, 2)
+            cs = {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
+            if spread is not None:
+                edge = w * (margin + spread)
+                sc = conf(abs(edge) / unit)
+                side = f"{home['abbr']} {fmt_spread(spread)}" if edge > 0 else f"{away['abbr']} {fmt_spread(-spread)}"
+                cs["spread"] = [sc, label(sc, side)]; model.update(spreadEdge=round(abs(edge), 1), spreadSide=side)
+            if total is not None:
+                edge = w * (pa + ph - total)
+                sc = conf(abs(edge) / (unit * 1.5))
+                side = ("Over " if edge > 0 else "Under ") + f"{total:g}"
+                cs["total"] = [sc, label(sc, side)]; model.update(totalEdge=round(abs(edge), 1), totalSide=side)
+            da, dh = american(aml), american(hml)
+            if da and dh:
+                pm = (1 / dh) / (1 / dh + 1 / da)
+                pb = w * p_home + (1 - w) * pm
+                ev_h, ev_a = pb * dh - 1, (1 - pb) * da - 1
+                best, ml, ev = (home, hml, ev_h) if ev_h >= ev_a else (away, aml, ev_a)
+                sc = conf(max(0, ev) * 100 / 5)
+                if (ml or 0) > 500:
+                    sc = min(sc, 5.0)
+                cs["moneyline"] = [sc, label(sc, f"{best['abbr']} {fmt_ml(ml)}")]
+                model.update(mlEV=round(ev, 3), mlSide=f"{best['abbr']} {fmt_ml(ml)}")
+            confidence = cs
+
+        props = []
+        if key == "nba" and status.get("state") == "pre":
+            injured = {(i.get("athlete") or {}).get("id") for tm in summ.get("injuries", []) for i in tm.get("injuries", [])
+                       if (i.get("status") or "").lower() in OUT_STATUSES | {"out for season"}}
+            props = bb_props(e["id"], away, home, per_team, agg, injured, nteams)
+        score = None
+        if status.get("state") in ("in", "post"):
+            score = {"away": comp["away"].get("score"), "home": comp["home"].get("score"),
+                     "detail": status.get("shortDetail") or status.get("detail")}
+        final = None
+        if status.get("completed"):
+            fg = parse_bb(summ)
+            if fg:
+                final = {"away": num(comp["away"].get("score")), "home": num(comp["home"].get("score")),
+                         "players": {pid: {k: v for k, v in pl.items() if k not in ("name", "full")}
+                                     for t in fg["teams"].values() for pid, pl in t.get("players", {}).items()} if key == "nba" else {}}
+        ab, hb_ = away["abbr"], home["abbr"]
+        r = lambda tbl, tid: tbl.get(tid)
+        slate.append({
+            "id": e["id"], "iso": e["date"], "away": away, "home": home, "date": when.strftime("%b %-d · %-I:%M %p ET"),
+            "location": ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or venue.get("fullName", "—"),
+            "neutral": c.get("neutralSite", False),
+            "strip": [["Date / Time", when.strftime("%b %-d · %-I:%M %p ET")],
+                      ["Location", ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or "—"],
+                      ["L5 SOS", [r(srank["sos"], away["id"]), r(srank["sos"], home["id"])]],
+                      ["Off Rank", [r(srank["off"], away["id"]), r(srank["off"], home["id"])]],
+                      ["Def Rank", [r(srank["def"], away["id"]), r(srank["def"], home["id"])]],
+                      ["Overall Rank", [r(srank["overall"], away["id"]), r(srank["overall"], home["id"])]]],
+            "cols": ["Season", "Last 10", "Last 5", "L5 Rank"],
+            "lines": {"book": (pc.get("provider") or {}).get("name"),
+                      "awaySpread": fmt_spread(-spread) if spread is not None else "—", "awayML": fmt_ml(aml),
+                      "total": f"{total:g}" if total is not None else "—", "homeML": fmt_ml(hml),
+                      "homeSpread": fmt_spread(spread) if spread is not None else "—",
+                      "awaySpreadOdds": fmt_ml((pc.get("awayTeamOdds") or {}).get("spreadOdds")),
+                      "homeSpreadOdds": fmt_ml((pc.get("homeTeamOdds") or {}).get("spreadOdds")),
+                      "overOdds": fmt_ml(pc.get("overOdds")), "underOdds": fmt_ml(pc.get("underOdds")),
+                      "spreadNum": spread, "totalNum": total},
+            "sections": sections, "confidence": confidence, "model": model, "state": status.get("state"),
+            "score": score, "final": final, "props": props, "fbs": [True, True],
+        })
+    enrich(key, slate)
+    OUT_DATA[key] = slate
+    OUT_DATA[key + "_meta"] = {"teams": nteams, "games": len(games), "sport": "bb"}
+    print(lg, "slate", len(slate), file=sys.stderr)
+
+
+def bb_props(eid, away, home, per_team, agg, injured, nteams):
+    lines = {}
+    odds = get(f"https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/events/{eid}/competitions/{eid}/odds?lang=en&region=us")
+    items = (odds or {}).get("items") or []
+    if items and "propBets" in items[0]:
+        url = items[0]["propBets"]["$ref"].replace("http://", "https://")
+        markets = {m for _, _, m, _, _ in BB_PROPS}
+        page = 1
+        while True:
+            d = get(f"{url}&limit=1000&page={page}")
+            for it in (d or {}).get("items", []):
+                name = (it.get("type") or {}).get("name")
+                aid = ((it.get("athlete") or {}).get("$ref") or "").split("/athletes/")[-1].split("?")[0]
+                tgt = ((it.get("current") or {}).get("target") or {}).get("value")
+                if name in markets and aid and tgt is not None:
+                    lines[(name, aid)] = (tgt, ((it.get("open") or {}).get("target") or {}).get("value"))
+            if not d or page >= d.get("pageCount", 1):
+                break
+            page += 1
+    rows = []
+    for team, opp in [(away, home), (home, away)]:
+        tid = team["id"]
+        gl = per_team.get(tid, [])
+        if not gl:
+            continue
+        latest = gl[-1]["teams"][tid].get("players", {})
+        for label, val, market, okeys, min_avg in BB_PROPS:
+            allowed = {t: sum((a["season"].get("o_" + k) or 0) for k in okeys) for t, a in agg.items()}
+            rk = rank_map(allowed, False)  # 1st allows the least
+            orank = rk.get(opp["id"])
+            lg_avg = sum(allowed.values()) / max(1, len(allowed))
+            factor = min(1.15, max(0.85, allowed.get(opp["id"], lg_avg) / lg_avg)) if lg_avg else 1.0
+            for pid, p in latest.items():
+                if pid in injured:
+                    continue
+                hist = [val(g["teams"][tid]["players"][pid]) for g in gl if pid in g["teams"][tid].get("players", {})]
+                mins = [g["teams"][tid]["players"][pid]["min"] for g in gl if pid in g["teams"][tid].get("players", {})]
+                if len(hist) < 3 or sum(mins) / len(mins) < 15:
+                    continue
+                l5 = hist[-5:]
+                avg5, season = sum(l5) / len(l5), sum(hist) / len(hist)
+                if season < min_avg:
+                    continue
+                proj = (0.5 * avg5 + 0.5 * season) * factor
+                line, opn = lines.get((market, pid)) or (None, None)
+                score, side, prob = prop_score(label, proj, line, hist, BB_COUNT, BB_FLOOR)
+                rows.append({"pid": pid, "open": opn, "cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
+                             "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home", "oppRank": orank,
+                             "matchup": round(10 * (orank - 1) / (nteams - 1), 1) if orank and nteams > 1 else None,
+                             "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
+                             "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
+                             "side": side, "prob": prob})
+    return rows
+
+
+from datetime import date, timedelta
+run_basketball("nba", "nba", date(2026, 10, 1), None)
+run_basketball("mens-college-basketball", "cbb", date(2026, 11, 1), 50)
+
+# --- pick analysis: Take / Take small / Fade / Pass with reasons --------------------
+def ordn(n):
+    if n is None:
+        return "—"
+    n = int(n)
+    suf = "th" if 11 <= n % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+def pnum(v):
+    try:
+        return float(str(v).replace("+", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def fsp(v):
+    return "—" if v is None else "PK" if v == 0 else (f"+{v:g}" if v > 0 else f"{v:g}")
+
+
+BIG_SPREAD = {"cfb": 17, "nfl": 10, "nba": 12, "cbb": 14}
+LOW_TOTAL = {"cfb": 45, "nfl": 41, "nba": 215, "cbb": 135}
+SPORT = {"cfb": "fb", "nfl": "fb", "nba": "bb", "cbb": "bb"}
+
+
+def side_of(g, kind):
+    m = g.get("model") or {}
+    if kind == "total":
+        t = m.get("totalSide")
+        return None if not t else ("over" if t.startswith("Over") else "under")
+    t = m.get("spreadSide") if kind == "spread" else m.get("mlSide")
+    return None if not t else ("home" if t.startswith(g["home"]["abbr"] + " ") else "away")
+
+
+def kalshi_for(g, kind):
+    k, s = g.get("kalshi") or {}, side_of(g, kind)
+    if not s:
+        return None
+    return (k.get("total") or {}).get(s) if kind == "total" else (k.get("ml" if kind == "moneyline" else "spread") or {}).get(s)
+
+
+def stat_edge(g, side):
+    mine = theirs = 0
+    best = None
+    for sec in g.get("sections") or []:
+        for row in sec["rows"]:
+            name, a, b = row[0], row[1], row[2]
+            ra, rh = a[4], b[0]
+            if ra is None or rh is None or ra == rh:
+                continue
+            my, op = (ra, rh) if side == "away" else (rh, ra)
+            if my < op:
+                mine += 1
+                if not best or op - my > best[3]:
+                    best = (name, my, op, op - my)
+            else:
+                theirs += 1
+    return mine, theirs, best
+
+
+def weather_of(g):
+    w = str(g.get("weather") or "")
+    rain = re.search(r"(\d+)% Rain", w)
+    wind = re.search(r"(\d+)mph", w)
+    return {"indoor": "Indoors" in w, "rain": int(rain.group(1)) if rain else 0, "wind": int(wind.group(1)) if wind else 0}
+
+
+def analyze_game(lg, g, kind, nteams):
+    c = (g.get("confidence") or {}).get(kind)
+    m, ln = g.get("model"), g["lines"]
+    if not c or not m or g.get("state") != "pre":
+        return None
+    side = side_of(g, kind)
+    if not side:
+        return None
+    score, call = c
+    op = ln.get("open") or {}
+    why, against, warn, tips = [], [], [], []
+    k = kalshi_for(g, kind)
+    if kind == "total":
+        tot = m["away"] + m["home"]
+        why.append(f"Model projects {tot:.1f} points against a total of {ln['totalNum']:g}.")
+        rows = {r[0]: r for s in g.get("sections") or [] for r in s["rows"]}
+        off, dfn = rows.get("PPG"), rows.get("PPG/A") or rows.get("Opp PPG")
+        if off and dfn:
+            oa, oh, da, dh = off[1][4], off[2][0], dfn[1][4], dfn[2][0]
+            good_o = sum(1 for r in (oa, oh) if r is not None and r <= nteams / 3)
+            bad_d = sum(1 for r in (da, dh) if r is not None and r >= 2 * nteams / 3)
+            txt = f"Scoring offenses rank {ordn(oa)} and {ordn(oh)}, defenses {ordn(da)} and {ordn(dh)} in points allowed (recent games)."
+            (why if (side == "over") == (good_o + bad_d >= 2) else against).append(txt)
+        if op.get("total") and pnum(op["total"]) != ln["totalNum"]:
+            up = ln["totalNum"] > pnum(op["total"])
+            (why if (side == "over") == up else against).append(
+                f"Total moved {op['total']} → {ln['totalNum']:g}: money has come in on the {'over' if up else 'under'}.")
+        w = g.get("wx") or weather_of(g)
+        if SPORT[lg] == "fb" and not w["indoor"] and (w["rain"] >= 40 or w["wind"] >= 15):
+            wx = f"{w['rain']}% rain, {w['wind']} mph wind in the forecast"
+            (warn.append(f"Weather: {wx} can slow scoring.") if side == "over" else why.append(f"Weather helps the under: {wx}."))
+        if side == "under" and ln["totalNum"] <= LOW_TOTAL[lg]:
+            warn.append(f"Low total ({ln['totalNum']:g}): one big quarter can bust an under.")
+    else:
+        team, opp = g[side], g["away" if side == "home" else "home"]
+        proj = (m["home"] - m["away"]) if side == "home" else (m["away"] - m["home"])
+        line_num = None if ln.get("spreadNum") is None else (ln["spreadNum"] if side == "home" else -ln["spreadNum"])
+        if kind == "spread":
+            why.append(f"Model has {team['abbr']} {'winning' if proj >= 0 else 'losing'} by {abs(proj):.1f}; the line is {team['abbr']} {fsp(line_num)}.")
+        else:
+            ph = m["pHome"] if side == "home" else 1 - m["pHome"]
+            price = ln["homeML"] if side == "home" else ln["awayML"]
+            why.append(f"Model gives {team['abbr']} a {round(ph * 100)}% chance to win at {price}.")
+            if (pnum(price) or 0) >= 300:
+                warn.append(f"Long shot ({price}): it loses most of the time even when the price is right.")
+        mine, theirs, best = stat_edge(g, side)
+        if mine + theirs:
+            t = f"{team['abbr']} has the better recent rank in {mine} of {mine + theirs} stat categories" + (
+                f"; biggest edge: {best[0]} ({ordn(best[1])} vs {ordn(best[2])})." if best else ".")
+            (why if mine >= theirs else against).append(t)
+        o_s = op.get("homeSpread" if side == "home" else "awaySpread") if kind == "spread" else op.get("homeML" if side == "home" else "awayML")
+        c_s = line_num if kind == "spread" else pnum(ln["homeML"] if side == "home" else ln["awayML"])
+        if o_s is not None and c_s is not None and pnum(o_s) is not None and pnum(o_s) != c_s:
+            steam = c_s < pnum(o_s)
+            ot = fsp(pnum(o_s)) if kind == "spread" else o_s
+            ct = fsp(c_s) if kind == "spread" else fmt_ml(c_s)
+            (why if steam else against).append(f"Line moved {ot} → {ct}: money has come in on {team['abbr'] if steam else opp['abbr']}.")
+        if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
+            warn.append("Road favorite in college: road teams have struggled to cover this season.")
+        if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
+            warn.append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
+        if kind == "spread" and SPORT[lg] == "fb" and line_num is not None:
+            kn = next((x for x in (3, 7, 10) if abs(abs(line_num) - x) <= 0.5), None)
+            if kn:
+                tips.append(f"Near the key number {kn}: shop books for the best half-point.")
+    if k and k.get("p") is not None:
+        (why if k["p"] >= 0.5 else against).append(
+            f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']})" + ("." if k["p"] >= 0.5 else ", so the market leans the other way."))
+    if m.get("trust") is not None and m["trust"] < 0.3:
+        warn.append(f"Early season: the model only counts {round(m['trust'] * 100)}% against the market with this few games played.")
+    if score >= 7:
+        verdict = "Take small" if len(warn) >= 2 else "Take"
+    elif score >= 4:
+        verdict = "Take" if (not warn and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
+    else:
+        verdict = "Pass"
+    return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
+            "call": re.sub(r"^(Play|Lean) ", "", call), "side": side}
+
+
+def analyze_prop(p):
+    if p.get("line") is None or p.get("score") is None:
+        return None
+    under = p.get("side") == "Under"
+    won = sum(1 for v in p["l5"] if (v < p["line"] if under else v > p["line"]))
+    why, against, warn = [], [], []
+    (why if won >= 3 else against).append(
+        f"Went {'under' if under else 'over'} {p['line']:g} in {won} of his last {len(p['l5'])} games (avg {p['avg5']:.1f}).")
+    if p.get("matchup") is not None:
+        (why if (p["matchup"] >= 5) != under else against).append(
+            f"Opponent ranks {ordn(p['oppRank'])} in what it allows here (matchup {p['matchup']:.1f}/10).")
+    if p.get("kalshiP") is not None:
+        why.append(f"Kalshi prices this at {round(p['kalshiP'] * 100)}% ({p['kalshiOdds']}); the model's edge over that is {p['edge'] * 100:.1f} points.")
+    if p.get("flag"):
+        warn.append("Line is far from his recent numbers: check injury or role news.")
+    if p["games"] < 4:
+        warn.append(f"Small sample: only {p['games']} games this season.")
+    if p["score"] >= 7:
+        verdict = "Take small" if warn else "Take"
+    elif p["score"] >= 4:
+        verdict = "Take" if won >= 3 and not warn else "Fade"
+    else:
+        verdict = "Pass"
+    return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": []}
+
+
+def attach_analysis():
+    for key in ("cfb", "nfl", "nba", "cbb"):
+        n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
+        for g in OUT_DATA.get(key) or []:
+            a = {kind: analyze_game(key, g, kind, n) for kind in ("moneyline", "spread", "total")}
+            g["analysis"] = {k2: v for k2, v in a.items() if v}
+            for p in g.get("props") or []:
+                p["analysis"] = analyze_prop(p)
+
+
+# --- model picks history: hypothetical P/L of every green (Take) pick ---------------------
+PROP_VALUE = {
+    "Passing": lambda p: p.get("passYds", 0), "Rushing": lambda p: p.get("rushYds", 0), "Receiving": lambda p: p.get("recYds", 0),
+    "Receptions": lambda p: p.get("rec", 0), "Rush + Rec": lambda p: p.get("rushYds", 0) + p.get("recYds", 0),
+    "Touchdowns": lambda p: p.get("rushTD", 0) + p.get("recTD", 0), "Sacks": lambda p: p.get("sacks", 0),
+    "Tackles + Ast": lambda p: p.get("tackles", 0), "FG Made": lambda p: p.get("fg", 0),
+    "Points": lambda p: p.get("pts", 0), "Rebounds": lambda p: p.get("reb", 0), "Assists": lambda p: p.get("ast", 0),
+    "PRA": lambda p: p.get("pts", 0) + p.get("reb", 0) + p.get("ast", 0), "Pts+Reb": lambda p: p.get("pts", 0) + p.get("reb", 0),
+    "Pts+Ast": lambda p: p.get("pts", 0) + p.get("ast", 0), "Reb+Ast": lambda p: p.get("reb", 0) + p.get("ast", 0),
+    "3PT Made": lambda p: p.get("tpm", 0), "Blk+Stl": lambda p: p.get("stl", 0) + p.get("blk", 0),
+}
+
+
+def game_day(g):
+    now = datetime.now(ET)
+    d = datetime.strptime(g["date"].split(" · ")[0] + f" {now.year}", "%b %d %Y")
+    if d.month < 6 and now.month > 8:
+        d = d.replace(year=now.year + 1)
+    return d.strftime("%Y-%m-%d")
+
+
+def pick_from_game(lg, g, kind, a):
+    ln, m = g["lines"], g["model"]
+    base = {"date": game_day(g), "time": g["date"].split(" · ")[1].replace(" ET", ""), "league": lg,
+            "matchup": f"{g['away']['abbr']} @ {g['home']['abbr']}", "book": ln.get("book") or "DK"}
+    side = a["side"]
+    if kind == "moneyline":
+        return {**base, "play": f"{g[side]['abbr']} ML", "price": pnum(ln["homeML" if side == "home" else "awayML"]),
+                "grade": {"league": lg, "game": g["id"], "kind": "ml", "side": side}}
+    if kind == "spread":
+        line = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
+        return {**base, "play": m["spreadSide"], "price": pnum(ln["homeSpreadOdds" if side == "home" else "awaySpreadOdds"]) or -110,
+                "grade": {"league": lg, "game": g["id"], "kind": "spread", "side": side, "line": line}}
+    return {**base, "play": m["totalSide"], "price": pnum(ln["overOdds" if side == "over" else "underOdds"]) or -110,
+            "grade": {"league": lg, "game": g["id"], "kind": "total", "side": side, "line": ln["totalNum"]}}
+
+
+def grade_pick(pk):
+    gr = pk["grade"]
+    f = FIN.get(gr["league"], {}).get(gr["game"])
+    if not f:
+        return None
+    sign = lambda x: "W" if x > 0 else "L" if x < 0 else "P"
+    if gr["kind"] == "ml":
+        return sign(f["home"] - f["away"] if gr["side"] == "home" else f["away"] - f["home"])
+    if gr["kind"] == "spread":
+        return sign((f["home"] - f["away"] if gr["side"] == "home" else f["away"] - f["home"]) + gr["line"])
+    if gr["kind"] == "total":
+        t = f["home"] + f["away"]
+        return sign(t - gr["line"] if gr["side"] == "over" else gr["line"] - t)
+    pl = f["players"].get(gr["pid"])
+    if pl is None:
+        return "V"  # did not play: void, stake returned
+    v = PROP_VALUE[gr["cat"]](pl)
+    return sign(v - gr["line"] if gr["side"] == "over" else gr["line"] - v)
+
+
+def update_history(path_in, path_out):
+    hist = {}
+    if path_in and os.path.exists(path_in):
+        try:
+            with open(path_in) as f:
+                hist = {p["id"]: p for p in json.load(f).get("picks", [])}
+        except (ValueError, KeyError):
+            hist = {}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    added = 0
+    for lg in ("cfb", "nfl", "nba", "cbb"):
+        for g in OUT_DATA.get(lg) or []:
+            if g.get("state") != "pre":
+                continue
+            for kind, a in (g.get("analysis") or {}).items():
+                pid = f"{lg}-{g['id']}-{kind}"
+                if a["verdict"] in ("Take", "Take small") and pid not in hist:
+                    hist[pid] = {"id": pid, **pick_from_game(lg, g, kind, a), "verdict": a["verdict"], "score": a["score"],
+                                 "stake": 0.5 if a["verdict"] == "Take small" else 1, "result": None, "logged": now}
+                    added += 1
+            for p in g.get("props") or []:
+                a = p.get("analysis")
+                if not a or a["verdict"] not in ("Take", "Take small") or p["score"] < 7 or p.get("flag"):
+                    continue
+                pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
+                if pid in hist:
+                    continue
+                text = f"{p['player']} anytime TD" if p["cat"] == "Touchdowns" else f"{p['player']} {'u' if p['side'] == 'Under' else 'o'}{p['line']:g} {p['cat']}"
+                hist[pid] = {"id": pid, "date": game_day(g), "time": g["date"].split(" · ")[1].replace(" ET", ""), "league": lg,
+                             "matchup": f"{g['away']['abbr']} @ {g['home']['abbr']}", "play": text,
+                             "price": pnum(p.get("kalshiOdds")) or -110, "book": "Kalshi fair" if p.get("kalshiOdds") else "DK (−110 assumed)",
+                             "grade": {"league": lg, "game": g["id"], "kind": "prop", "pid": p["pid"], "cat": p["cat"],
+                                       "side": "under" if p["side"] == "Under" else "over", "line": p["line"]},
+                             "verdict": a["verdict"], "score": p["score"], "stake": 0.5 if a["verdict"] == "Take small" else 1,
+                             "result": None, "logged": now}
+                added += 1
+    graded = 0
+    for pk in hist.values():
+        if not pk.get("result"):
+            r = grade_pick(pk)
+            if r:
+                pk["result"], pk["gradedAt"] = r, now
+                graded += 1
+    picks = sorted(hist.values(), key=lambda p: (p["date"], p["id"]))
+    OUT_DATA["modelHistory"] = picks
+    if path_out:
+        with open(path_out, "w") as f:
+            json.dump({"updated": now, "picks": picks}, f, separators=(",", ":"))
+    print("history", len(picks), "picks;", added, "new;", graded, "graded", file=sys.stderr)
+
+
+# --- data check: cross-check ESPN against independent sources -------------------------------
+UA = {"User-Agent": "GushersPicks/1.0 (personal sports dashboard; data cross-check)"}
+
+
+def fetch_text(url, headers=None, cache_name=None):
+    path = os.path.join(CACHE, cache_name) if cache_name else None
+    if path and os.path.exists(path) and time.time() - os.path.getmtime(path) < 6 * 3600:
+        return open(path).read()
+    try:
+        req = urllib.request.Request(url, headers={**UA, **(headers or {})})
+        with urllib.request.urlopen(req, timeout=45) as r:
+            txt = r.read().decode("utf-8", "replace")
+        if path:
+            open(path, "w").write(txt)
+        return txt
+    except Exception as e:
+        print("check fetch failed", url.split("?")[0], e, file=sys.stderr)
+        return None
+
+
+def fetch_json(url, headers=None, cache_name=None):
+    t = fetch_text(url, headers, cache_name)
+    try:
+        return json.loads(t) if t else None
+    except ValueError:
+        return None
+
+
+def add_check(g, ok, text):
+    g.setdefault("check", []).append({"ok": ok, "text": text})
+
+
+CHECKS = {}
+
+
+def summary_add(lg, source, verified, problems, note=""):
+    CHECKS.setdefault(lg, []).append({"source": source, "verified": verified, "problems": problems, "note": note})
+
+
+def norm_team(x):
+    return re.sub(r"[^a-z0-9]", "", (x or "").lower().replace("state", "st").replace("university", ""))
+
+
+def check_nfl():
+    import csv, io
+    txt = fetch_text("https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv", cache_name="nflverse_games.csv")
+    if not txt:
+        summary_add("nfl", "nflverse", 0, 0, "unreachable")
+        return
+    rows = {r["espn"]: r for r in csv.DictReader(io.StringIO(txt)) if r.get("espn")}
+    verified = problems = 0
+    for gid, f in FIN.get("nfl", {}).items():
+        r = rows.get(gid)
+        if not r or r.get("away_score") in ("", None):
+            continue
+        verified += 1
+        if (float(r["away_score"]), float(r["home_score"])) != (f["away"], f["home"]):
+            problems += 1
+            print("NFL score mismatch", gid, r["away_score"], r["home_score"], f, file=sys.stderr)
+    lines_checked = 0
+    for g in OUT_DATA.get("nfl") or []:
+        r = rows.get(g["id"])
+        if not r or g.get("state") != "pre":
+            continue
+        ln = g["lines"]
+        try:
+            sp, tot = float(r["spread_line"]), float(r["total_line"])
+        except (TypeError, ValueError):
+            continue
+        lines_checked += 1
+        ours_home = ln.get("spreadNum")
+        if ours_home is not None:
+            d = abs(ours_home - (-sp))
+            add_check(g, d < 1.5, f"Spread: DraftKings {fsp(ours_home)} for {g['home']['abbr']} vs nflverse consensus {fsp(-sp)}" + ("" if d < 1.5 else " — differs, check the latest line"))
+        if ln.get("totalNum") is not None:
+            d = abs(ln["totalNum"] - tot)
+            add_check(g, d < 2, f"Total: DraftKings {ln['totalNum']:g} vs nflverse consensus {tot:g}" + ("" if d < 2 else " — differs, check the latest line"))
+    # player game logs behind the props
+    ptxt = fetch_text("https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_2026.csv", cache_name="nflverse_pw.csv")
+    pchecked = pbad = 0
+    if ptxt:
+        logs = {}
+        for r in csv.DictReader(io.StringIO(ptxt)):
+            if r.get("season_type") != "REG":
+                continue
+            logs.setdefault((norm(r["player_display_name"]), r["team"]), []).append(r)
+        col = {"Passing": ["passing_yards"], "Rushing": ["rushing_yards"], "Receiving": ["receiving_yards"], "Receptions": ["receptions"],
+               "Rush + Rec": ["rushing_yards", "receiving_yards"], "Touchdowns": ["rushing_tds", "receiving_tds"]}
+        team_alias = {"LAR": "LA", "WSH": "WAS"}
+        for g in OUT_DATA.get("nfl") or []:
+            for p in g.get("props") or []:
+                if p["cat"] not in col or p.get("line") is None:
+                    continue
+                L = logs.get((norm(p.get("full") or p["player"]), team_alias.get(p["team"], p["team"])))
+                if not L:
+                    continue
+                vals = [sum(float(r[c] or 0) for c in col[p["cat"]]) for r in sorted(L, key=lambda r: int(r["week"]))][-len(p["l5"]):][::-1]
+                pchecked += 1
+                # Small differences come from scoring corrections (e.g. a reception reclassified as a run).
+                off = [abs(a - b) for a, b in zip(p["l5"], vals)]
+                tol = 1 if p["cat"] in ("Receptions", "Touchdowns") else 3
+                if len(vals) != len(p["l5"]) or max(off or [0]) > tol:
+                    pbad += 1
+                    p["check"] = {"ok": False, "text": f"nflverse last {len(vals)}: {', '.join(f'{v:g}' for v in vals)}"}
+                else:
+                    p["check"] = {"ok": True, "text": "Last-5 numbers match nflverse"}
+    summary_add("nfl", "nflverse", verified, problems, f"final scores · {lines_checked} lines compared · {pchecked} prop game logs checked, {pbad} differ")
+
+
+def check_cfbd():
+    key = os.environ.get("CFBD_API_KEY")
+    if not key:
+        summary_add("cfb", "CollegeFootballData", 0, 0, "no API key in this session")
+        return
+    H = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+    year = datetime.now(ET).year if datetime.now(ET).month >= 6 else datetime.now(ET).year - 1
+    games = fetch_json(f"https://api.collegefootballdata.com/games?year={year}&seasonType=regular", H, f"cfbd_games_{year}.json") or []
+    by_ids = {}
+    for x in games:
+        h, a = x.get("homeTeam") or x.get("home_team"), x.get("awayTeam") or x.get("away_team")
+        by_ids[(norm_team(a), norm_team(h), (x.get("startDate") or x.get("start_date") or "")[:10])] = x
+    verified = problems = 0
+    # Match finals by team names and date; ESPN and CFBD names differ slightly, so compare loosely.
+    names = {}
+    for g in OUT_DATA.get("cfb") or []:
+        for s in ("away", "home"):
+            names[g[s]["id"]] = norm_team(g[s].get("loc") or g[s]["name"])
+    cf = {}
+    for x in games:
+        hp, ap = x.get("homePoints", x.get("home_points")), x.get("awayPoints", x.get("away_points"))
+        if hp is None or ap is None:
+            continue
+        cf.setdefault(norm_team(x.get("homeTeam") or x.get("home_team")), []).append((norm_team(x.get("awayTeam") or x.get("away_team")), ap, hp))
+    for g in OUT_DATA.get("cfb") or []:
+        if g.get("state") != "post" or g["id"] not in FIN["cfb"]:
+            continue
+        f = FIN["cfb"][g["id"]]
+        cand = [c for c in cf.get(names[g["home"]["id"]], []) if c[0] == names[g["away"]["id"]]]
+        if not cand:
+            continue
+        verified += 1
+        if (float(cand[-1][1]), float(cand[-1][2])) != (f["away"], f["home"]):
+            problems += 1
+            add_check(g, False, f"Final score differs from CollegeFootballData ({cand[-1][1]}-{cand[-1][2]})")
+    week = (OUT_DATA.get("cfb_meta") or {}).get("week")
+    lines = fetch_json(f"https://api.collegefootballdata.com/lines?year={year}&week={week}&seasonType=regular", H) or []
+    lc = 0
+    for x in lines:
+        h, a = norm_team(x.get("homeTeam") or x.get("home_team")), norm_team(x.get("awayTeam") or x.get("away_team"))
+        g = next((g for g in OUT_DATA.get("cfb") or [] if names.get(g["home"]["id"]) == h and names.get(g["away"]["id"]) == a), None)
+        if not g or g.get("state") != "pre":
+            continue
+        sps = [pnum(l.get("spread")) for l in x.get("lines") or [] if pnum(l.get("spread")) is not None]
+        tts = [pnum(l.get("overUnder") or l.get("over_under")) for l in x.get("lines") or [] if pnum(l.get("overUnder") or l.get("over_under")) is not None]
+        books = ", ".join(sorted({l.get("provider", "") for l in x.get("lines") or [] if l.get("provider")}))
+        if sps and g["lines"].get("spreadNum") is not None:
+            med = sorted(sps)[len(sps) // 2]
+            d = abs(med - g["lines"]["spreadNum"])
+            add_check(g, d < 1.5, f"Spread: DraftKings {fsp(g['lines']['spreadNum'])} vs {len(sps)} books ({books}) median {fsp(med)}" + ("" if d < 1.5 else " — differs"))
+            lc += 1
+        if tts and g["lines"].get("totalNum") is not None:
+            med = sorted(tts)[len(tts) // 2]
+            d = abs(med - g["lines"]["totalNum"])
+            add_check(g, d < 2, f"Total: DraftKings {g['lines']['totalNum']:g} vs median {med:g}" + ("" if d < 2 else " — differs"))
+    summary_add("cfb", "CollegeFootballData", verified, problems, f"final scores · {lc} lines compared across books")
+    # stadium coordinates for the weather check
+    venues = fetch_json("https://api.collegefootballdata.com/venues", H, "cfbd_venues.json") or []
+    return {norm_team(v.get("name")): (v.get("location") or {}) for v in venues}
+
+
+def check_cbbd():
+    key = os.environ.get("CFBD_API_KEY") or os.environ.get("CBBD_API_KEY")
+    if not key:
+        summary_add("cbb", "CollegeBasketballData", 0, 0, "no API key in this session")
+        return
+    H = {"Authorization": f"Bearer {key}", "Accept": "application/json"}
+    now = datetime.now(ET)
+    season = now.year + 1 if now.month >= 8 else now.year
+    games = fetch_json(f"https://api.collegebasketballdata.com/games?season={season}", H) or []
+    done = [x for x in games if x.get("homePoints") is not None and x.get("awayPoints") is not None]
+    names = {}
+    for g in OUT_DATA.get("cbb") or []:
+        for s in ("away", "home"):
+            names[g[s]["id"]] = norm_team(g[s].get("loc") or g[s]["name"])
+    verified = problems = 0
+    idx = {(norm_team(x.get("awayTeam")), norm_team(x.get("homeTeam"))): x for x in done}
+    for g in OUT_DATA.get("cbb") or []:
+        if g.get("state") != "post" or g["id"] not in FIN.get("cbb", {}):
+            continue
+        x = idx.get((names[g["away"]["id"]], names[g["home"]["id"]]))
+        if not x:
+            continue
+        verified += 1
+        f = FIN["cbb"][g["id"]]
+        if (float(x["awayPoints"]), float(x["homePoints"])) != (f["away"], f["home"]):
+            problems += 1
+            add_check(g, False, f"Final score differs from CollegeBasketballData ({x['awayPoints']}-{x['homePoints']})")
+    summary_add("cbb", "CollegeBasketballData", verified, problems, f"{len(done)} completed games in their feed")
+
+
+ODDS_SPORT = {"nfl": "americanfootball_nfl", "nba": "basketball_nba", "cbb": "basketball_ncaab"}
+
+
+def check_odds():
+    key = os.environ.get("ODDS_API_KEY")
+    if not key:
+        for lg in ODDS_SPORT:
+            summary_add(lg, "The Odds API", 0, 0, "no API key in this session")
+        return
+    for lg, sport in ODDS_SPORT.items():
+        slate = [g for g in OUT_DATA.get(lg) or [] if g.get("state") == "pre"]
+        if not slate:
+            continue
+        evs = fetch_json(f"https://api.the-odds-api.com/v4/sports/{sport}/odds?regions=us&markets=spreads,totals&oddsFormat=american&apiKey={key}") or []
+        compared = 0
+        for e in evs:
+            h, a = norm_team(e.get("home_team")), norm_team(e.get("away_team"))
+            g = next((g for g in slate if norm_team(g["home"].get("full")) == h and norm_team(g["away"].get("full")) == a), None)
+            if not g:
+                continue
+            sps, tts, best = [], [], {}
+            for bk in e.get("bookmakers") or []:
+                for mk in bk.get("markets") or []:
+                    for oc in mk.get("outcomes") or []:
+                        if mk["key"] == "spreads" and norm_team(oc["name"]) == h and oc.get("point") is not None:
+                            sps.append(oc["point"])
+                        if mk["key"] == "totals" and oc.get("name") == "Over" and oc.get("point") is not None:
+                            tts.append(oc["point"])
+                        k2 = (mk["key"], norm_team(oc["name"]) if mk["key"] == "spreads" else oc["name"])
+                        if oc.get("price") is not None and (k2 not in best or oc["price"] > best[k2][0]):
+                            best[k2] = (oc["price"], bk.get("title"), oc.get("point"))
+            if sps and g["lines"].get("spreadNum") is not None:
+                med = sorted(sps)[len(sps) // 2]
+                d = abs(med - g["lines"]["spreadNum"])
+                add_check(g, d < 1.5, f"Spread: DraftKings {fsp(g['lines']['spreadNum'])} vs {len(sps)} books median {fsp(med)}" + ("" if d < 1.5 else " — differs"))
+            if tts and g["lines"].get("totalNum") is not None:
+                med = sorted(tts)[len(tts) // 2]
+                d = abs(med - g["lines"]["totalNum"])
+                add_check(g, d < 2, f"Total: DraftKings {g['lines']['totalNum']:g} vs {len(tts)} books median {med:g}" + ("" if d < 2 else " — differs"))
+            g["best"] = {f"{k[0]}:{k[1]}": {"price": fmt_ml(v[0]), "book": v[1], "point": v[2]} for k, v in best.items()}
+            compared += 1
+        summary_add(lg, "The Odds API", compared, 0, "lines compared across US books")
+    sc = fetch_json(f"https://api.the-odds-api.com/v4/sports/basketball_nba/scores?daysFrom=3&apiKey={key}") or []
+    verified = problems = 0
+    for e in sc:
+        if not e.get("completed") or not e.get("scores"):
+            continue
+        pts = {norm_team(s["name"]): float(s["score"]) for s in e["scores"]}
+        for g in OUT_DATA.get("nba") or []:
+            if g["id"] in FIN.get("nba", {}) and norm_team(g["home"].get("full")) in pts and norm_team(g["away"].get("full")) in pts:
+                f = FIN["nba"][g["id"]]
+                verified += 1
+                if (pts[norm_team(g["away"]["full"])], pts[norm_team(g["home"]["full"])]) != (f["away"], f["home"]):
+                    problems += 1
+                    add_check(g, False, "Final score differs from The Odds API")
+    summary_add("nba", "The Odds API scores", verified, problems, "last 3 days of final scores")
+
+
+# Outdoor NFL stadiums (latitude, longitude) for the weather check; domes and roofs are skipped.
+NFL_STADIUMS = {"BUF": (42.774, -78.787), "MIA": (25.958, -80.239), "NE": (42.091, -71.264), "NYJ": (40.814, -74.074), "NYG": (40.814, -74.074),
+                "BAL": (39.278, -76.623), "CIN": (39.095, -84.516), "CLE": (41.506, -81.699), "PIT": (40.447, -80.016), "JAX": (30.324, -81.637),
+                "TEN": (36.166, -86.771), "KC": (39.049, -94.484), "DEN": (39.744, -105.020), "LAC": None, "LAR": None, "PHI": (39.901, -75.168),
+                "WSH": (38.908, -76.864), "CHI": (41.862, -87.617), "GB": (44.501, -88.062), "CAR": (35.226, -80.853), "TB": (27.976, -82.503),
+                "SF": (37.403, -121.970), "SEA": (47.595, -122.332)}
+
+
+def nws_forecast(lat, lon, when_iso):
+    pt = fetch_json(f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}", cache_name=f"nws_pt_{lat:.2f}_{lon:.2f}.json")
+    url = ((pt or {}).get("properties") or {}).get("forecastHourly")
+    if not url:
+        return None
+    fc = fetch_json(url)
+    t = datetime.fromisoformat(when_iso.replace("Z", "+00:00"))
+    for per in ((fc or {}).get("properties") or {}).get("periods") or []:
+        a = datetime.fromisoformat(per["startTime"]); b = datetime.fromisoformat(per["endTime"])
+        if a <= t < b:
+            wind = max((int(x) for x in re.findall(r"\d+", per.get("windSpeed") or "0")), default=0)
+            rain = ((per.get("probabilityOfPrecipitation") or {}).get("value")) or 0
+            return {"temp": per.get("temperature"), "rain": int(rain), "wind": wind, "short": per.get("shortForecast")}
+    return None
+
+
+def check_weather(cfb_venues):
+    n = upd = 0
+    for lg in ("nfl", "cfb"):
+        for g in OUT_DATA.get(lg) or []:
+            if g.get("state") != "pre" or "Indoors" in str(g.get("weather")):
+                continue
+            iso = g.get("iso")
+            if not iso:
+                continue
+            if lg == "nfl":
+                ll = NFL_STADIUMS.get(g["home"]["abbr"])
+            else:
+                loc = (cfb_venues or {}).get(norm_team(g.get("stadium")))
+                ll = (loc.get("y") or loc.get("latitude"), loc.get("x") or loc.get("longitude")) if loc else None
+            if not ll or ll[0] is None:
+                continue
+            fc = nws_forecast(float(ll[0]), float(ll[1]), iso)
+            if not fc:
+                continue
+            n += 1
+            g["wx"] = {"indoor": False, "rain": fc["rain"], "wind": fc["wind"]}
+            espn = weather_of(g)
+            same = abs(espn["rain"] - fc["rain"]) < 25 and abs(espn["wind"] - fc["wind"]) < 10
+            add_check(g, same, f"Weather.gov at kickoff: {fc['temp']}°, {fc['rain']}% rain, {fc['wind']} mph wind ({fc['short']})"
+                      + ("" if same else " — differs from ESPN's forecast; warnings use weather.gov"))
+            upd += 0 if same else 1
+    summary_add("nfl", "weather.gov", n, upd, "kickoff forecasts for outdoor games")
+
+
+def run_checks():
+    try:
+        check_nfl()
+    except Exception as e:
+        print("nfl check failed", e, file=sys.stderr); summary_add("nfl", "nflverse", 0, 0, "check failed")
+    venues = None
+    try:
+        venues = check_cfbd()
+    except Exception as e:
+        print("cfbd check failed", e, file=sys.stderr); summary_add("cfb", "CollegeFootballData", 0, 0, "check failed")
+    try:
+        check_cbbd()
+    except Exception as e:
+        print("cbbd check failed", e, file=sys.stderr); summary_add("cbb", "CollegeBasketballData", 0, 0, "check failed")
+    try:
+        check_odds()
+    except Exception as e:
+        print("odds check failed", e, file=sys.stderr)
+    try:
+        check_weather(venues)
+    except Exception as e:
+        print("weather check failed", e, file=sys.stderr)
+    OUT_DATA["checks"] = CHECKS
+
+
+run_checks()
+attach_analysis()
+update_history(sys.argv[3] if len(sys.argv) > 3 else None, sys.argv[4] if len(sys.argv) > 4 else None)
+
+with open(OUT, "w") as f:
+    json.dump(OUT_DATA, f, separators=(",", ":"))
+print("wrote", OUT, os.path.getsize(OUT), file=sys.stderr)
