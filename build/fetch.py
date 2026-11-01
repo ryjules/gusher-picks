@@ -2004,37 +2004,43 @@ def update_history(path_in, path_out):
 
 
 def build_recap():
-    """Recap of the last day with graded model picks: results, what went wrong, and calibration changes."""
-    hist = OUT_DATA.get("modelHistory") or []
+    """One recap per sport, for its last day with graded model picks: results, what went wrong, and calibration."""
+    OUT_DATA["recap"] = {"leagues": {}}
+    for lg in ("cfb", "nfl", "nba", "cbb"):
+        r = league_recap(lg)
+        if r:
+            OUT_DATA["recap"]["leagues"][lg] = r
+
+
+def league_recap(lg):
+    hist = [p for p in OUT_DATA.get("modelHistory") or [] if p["league"] == lg]
     graded = [p for p in hist if p.get("result")]
     if not graded:
-        return
+        return None
     day = max(p["date"] for p in graded)
     passes = [p for p in graded if p["date"] == day and p["score"] < 4 and p["grade"]["kind"] != "prop"]
     dayp = [p for p in graded if p["date"] == day and p["score"] >= 4]
-    units = lambda p: (0 if p["result"] in ("P", "V") else -1 if p["result"] == "L" else
-                       (p["price"] / 100 if p["price"] > 0 else 100 / -p["price"]))
+    units = lambda p: (p.get("stake") or 1) * (0 if p["result"] in ("P", "V") else -1 if p["result"] == "L" else
+                                               (p["price"] / 100 if p["price"] > 0 else 100 / -p["price"]))
     rec = lambda ps: {"w": sum(p["result"] == "W" for p in ps), "l": sum(p["result"] == "L" for p in ps),
                       "p": sum(p["result"] in ("P", "V") for p in ps), "u": round(sum(units(p) for p in ps), 2)}
     takes = [p for p in dayp if p["verdict"] in ("Take", "Take small") and p["grade"]["kind"] != "ml"]
     name = {"ml": "Moneylines", "spread": "Spreads", "total": "Totals", "prop": "Props"}
-    lgname = {"cfb": "CFB", "nfl": "NFL", "nba": "NBA", "cbb": "CBB"}
     groups = {}
     for p in dayp:
-        groups.setdefault((p["league"], p["grade"]["kind"]), []).append(p)
+        groups.setdefault(p["grade"]["kind"], []).append(p)
     wrong, right = [], []
-    for (lg, kind), ps in sorted(groups.items()):
+    for kind, ps in sorted(groups.items()):
         r = rec(ps)
         if r["w"] + r["l"] < 3:
             continue
         hi = [p for p in ps if p["score"] >= 7]
         rh = rec(hi)
-        label = f"{lgname[lg]} {name[kind].lower()}"
         if r["u"] <= -1.5:
             extra = f"; the 7+ ones went {rh['w']}-{rh['l']}" if len(hi) >= 2 and rh["u"] < 0 else ""
-            wrong.append(f"{label} went {r['w']}-{r['l']} ({r['u']:+.1f}u){extra}.")
+            wrong.append(f"{name[kind]} went {r['w']}-{r['l']} ({r['u']:+.1f}u){extra}.")
         elif r["u"] >= 1.5:
-            right.append(f"{label} went {r['w']}-{r['l']} ({r['u']:+.1f}u).")
+            right.append(f"{name[kind]} went {r['w']}-{r['l']} ({r['u']:+.1f}u).")
     hi, lo = [p for p in dayp if p["score"] >= 7], [p for p in dayp if 4 <= p["score"] < 7]
     rh, rl = rec(hi), rec(lo)
     if len(hi) >= 4 and len(lo) >= 4 and rh["w"] / max(1, rh["w"] + rh["l"]) < rl["w"] / max(1, rl["w"] + rl["l"]):
@@ -2049,21 +2055,17 @@ def build_recap():
         hit = rp["w"] / (rp["w"] + rp["l"])
         (right if hit <= 0.55 else wrong).append(
             f"Passes (under 4) went {rp['w']}-{rp['l']} on their lean side, so {'sitting them out was right' if hit <= 0.55 else 'some of them were worth playing'}.")
+    fmt = lambda p: f"{p['matchup']} {p['play']} ({p['score']:.1f}, {p['price']:+g})"
     misses = sorted([p for p in takes if p["result"] == "L"], key=lambda p: -p["score"])[:3]
     hits = sorted([p for p in takes if p["result"] == "W"], key=lambda p: -p["score"])[:3]
     changes = []
-    for (lg, kind), m in sorted(CAL.items()):
-        if abs(m - 1) >= 0.02:
-            w, l, u = CAL_TALLY.get(f"{lg}-{kind}", [0, 0, 0.0])
-            changes.append(f"{lgname[lg]} {kind}s scored x{m:.2f} ({w}-{l}, {u:+.1f}u graded so far)")
-    OUT_DATA["recap"] = {
-        "day": day, "takes": rec(takes), "all": rec(dayp), "passes": rec(passes), "wrong": wrong, "right": right,
-        "misses": [f"{p['matchup']} {p['play']} ({p['score']:.1f}, {p['price']:+g})" for p in misses],
-        "hits": [f"{p['matchup']} {p['play']} ({p['score']:.1f}, {p['price']:+g})" for p in hits],
-        "calibration": changes,
-        "note": "Calibration needs 12 graded picks per sport and bet type before it moves, and it moves slowly." if not changes else "",
-    }
-
+    for (clg, kind), m in sorted(CAL.items()):
+        if clg == lg and abs(m - 1) >= 0.02:
+            w, l, u = CAL_TALLY.get(f"{clg}-{kind}", [0, 0, 0.0])
+            changes.append(f"{kind.capitalize()}s scored x{m:.2f} ({w}-{l}, {u:+.1f}u graded so far)")
+    return {"day": day, "takes": rec(takes), "all": rec(dayp), "passes": rp, "wrong": wrong, "right": right,
+            "misses": [fmt(p) for p in misses], "hits": [fmt(p) for p in hits], "calibration": changes,
+            "note": "" if changes else "No changes yet: calibration needs 12 graded picks per bet type, and it moves slowly."}
 
 # --- data check: cross-check ESPN against independent sources -------------------------------
 UA = {"User-Agent": "GushersPicks/1.0 (personal sports dashboard; data cross-check)"}

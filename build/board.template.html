@@ -312,6 +312,8 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
 .rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.rc-lg { font-style: normal; background: var(--cyan); color: #04141a; border-radius: 4px; padding: 1px 7px; margin-right: 8px; font-size: .9rem; }
+.rc-foot { margin: -6px 2px 0; color: var(--muted); font-size: .82rem; }
 .rc-sub { font: 700 .75rem var(--f-display) !important; letter-spacing: .06em; text-transform: uppercase; margin-top: 10px !important; }
 .ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
@@ -1032,16 +1034,19 @@ function sportCards(list) {
 
 // Recap of the model's last graded day: what went wrong, what worked, and what the model is adjusting.
 function recapCard() {
-  const r = DATA.recap;
-  if (!r) return '';
-  const t = r.takes, li = xs => xs.map(x => `<li>${esc(x)}</li>`).join('');
-  return `<details class="recap" open><summary><span>Recap · ${esc(prettyDay(r.day))}</span><b class="${t.u > 0 ? 'pos' : t.u < 0 ? 'neg' : ''}">${t.w}-${t.l}${t.p ? '-' + t.p : ''} · ${t.u > 0 ? '+' : ''}${t.u.toFixed(2)}u</b></summary>
+  const all = (DATA.recap || {}).leagues || {};
+  const lgs = Object.keys(LEAGUES).filter(k => all[k] && (psport === 'all' || psport === k));
+  if (!lgs.length) return psport !== 'all' && DATA.recap ? `<div class="recap"><p class="ch-empty">No graded ${esc(LEAGUES[psport].short)} model picks yet, so there's no ${esc(LEAGUES[psport].short)} recap.</p></div>` : '';
+  const li = xs => xs.map(x => `<li>${esc(x)}</li>`).join('');
+  return lgs.map(k => {
+    const r = all[k], t = r.takes;
+    return `<details class="recap" ${closedGroups.has('recap:' + k) ? '' : 'open'} data-gk="recap:${k}"><summary><span><i class="rc-lg">${esc(LEAGUES[k].short)}</i>Recap · ${esc(prettyDay(r.day))}</span><b class="${t.u > 0 ? 'pos' : t.u < 0 ? 'neg' : ''}">${t.w}-${t.l}${t.p ? '-' + t.p : ''} · ${t.u > 0 ? '+' : ''}${t.u.toFixed(2)}u</b></summary>
     <div class="rc-grid">
-      ${r.wrong.length ? `<div><h4 class="neg">What went wrong</h4><ul>${li(r.wrong)}</ul>${r.misses.length ? `<p class="rc-sub">Biggest misses</p><ul>${li(r.misses)}</ul>` : ''}</div>` : ''}
+      ${r.wrong.length || r.misses.length ? `<div><h4 class="neg">What went wrong</h4>${r.wrong.length ? `<ul>${li(r.wrong)}</ul>` : ''}${r.misses.length ? `<p class="rc-sub">Biggest misses</p><ul>${li(r.misses)}</ul>` : ''}</div>` : ''}
       ${r.right.length || r.hits.length ? `<div><h4 class="pos">What worked</h4>${r.right.length ? `<ul>${li(r.right)}</ul>` : ''}${r.hits.length ? `<p class="rc-sub">Best hits</p><ul>${li(r.hits)}</ul>` : ''}</div>` : ''}
-      <div><h4>What the model is adjusting</h4>${r.calibration.length ? `<ul>${li(r.calibration)}</ul>` : `<p>${esc(r.note || 'No changes yet.')}</p>`}
-        <p class="rc-sub">Each sport and bet type's confidence is scaled by how its graded picks have done (between ×0.80 and ×1.15), so results feed back into future scores. Not every game gets a pick: Leans need 5+ to become a Take.</p></div>
+      <div><h4>What the model is adjusting</h4>${r.calibration.length ? `<ul>${li(r.calibration)}</ul>` : `<p>${esc(r.note)}</p>`}</div>
     </div></details>`;
+  }).join('') + `<p class="rc-foot">Each sport and bet type's confidence is scaled by how its graded picks have done (between ×0.80 and ×1.15), so results feed back into future scores. Not every game gets a pick: Leans need 5+ to become a Take. Record shown is Takes on spreads, totals and props.</p>`;
 }
 
 function renderPlays() {
@@ -1140,6 +1145,7 @@ function renderPlays() {
   wireChart();
   $('board').querySelectorAll('[data-per]').forEach(b => b.onclick = () => { period = b.dataset.per; renderPlays(); });
   $('board').querySelectorAll('[data-sport]').forEach(b => b.onclick = () => { psport = b.dataset.sport; renderPlays(); if (b.classList.contains('spc')) window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $('board').querySelectorAll('details.recap[data-gk]').forEach(d => d.ontoggle = () => { d.open ? closedGroups.delete(d.dataset.gk) : closedGroups.add(d.dataset.gk); });
   $('board').querySelectorAll('details.grp').forEach(d => d.ontoggle = () => { d.open ? closedGroups.delete(d.dataset.gk) : closedGroups.add(d.dataset.gk); });
   $('board').querySelectorAll('[data-src]').forEach(b => b.onclick = () => { src = b.dataset.src; confirmDel = null; renderPlays(); });
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
