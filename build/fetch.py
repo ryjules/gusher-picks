@@ -1032,7 +1032,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
     sigma = 13.5 if key == "nfl" else 15.5
 
     slate = []
-    for e in sorted(cur["events"], key=lambda e: e["date"]):
+    for e in sorted(events.values() if BACKFILL and key == "cfb" else cur["events"], key=lambda e: e["date"]):
         c = e["competitions"][0]
         comp = {x["homeAway"]: x for x in c["competitors"]}
         if "home" not in comp or "away" not in comp:
@@ -1129,6 +1129,16 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
                 if me["pts"] != op["pts"]:
                     r[0 if me["pts"] > op["pts"] else 1] += 1
             return r
+        def letdown(tid):  # won its last game as an underdog of 7 or more
+            gl = per_team.get(tid, [])
+            if not gl:
+                return False
+            lastg = gl[-1]; me = lastg["teams"][tid]; op = next(v for k2, v in lastg["teams"].items() if k2 != tid)
+            hs = (lastg.get("line") or {}).get("spread")
+            if hs is None or me["pts"] <= op["pts"]:
+                return False
+            my_line = hs if me["ha"] == "home" else -hs
+            return my_line >= 7
         ra_, rh_ = rat.get(away["id"]), rat.get(home["id"])
         power = [round(ra_[0] + ra_[1], 1), round(rh_[0] + rh_[1], 1)] if ra_ and rh_ else None
 
@@ -1236,6 +1246,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             "state": status.get("state"), "score": score,
             "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final, "inj": inj,
             "seasonRanks": season_ranks, "power": power, "wl": [wl(away["id"]), wl(home["id"])], "injAdj": inj_adj,
+            "letdown": {"away": letdown(away["id"]), "home": letdown(home["id"])},
         })
     enrich(key, slate)
     OUT_DATA[key] = slate
@@ -1674,6 +1685,9 @@ SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
 TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
 TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 30)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 45))}  # points per unit of real gap
+CFB_HOME_EDGE = 1.0  # extra strength toward the home team in college
+LETDOWN = 1.0  # strength taken off a team coming off a big upset win
+HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
 LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
@@ -1707,7 +1721,7 @@ def stat_matchup(lg, g, nteams):
     laid; the total compares recent scoring (each offense against the other defense) with the posted total.
     """
     R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
-    tot = wsum = tot_both = wsum_both = max_gap = 0.0
+    tot = wsum = tot_both = wsum_both = max_gap = gap_a = gap_h = 0.0
     edges = []  # (net, text, side)
     a_better = h_better = 0
     for r in R.values():
@@ -1730,6 +1744,7 @@ def stat_matchup(lg, g, nteams):
         tot += wt * (away_mm - home_mm)
         wsum += wt
         max_gap = max(max_gap, abs(away_mm), abs(home_mm))
+        gap_a, gap_h = max(gap_a, away_mm), max(gap_h, home_mm)
         if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
             dz = lambda x: math.copysign(max(0.0, abs(x) - TOT_DEAD), x)  # only real gaps count, and by how big they are
             tot_both += wt * (dz(away_mm) + dz(home_mm))
@@ -1755,6 +1770,14 @@ def stat_matchup(lg, g, nteams):
                 if cost >= 0.5:
                     who = ", ".join(f"{n} ({pos}, {st.lower()})" for n, pos, st, _, _ in ia[sd]["players"][:3])
                     rec_notes.append((f"Injuries cost {g[sd]['abbr']} about {cost:.1f} points: {who}", "home" if sd == "away" else "away"))
+        if lg == "cfb" and not g.get("neutral"):
+            # College road teams struggle ("you have to play a perfect game to win on the road"): lean home.
+            strength -= CFB_HOME_EDGE
+        for sd, sgn in (("away", -1), ("home", 1)):
+            if (g.get("letdown") or {}).get(sd):
+                # Coming off a big upset win as a 7+ point underdog: the emotional letdown spot.
+                strength += sgn * LETDOWN
+                rec_notes.append((f"{g[sd]['abbr']} is coming off a big upset win: emotional letdown spot", "home" if sd == "away" else "away"))
         if SPORT[lg] == "fb":
             # Records and opponent-adjusted power (the team-rating model credits who each team has played).
             (wa, la), (wh, lh) = g.get("wl") or [[0, 0], [0, 0]]
@@ -1790,6 +1813,11 @@ def stat_matchup(lg, g, nteams):
         if ln.get("spreadNum") is not None:
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
             k1, k2 = SM_SPREAD[lg]
+            line_w = LINE_W
+            if lg == "cfb" and side == "home" and line_side < 0 and gap_h >= HUGE_GAP:
+                # A massive mismatch at home (e.g. 12th vs 109th): big spreads are fine, so soften the penalty.
+                k1, k2, line_w = k1 / 2, k2 / 2, LINE_W / 2
+                notes = notes + [(f"Massive mismatch at home for {g['home']['abbr']}: a big spread is fine here", "home")]
             if line_side > 0:  # getting points: no bonus; the line check below weighs points against the data
                 sp = base
             else:
@@ -1802,7 +1830,7 @@ def stat_matchup(lg, g, nteams):
                 e_away = margin_away - ln["spreadNum"]          # beat the away line by this many points (home line = spreadNum)
                 line_signed = max(-10.0, min(10.0, e_away / LINE_PTS[lg][1]))
                 old_signed = max(0.0, min(10.0, sp)) * (1 if side == "away" else -1)
-                blended = (1 - LINE_W) * old_signed + LINE_W * line_signed
+                blended = (1 - line_w) * old_signed + line_w * line_signed
                 sp_side = "away" if blended > 0 else "home"
                 sp = abs(blended)
                 fav = g["away"] if margin_away > 0 else g["home"]
@@ -1832,6 +1860,13 @@ def stat_matchup(lg, g, nteams):
                 m_total += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
             blend_total = 0.5 * proj + 0.5 * m_total
             sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
+            pace = R.get("Pace")
+            if pace and None not in (pace[1][4], pace[2][0]):
+                fast, slow = nteams / 3, 2 * nteams / 3
+                if pace[1][4] <= fast and pace[2][0] <= fast:
+                    sig += 0.5; notes = notes + [("Both teams play fast (lots of plays)", "over")]
+                elif pace[1][4] >= slow and pace[2][0] >= slow:
+                    sig -= 0.5; notes = notes + [("Both teams play slow (fewer plays)", "under")]
             notes = [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
                       "over" if proj > ln["totalNum"] else "under"),
                      (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
