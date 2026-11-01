@@ -322,6 +322,8 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
 .rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.ou { font: 800 .95em var(--f-display); padding: 1px 6px; margin-right: 2px; border-radius: 3px; display: inline-block !important; }
+.ou.o { color: #0b1a12; background: var(--win); } .ou.u { color: #fff; background: var(--loss); }
 .lbar { margin-top: 4px; width: 165px; } .ptbl td:has(.lbar) { min-width: 180px; } .lbar span { display: block; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .lbar span i { display: block; height: 100%; background: var(--cyan); border-radius: 3px; transition: width .6s; }
 .lbar.ok span i { background: var(--win); } .lbar.bad span i { background: var(--loss); } .lbar small { display: block; color: var(--muted); font-size: .72rem; margin-top: 2px; white-space: nowrap; }
@@ -903,7 +905,7 @@ function renderProps() {
     const won = p.l5.filter(beat).length;
     const hr = won / p.l5.length;
     const price = p.kalshiOdds ? ` <span class="pr">(${esc(p.kalshiOdds)})</span>` : '';
-    const lineTxt = C === 'Touchdowns' ? `Anytime TD${price}` : `${under ? '<b>U</b> ' : ''}${p.line}${price}`;
+    const lineTxt = C === 'Touchdowns' ? `Anytime TD${price}` : `${p.line != null ? (under ? '<b class="ou u">U</b> ' : '<b class="ou o">O</b> ') : ''}${p.line ?? ''}${price}`;
     const avgCls = beat(p.avg5) ? 'g' : '';
     const edge = p.edge != null ? `<span class="${p.edge > 0 ? 'g' : 'rd'}">${p.edge > 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</span>` : '';
     const pa = analyzeProp(p);
@@ -1232,7 +1234,8 @@ function renderPlays() {
       const row = p => {
         const u = unitsOf(p);
         const pm = isProp(p) ? (p.play || '').match(/^(.*?) ((?:[ou][\d.]+ .+)|anytime TD)$/) : null;
-        const play = pm ? `<b>${esc(pm[1])}</b><small class="pl-sub">${esc(pm[2].replace(/^o/, 'Over ').replace(/^u/, 'Under '))}</small>` : esc(p.play);
+        const ou = pm && /^[ou]/.test(pm[2]) ? (pm[2][0] === 'o' ? '<b class="ou o">O</b> ' : '<b class="ou u">U</b> ') : '';
+        const play = pm ? `<b>${esc(pm[1])}</b><small class="pl-sub">${ou}${esc(pm[2].replace(/^o/, 'Over ').replace(/^u/, 'Under '))}</small>` : esc(p.play);
         const chip = p.verdict === 'Take small' || p.verdict === 'Take large' ? ' ' + vchip(p.verdict) : '';
         return `<tr><td class="mu">${esc(p.time || '')}${daily ? ' ' + esc(LEAGUES[p.league]?.short || '') : ''}</td><td class="mu" title="${esc(p.matchup)}">${esc(p.matchup)}</td><td class="play">${play}</td>
           <td class="num">${esc(priceNum(p.price) > 0 ? '+' + priceNum(p.price) : priceNum(p.price))}</td><td>${esc(p.book)}</td><td class="num">${esc(p.stake)}u <small class="muted">${money((+p.stake || 1) * U, false)}</small></td>
