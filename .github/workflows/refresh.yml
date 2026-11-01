@@ -2,8 +2,8 @@ name: Refresh picks
 
 on:
   schedule:
-    # GitHub runs schedules in UTC. 12:40 and 20:40 UTC are 8:40 AM and 4:40 PM Eastern
-    # during daylight time (7:40 AM and 3:40 PM in winter).
+    # GitHub cron is UTC: 13:40 and 21:40 are 8:40 AM and 4:40 PM Eastern Standard Time
+    # (9:40 AM and 5:40 PM during daylight time, March to November).
     - cron: "40 13 * * *"
     - cron: "40 21 * * *"
   workflow_dispatch: {}
