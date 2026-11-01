@@ -1608,7 +1608,10 @@ from datetime import date, timedelta
 run_basketball("nba", "nba", date(2026, 10, 1), None)
 run_basketball("mens-college-basketball", "cbb", date(2026, 11, 1), 50)
 
-# --- pick analysis: Take / Take small / Fade / Pass with reasons --------------------
+# --- pick analysis: Take large / Take / Take small / Fade / Pass with reasons --------------------
+TAKES = ("Take", "Take small", "Take large")
+STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
+LARGE_BAR = 8.5  # a Take large needs at least this, with every signal agreeing
 def ordn(n):
     if n is None:
         return "—"
@@ -2166,6 +2169,13 @@ def analyze_game(lg, g, kind, nteams):
     TAKE_BAR = 6.5
     if score >= 7:
         verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
+        pk = (g.get("pick") or {}).get(kind) or {}
+        if (verdict == "Take" and kind != "moneyline" and score >= LARGE_BAR and not warn and not against
+                and pk.get("statSide") == side and (pk.get("stat") or 0) >= 7
+                and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1) and (pk.get("trend") or 0) >= 0
+                and (not k or k.get("p", 1) >= 0.5)):
+            # Everything agrees: the stats are strong, the price model and trends point the same way, no warnings.
+            verdict = "Take large"
     elif score >= 4:
         # Not every game needs a play: a Lean becomes a Take only from 6.5 up (raised from 5 after a 42-play college Saturday), with nothing against it.
         verdict = "Take" if (score >= TAKE_BAR and not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
@@ -2219,6 +2229,8 @@ def analyze_prop(p, g=None, lg=None):
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif p["score"] >= 7:
         verdict = "Take small" if warn else "Take"
+        if verdict == "Take" and p["score"] >= 9 and won >= 4 and not against and (p.get("edge") or 0) >= 0.05:
+            verdict = "Take large"  # strong form, a good matchup and a real edge over the price
     elif p["score"] >= 4:
         verdict = "Take" if won >= 3 and not warn and p["score"] >= 5 else "Fade"
     else:
@@ -2328,12 +2340,12 @@ def update_history(path_in, path_out):
                 continue
             for kind, a in (g.get("analysis") or {}).items():
                 pid = f"{lg}-{g['id']}-{kind}"
-                take = a["verdict"] in ("Take", "Take small")
+                take = a["verdict"] in TAKES
                 # Every 4+ pick is logged so results can be broken out by confidence; the model P&L counts
                 # only Takes. A pick logged as a Fade that later turns into a Take is re-logged at the new price.
                 old = hist.get(pid)
                 # Passes (under 4) are logged too, so the results table can show whether passing was right.
-                if not old or (take and old.get("verdict") not in ("Take", "Take small")):
+                if not old or (take and old.get("verdict") not in TAKES):
                     try:
                         pk = pick_from_game(lg, g, kind, a)
                     except (KeyError, TypeError):
@@ -2341,13 +2353,13 @@ def update_history(path_in, path_out):
                     if pk.get("price") is None:
                         continue
                     hist[pid] = {"id": pid, **pk, "verdict": a["verdict"], "score": a["score"],
-                                 "stake": 0.5 if a["verdict"] == "Take small" else 1, "result": None, "logged": now}
+                                 "stake": STAKE.get(a["verdict"], 1), "result": None, "logged": now}
                     if BACKFILL and lg in ("cfb", "nba"):
                         hist[pid]["backfilled"] = True
                     added += 1
             for p in g.get("props") or []:
                 a = p.get("analysis")
-                if BACKFILL or not a or a["verdict"] not in ("Take", "Take small") or p["score"] < 7 or p.get("flag"):
+                if BACKFILL or not a or a["verdict"] not in TAKES or p["score"] < 7 or p.get("flag"):
                     continue  # (a rebuilt day has no live prop prices, so its props are not logged)
                 pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
                 if pid in hist:
@@ -2358,7 +2370,7 @@ def update_history(path_in, path_out):
                              "price": pnum(p.get("kalshiOdds")) or -110, "book": "Kalshi fair" if p.get("kalshiOdds") else "DK (−110 assumed)",
                              "grade": {"league": lg, "game": g["id"], "kind": "prop", "pid": p["pid"], "cat": p["cat"],
                                        "side": "under" if p["side"] == "Under" else "over", "line": p["line"]},
-                             "verdict": a["verdict"], "score": p["score"], "stake": 0.5 if a["verdict"] == "Take small" else 1,
+                             "verdict": a["verdict"], "score": p["score"], "stake": STAKE.get(a["verdict"], 1),
                              "result": None, "logged": now}
                 added += 1
     graded = 0
@@ -2397,7 +2409,7 @@ def league_recap(lg):
                                                (p["price"] / 100 if p["price"] > 0 else 100 / -p["price"]))
     rec = lambda ps: {"w": sum(p["result"] == "W" for p in ps), "l": sum(p["result"] == "L" for p in ps),
                       "p": sum(p["result"] in ("P", "V") for p in ps), "u": round(sum(units(p) for p in ps), 2)}
-    takes = [p for p in dayp if p["verdict"] in ("Take", "Take small") and p["grade"]["kind"] != "ml"]
+    takes = [p for p in dayp if p["verdict"] in TAKES and p["grade"]["kind"] != "ml"]
     name = {"ml": "Moneylines", "spread": "Spreads", "total": "Totals", "prop": "Props"}
     groups = {}
     for p in dayp:

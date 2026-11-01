@@ -269,6 +269,7 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .pick .add { white-space: nowrap; }
 .vchip { display: inline-block; font: 800 .78rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
 .v-take { background: #173524; color: var(--win); border: 1px solid var(--win); }
+.v-large { background: var(--win); color: #0b1a12; border: 1px solid var(--win); }
 .v-small { background: #2a2410; color: var(--gold); border: 1px solid var(--gold); }
 .v-fade { background: #2a1215; color: var(--loss); border: 1px solid var(--loss); }
 .v-pass { background: transparent; color: var(--muted); border: 1px solid var(--line); }
@@ -571,8 +572,8 @@ function render(g) {
 
 function picks(g) {
   if (!g.confidence) return '';
-  // Only picks the model says to take (Take or Take small); Leans it fades and Passes get no chip.
-  return ['moneyline', 'spread', 'total'].filter(k => { const v = (analyze(league, g, k) || {}).verdict; return v === 'Take' || v === 'Take small'; })
+  // Only picks the model says to take (Take large, Take or Take small); Leans it fades and Passes get no chip.
+  return ['moneyline', 'spread', 'total'].filter(k => { const v = (analyze(league, g, k) || {}).verdict; return /^Take/.test(v || ''); })
     .map(k => g.confidence[k]).map(([s, t]) => `<span class="pk ${s >= 7 ? '' : 'lean'}">${esc(t)}</span>`).join('');
 }
 
@@ -641,8 +642,8 @@ const BIG_SPREAD = { cfb: 17, nfl: 10, nba: 12, cbb: 14 }, LOW_TOTAL = { cfb: 45
 // Verdicts and reasons are computed once per refresh by the build script.
 function analyze(lg, g, kind) { return (g.analysis || {})[kind] || null; }
 function analyzeProp(p) { return p.analysis || null; }
-const VCLS = { 'Take': 'v-take', 'Take small': 'v-small', 'Fade': 'v-fade', 'Pass': 'v-pass' };
-const VTIP = { 'Take': 'The numbers line up and nothing raises a red flag.', 'Take small': 'Strong edge, but with warnings: use a smaller stake.', 'Fade': 'Skip it: the warnings or the market outweigh the edge.', 'Pass': 'No real edge.' };
+const VCLS = { 'Take large': 'v-large', 'Take': 'v-take', 'Take small': 'v-small', 'Fade': 'v-fade', 'Pass': 'v-pass' };
+const VTIP = { 'Take large': 'Everything agrees: strong stats, the price model and trends on the same side, no warnings. 2 units.', 'Take': 'The numbers line up and nothing raises a red flag.', 'Take small': 'Strong edge, but with warnings: use a smaller stake.', 'Fade': 'Skip it: the warnings or the market outweigh the edge.', 'Pass': 'No real edge.' };
 const vchip = v => `<span class="vchip ${VCLS[v]}" title="${esc(VTIP[v])}">${esc(v)}</span>`;
 function reasonList(a) {
   return [...a.why.map(t => `<li class="r-yes">${esc(t)}</li>`), ...a.against.map(t => `<li class="r-no">${esc(t)}</li>`),
@@ -716,7 +717,7 @@ function renderHome() {
     }
     for (const p of g.props || []) if (p.score != null && p.score >= 5 && !p.flag && p.line != null) propPicks.push({ lg, g, p, a: analyzeProp(p) });
   }
-  const vrank = { 'Take': 0, 'Take small': 1, 'Fade': 2, 'Pass': 3 };
+  const vrank = { 'Take large': -1, 'Take': 0, 'Take small': 1, 'Fade': 2, 'Pass': 3 };
   gamePicks.sort((a, b) => vrank[a.a.verdict] - vrank[b.a.verdict] || b.score - a.score);
   propPicks.sort((a, b) => vrank[a.a.verdict] - vrank[b.a.verdict] || b.p.score - a.p.score);
   const shortWhy = a => `<span class="reason">${[...a.warn.map(t => '⚠ ' + t), ...a.why.slice(0, 2).map(t => '✓ ' + t), ...a.against.slice(0, 1).map(t => '✗ ' + t)].slice(0, 3).map(esc).join('<br>')}</span>`;
@@ -843,7 +844,7 @@ function renderProps() {
 
 /* ---------------- plays tracker ---------------- */
 let src = 'mine';
-const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => (p.verdict === 'Take' || p.verdict === 'Take small') && p.grade?.kind !== 'ml') } };
+const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => /^Take/.test(p.verdict || '') && p.grade?.kind !== 'ml') } };
 let psport = 'all';
 const closedGroups = new Set();
 let db = null, plays = [], dbState = 'loading', pday = todayET(), period = 'day', unitSize = null, draft = null, confirmDel = null, autoGraded = false;
@@ -871,7 +872,7 @@ function fromGame(g, kind, lg = league) {
   const league = lg;
   const pk = (g.pick || {})[kind];
   const m = pk ? { mlSide: pk.call, spreadSide: pk.call, totalSide: pk.call } : g.model;
-  const ln = g.lines, base = { date: gameDay(g), time: gameTime(g), league: league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, book: 'DK', stake: 1 };
+  const ln = g.lines, base = { date: gameDay(g), time: gameTime(g), league: league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, book: 'DK', stake: (analyze(league, g, kind) || {}).verdict === 'Take large' ? 2 : 1 };
   if (kind === 'moneyline') {
     const side = m.mlSide.startsWith(g.home.abbr + ' ') ? 'home' : 'away';
     return { ...base, play: `${g[side].abbr} ML`, price: priceNum(side === 'home' ? ln.homeML : ln.awayML), grade: { league, game: g.id, kind: 'ml', side } };
@@ -888,7 +889,7 @@ function fromProp(p, lg = league) {
   const league = lg;
   const g = findGame(league, p.game);
   const text = p.cat === 'Touchdowns' ? `${p.player} anytime TD` : `${p.player} ${p.side === 'Under' ? 'u' : 'o'}${p.line} ${p.cat}`;
-  return { date: gameDay(g), time: gameTime(g), league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, play: text, price: p.kalshiOdds ? priceNum(p.kalshiOdds) : -110, book: 'DK', stake: 1,
+  return { date: gameDay(g), time: gameTime(g), league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, play: text, price: p.kalshiOdds ? priceNum(p.kalshiOdds) : -110, book: 'DK', stake: (p.analysis || {}).verdict === 'Take large' ? 2 : 1,
     grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: p.side === 'Under' ? 'under' : 'over', line: p.line } };
 }
 function gradeOf(p) {
@@ -1175,7 +1176,7 @@ function renderPlays() {
     ${form}
     ${s.settledN ? '' : sportSw}
     ${src === 'model' ? recapCard() : ''}
-    ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
+    ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, 2 for Take large, half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
     ${empty ? `<div class="empty"><b>No ${esc(sportWord)}plays ${esc(when)}</b>
         <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>
         <div class="row">${src === 'mine' ? '<button type="button" class="pbtn primary" id="p-add2">+ Add play</button>' : ''}<button type="button" class="pbtn" id="p-home">Browse Top Picks</button>${period !== 'all' ? '<button type="button" class="pbtn" id="p-all">See all time</button>' : ''}</div></div>`
