@@ -1431,9 +1431,50 @@ setMode('home');
 const SCOREBOARD = { cfb: 'football/college-football/scoreboard?groups=80&limit=300', nfl: 'football/nfl/scoreboard',
   nba: 'basketball/nba/scoreboard', cbb: 'basketball/mens-college-basketball/scoreboard?groups=50&limit=300' };
 let liveAt = null;
+const SUMMARY = { cfb: 'football/college-football', nfl: 'football/nfl', nba: 'basketball/nba', cbb: 'basketball/mens-college-basketball' };
+// A game that just ended: read its box score so picks grade now instead of at the next rebuild.
+async function fetchFinal(lg, g) {
+  if (g._finalTry && Date.now() - g._finalTry < 120000) return false;
+  g._finalTry = Date.now();
+  let d;
+  try {
+    const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${SUMMARY[lg]}/summary?event=${g.id}`, { cache: 'no-store' });
+    if (!r.ok) return false;
+    d = await r.json();
+  } catch (e) { return false; }
+  const comp = ((d.header || {}).competitions || [])[0] || {};
+  if (!(((comp.status || {}).type || {}).completed)) return false;
+  const sc = {}; for (const c of comp.competitors || []) sc[c.homeAway] = +c.score;
+  const n = x => { const v = parseFloat(x); return isFinite(v) ? v : 0; };
+  const players = {};
+  for (const tm of ((d.boxscore || {}).players || [])) for (const cat of tm.statistics || []) {
+    const lab = cat.labels || [];
+    for (const a of cat.athletes || []) {
+      const id = (a.athlete || {}).id; if (!id) continue;
+      const v = {}; lab.forEach((k, i) => v[k] = (a.stats || [])[i]);
+      const p = players[id] = players[id] || {};
+      if (LEAGUES[lg].sport === 'bb') {
+        if (v.MIN === undefined || v.MIN === '0' || v.MIN === '--') continue;
+        Object.assign(p, { pts: n(v.PTS), reb: n(v.REB), ast: n(v.AST), stl: n(v.STL), blk: n(v.BLK), tpm: n(String(v['3PT'] || '0').split('-')[0]) });
+      } else if (cat.name === 'passing') Object.assign(p, { passYds: n(v.YDS), passTD: n(v.TD) });
+      else if (cat.name === 'rushing') Object.assign(p, { rushYds: n(v.YDS), rushTD: n(v.TD), car: n(v.CAR) });
+      else if (cat.name === 'receiving') Object.assign(p, { recYds: n(v.YDS), recTD: n(v.TD), rec: n(v.REC) });
+    }
+  }
+  for (const k of Object.keys(players)) if (!Object.keys(players[k]).length) delete players[k];
+  g.final = { away: sc.away, home: sc.home, players };
+  return true;
+}
+// Grade what can be graded now: your plays are saved; model picks show their result until the rebuild records it.
+async function gradeLive() {
+  let n = 0;
+  for (const p of DATA.modelHistory || []) if (!p.result) { const r = gradeOf(p); if (r) { p.result = r; p.liveGraded = true; n++; } }
+  if (plays.some(p => !p.result && gradeOf(p))) { await gradeAll(true); n++; }
+  if (n && mode === 'plays') renderPlays();
+}
 async function pollScores() {
   if (document.hidden) return;
-  let moved = false, changed = false;
+  let moved = false, changed = false, graded = false;
   for (const [lg, path] of Object.entries(SCOREBOARD)) {
     const games = DATA[lg] || [];
     if (!games.some(g => g.state !== 'post')) continue;
@@ -1455,6 +1496,7 @@ async function pollScores() {
       const before = JSON.stringify([g.state, g.score]);
       if (g.state !== state) { moved = true; if (g.state === 'pre') g.liveOnly = true; }
       g.state = state; g.score = score;
+      if (state === 'post' && !g.final && await fetchFinal(lg, g)) graded = true;
       if (JSON.stringify([g.state, g.score]) === before) continue;
       changed = true;
       if (lg === league && mode === 'games') {
@@ -1465,6 +1507,9 @@ async function pollScores() {
       }
     }
   }
+  // Games that ended before this page loaded but after the last rebuild.
+  for (const [lg] of Object.entries(SCOREBOARD)) for (const g of DATA[lg] || []) if (g.state === 'post' && !g.final && await fetchFinal(lg, g)) graded = true;
+  if (graded) await gradeLive();
   if (changed) liveAt = new Date();
   // A game that just started or finished moves between the list's sections, so redraw the list itself.
   if (moved && mode === 'games') list();
