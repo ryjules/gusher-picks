@@ -225,6 +225,21 @@ td.rank { font-weight: 700; }
 .ch-xa span { position: absolute; top: 5px; transform: translateX(-50%); font: 600 .78rem var(--f-body); color: var(--muted); white-space: nowrap; }
 .ch-xa span:first-child { transform: none; } .ch-xa span:last-child:not(:first-child) { transform: translateX(-100%); }
 .ch-empty { margin: 8px 0 2px; color: var(--muted); font-size: .9rem; }
+.ctab { background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px; }
+.ctab .ch-h small { color: var(--muted); font-weight: 600; }
+.ctbl { width: 100%; border-collapse: collapse; min-width: 640px; }
+.ctbl th, .ctbl td { background: transparent; padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: center; font: 600 .9rem var(--f-body); white-space: nowrap; }
+.ctbl thead th { font: 700 .75rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ctbl tbody th { min-width: 150px; text-align: left; font: 800 .95rem var(--f-display); text-transform: uppercase; }
+.ctbl tr.sub th { font: 600 .85rem var(--f-body); text-transform: none; color: var(--muted); padding-left: 18px; }
+.ctbl td small { display: block; color: var(--muted); font-size: .75rem; }
+.trendw { position: sticky; left: 0; width: min(760px, calc(100vw - 60px)); }
+table.trend { width: 100%; table-layout: fixed; } table.trend td, table.trend th { padding-left: 4px; padding-right: 4px; } table.trend td.stat { white-space: normal; } table.trend th { text-align: center; } table.trend td { text-align: center; } table.trend td.stat { color: var(--muted); }
+table.trend td small { color: var(--muted); font-weight: 600; }
+table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 0 1px rgba(240, 180, 41, .35); }
+.l5 { display: inline-flex; gap: 2px; } .l5 i { font: 800 .7rem var(--f-display); font-style: normal; width: 17px; height: 19px; border-radius: 4px; display: inline-grid; place-items: center; color: #fff; }
+.l5 .tW { background: var(--win); } .l5 .tL { background: var(--loss); } .l5 .tP { background: #5d6875; }
+.tnote { margin: 4px 26px 10px; color: var(--muted); font-size: .82rem; }
 .nav2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .nav2 button { font: 800 .95rem var(--f-display); text-transform: uppercase; letter-spacing: .05em; padding: 10px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--board); color: var(--ink); cursor: pointer; }
 .nav2 button[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: #1a1405; }
@@ -418,6 +433,29 @@ function lineCell(label, cur, open, kal) {
 }
 const stripVal = (v, L, R) => Array.isArray(v) ? `${esc(L.abbr)} ${ord(v[0])} / ${esc(R.abbr)} ${ord(v[1])}` : esc(v);
 
+// Betting trends: each team's record against the spread and on totals from closing DraftKings lines.
+function trends(g, L, R) {
+  const a = L.bet, b = R.bet;
+  const n = r => r ? r[0] + r[1] + r[2] : 0;
+  if (!a || !b || (!n(a.ats) && !n(b.ats) && !n(a.ou) && !n(b.ou))) return '';
+  const hv = x => g.neutral ? '' : x;
+  const rec = r => r && r[0] + r[1] + r[2] ? `${r[0]}-${r[1]}${r[2] ? '-' + r[2] : ''}` : dash;
+  const pct = r => r && r[0] + r[1] ? Math.round(100 * r[0] / (r[0] + r[1])) + '%' : '';
+  const sp = pnum0(g.lines.spreadNum), favL = sp != null && sp > 0, favR = sp != null && sp < 0;
+  const rows = [
+    ['ATS', 'ats', 'ats'], ['ATS Home', 'atsHome', 'atsHome', hv('R')], ['ATS Away', 'atsAway', 'atsAway', hv('L')],
+    ['ATS as Favorite', 'atsFav', 'atsFav', favL && favR ? '' : favL ? 'L' : favR ? 'R' : ''], ['ATS as Underdog', 'atsDog', 'atsDog', favL ? 'R' : favR ? 'L' : ''],
+    ['Over-Under', 'ou', 'ou'], ['O/U Home', 'ouHome', 'ouHome', hv('R')], ['O/U Away', 'ouAway', 'ouAway', hv('L')]];
+  const lastc = l => (l || []).map(x => `<i class="t${x}">${x}</i>`).join('') || dash;
+  const body = rows.map(([n, ka, kb, hl]) => `<tr><td class="${hl === 'L' ? 'now' : ''}"><b>${rec(a[ka])}</b> <small>${pct(a[ka])}</small></td><td class="stat">${esc(n)}</td><td class="${hl === 'R' ? 'now' : ''}"><b>${rec(b[kb])}</b> <small>${pct(b[kb])}</small></td></tr>`).join('')
+    + `<tr><td><b class="${a.cover > 0 ? 'pos' : a.cover < 0 ? 'neg' : ''}">${a.cover == null ? dash : (a.cover > 0 ? '+' : '') + a.cover}</b></td><td class="stat">Avg cover margin</td><td><b class="${b.cover > 0 ? 'pos' : b.cover < 0 ? 'neg' : ''}">${b.cover == null ? dash : (b.cover > 0 ? '+' : '') + b.cover}</b></td></tr>`
+    + `<tr><td><span class="l5">${lastc(a.last5)}</span></td><td class="stat">Last 5 ATS</td><td><span class="l5">${lastc(b.last5)}</span></td></tr>`;
+  return `<div class="trendw"><div class="sect single"><h2><span class="ball"></span>Betting Trends</h2></div>
+    <table class="trend"><colgroup><col style="width:35%"><col style="width:30%"><col style="width:35%"></colgroup><thead><tr><th>${esc(tl(L))}</th><th></th><th>${esc(tl(R))}</th></tr></thead><tbody>${body}</tbody></table>
+    <p class="tnote">From each finished game's closing DraftKings line. Highlighted rows apply to this game. ATS = against the spread; O/U records are overs-unders-pushes.</p></div>`;
+}
+const pnum0 = v => v == null || v === '' ? null : +v;
+
 function render(g) {
   current[league] = g.id;
   const L = g.away, R = g.home, c = g.confidence, ln = g.lines, op = ln.open || {}, k = g.kalshi || {};
@@ -438,6 +476,7 @@ function render(g) {
       ${lineCell(`${R.abbr} Line`, ln.homeSpread, op.homeSpread, k.spread?.home)}
     </div>
     ${g.sections.map(s => section(g, L, R, s)).join('')}
+    ${trends(g, L, R)}
     ${c ? `<div class="conf-h"><span><span class="ball"></span>Statistical Confidence Levels</span><small>Model ratings · lines from ${esc(ln.book || 'ESPN')}</small></div>
     <div class="conf">${confCell(g, 'moneyline', 'Moneyline', c.moneyline)}${confCell(g, 'spread', 'Spread', c.spread)}${confCell(g, 'total', 'Total', c.total)}</div>` : ''}
     ${modelText(g, L, R)}
@@ -692,7 +731,7 @@ function renderProps() {
 
 /* ---------------- plays tracker ---------------- */
 let src = 'mine';
-const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => DATA.modelHistory || [] } };
+const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => p.verdict === 'Take' || p.verdict === 'Take small') } };
 let db = null, plays = [], dbState = 'loading', pday = todayET(), period = 'day', unitSize = null, draft = null, confirmDel = null, autoGraded = false;
 function todayET() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
 function shiftDay(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -886,6 +925,28 @@ function wireChart() {
   plot.onpointerleave = () => { tip.hidden = true; cross.style.opacity = 0; };
 }
 
+// Results by confidence: every 4+ pick the model logged (Takes and faded Leans), graded at 1 unit each.
+function confTable(list) {
+  const done = list.filter(p => p.result && p.score != null);
+  const pending = list.filter(p => !p.result).length;
+  const u1 = p => p.result === 'W' ? (priceNum(p.price) > 0 ? priceNum(p.price) / 100 : 100 / Math.abs(priceNum(p.price))) : p.result === 'L' ? -1 : 0;
+  const cell = ps => {
+    if (!ps.length) return `<td class="dash">—</td>`;
+    const w = ps.filter(p => p.result === 'W').length, l = ps.filter(p => p.result === 'L').length, pu = ps.length - w - l;
+    const u = ps.reduce((a, p) => a + u1(p), 0);
+    return `<td><b>${w}-${l}${pu ? '-' + pu : ''}</b> <span class="${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${usign(u)}</span>${w + l ? `<small>${Math.round(100 * w / (w + l))}%</small>` : ''}</td>`;
+  };
+  const tiers = [['7+ Play', p => p.score >= 7], ['4–7 Lean', p => p.score >= 4 && p.score < 7], ['…Leans we took', p => p.score >= 4 && p.score < 7 && p.verdict !== 'Fade'], ['…Leans we faded', p => p.score >= 4 && p.score < 7 && p.verdict === 'Fade']];
+  const kindOf = p => ({ ml: 'ml', spread: 'spread', total: 'total', prop: 'prop' })[p.grade?.kind] || 'other';
+  const cols1 = [['All', () => true], ...Object.entries(LEAGUES).map(([k, v]) => [v.short, p => p.league === k])];
+  const cols2 = [['Moneyline', p => kindOf(p) === 'ml'], ['Spread', p => kindOf(p) === 'spread'], ['Total', p => kindOf(p) === 'total'], ['Props', p => kindOf(p) === 'prop']];
+  const table = (title, cols) => `<div class="scroll"><table class="ctbl"><thead><tr><th>${title}</th>${cols.map(([n]) => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>
+    ${tiers.map(([n, f]) => `<tr class="${n.startsWith('…') ? 'sub' : ''}"><th>${esc(n)}</th>${cols.map(([, cf]) => cell(done.filter(p => f(p) && cf(p)))).join('')}</tr>`).join('')}</tbody></table></div>`;
+  return `<div class="ctab"><div class="ch-h"><span>Results by confidence level</span><small>${done.length} graded${pending ? ` · ${pending} pending` : ''}</small></div>
+    ${done.length ? table('By sport', cols1) + table('By bet type', cols2) : '<p class="ch-empty">Fills in as picks are graded.</p>'}
+    <p class="ch-empty">Every pick scored 4 or higher, graded at 1 unit at the price when it was logged, including Leans the model faded (those show how the Lean side did: if they lose, fading was right). Use it to see which score ranges, sports and bet types to trust.</p></div>`;
+}
+
 function renderPlays() {
   const [from, to] = periodRange(period, pday);
   const scope = SRC[src].list().filter(p => p.date >= from && p.date <= to);
@@ -958,6 +1019,7 @@ function renderPlays() {
       <div class="card"><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled play${s.settledN === 1 ? '' : 's'}</small></div>
     </div>
     ${chart(scope, period, from, to)}
+    ${src === 'model' && dbState !== 'off' ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to)) : ''}
     ${body}
   </div>`;
   wireChart();

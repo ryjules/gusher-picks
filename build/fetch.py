@@ -201,7 +201,59 @@ def parse_summary(d, lg):
         if "sacksTaken" in opp:
             rec["sacks"] = opp["sacksTaken"]
         rec["h1x"] = h1[i] if have_pbp else None
-    return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams, "lg": lg}
+    return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams, "lg": lg,
+            "line": game_lines(d)}
+
+
+def game_lines(d):
+    """The game's last pregame line from ESPN's pickcenter (DraftKings): home spread and total."""
+    pc = (d.get("pickcenter") or [{}])[0]
+    sp, tot = pc.get("spread"), pc.get("overUnder")
+    home = None
+    if sp is not None:
+        sp = abs(float(sp))
+        if (pc.get("homeTeamOdds") or {}).get("favorite"):
+            home = -sp
+        elif (pc.get("awayTeamOdds") or {}).get("favorite"):
+            home = sp
+        elif sp == 0:
+            home = 0.0
+    return {"spread": home, "total": float(tot) if tot not in (None, 0) else None}
+
+
+def bet_record(gl, tid):
+    """A team's record against the spread and on totals, from each finished game's closing DraftKings line.
+
+    Each record is [wins, losses, pushes] (for totals: overs, unders, pushes). Neutral-site games count
+    in the overall records only.
+    """
+    keys = ("ats", "atsHome", "atsAway", "atsFav", "atsDog", "ou", "ouHome", "ouAway")
+    rec = {k: [0, 0, 0] for k in keys}
+    margins, last = [], []
+    for g in gl:
+        ln = g.get("line") or {}
+        me = g["teams"].get(tid)
+        op = next((t for i, t in g["teams"].items() if i != tid), None)
+        if not me or not op:
+            continue
+        where = None if g.get("neutral") else ("Home" if me["ha"] == "home" else "Away")
+        if ln.get("spread") is not None:
+            mine = ln["spread"] if me["ha"] == "home" else -ln["spread"]
+            m = me["pts"] - op["pts"] + mine
+            r = 0 if m > 0 else 1 if m < 0 else 2
+            ks = ["ats"] + ([f"ats{where}"] if where else []) + (["atsFav"] if mine < 0 else ["atsDog"] if mine > 0 else [])
+            for k in ks:
+                rec[k][r] += 1
+            margins.append(m)
+            last.append("WLP"[r])
+        if ln.get("total") is not None:
+            t = me["pts"] + op["pts"] - ln["total"]
+            r = 0 if t > 0 else 1 if t < 0 else 2
+            for k in ["ou"] + ([f"ou{where}"] if where else []):
+                rec[k][r] += 1
+    rec["cover"] = round(sum(margins) / len(margins), 1) if margins else None
+    rec["last5"] = last[-5:][::-1]
+    return rec
 
 
 def scoreboard(lg, week):
@@ -842,7 +894,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
                     "abbr": t.get("abbreviation", "?"), "rank": rank if rank and rank <= 25 else None,
                     "color": "#" + (t.get("color") or "333333"), "alt": "#" + (t.get("alternateColor") or "ffffff"),
                     "overall": overall, "streak": streak, "rest": rest, "last5": last5, "ha": x["homeAway"],
-                    "loc": t.get("location")}
+                    "loc": t.get("location"), "bet": bet_record(gl, tid)}
 
         away, home = team_block(comp["away"]), team_block(comp["home"])
 
@@ -1028,7 +1080,7 @@ def parse_bb(d):
                     "stl": num(v.get("STL")), "blk": num(v.get("BLK")), "tpm": mk(v.get("3PT"))[0]}
     if any("fga" not in r for r in teams.values()):
         return None
-    return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams}
+    return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams, "line": game_lines(d)}
 
 
 BB_ROWS = [  # (section, label, key, higher_is_better, kind)
@@ -1151,7 +1203,7 @@ def run_basketball(lg, key, start, groups):
                     "color": "#" + (t.get("color") or "333333"), "alt": "#" + (t.get("alternateColor") or "ffffff"),
                     "overall": next((r["summary"] for r in x.get("records", []) if r.get("type") == "total"), ""),
                     "streak": streak, "rest": (dday(e["date"]) - dday(gl[-1]["date"])).days if gl else None,
-                    "last5": res[:5], "ha": x["homeAway"], "loc": t.get("location")}
+                    "last5": res[:5], "ha": x["homeAway"], "loc": t.get("location"), "bet": bet_record(gl, tid)}
 
         away, home = team_block(comp["away"]), team_block(comp["home"])
         rnd = lambda v: round(v, 2) if isinstance(v, float) else v
@@ -1729,8 +1781,18 @@ def update_history(path_in, path_out):
                 continue
             for kind, a in (g.get("analysis") or {}).items():
                 pid = f"{lg}-{g['id']}-{kind}"
-                if a["verdict"] in ("Take", "Take small") and pid not in hist:
-                    hist[pid] = {"id": pid, **pick_from_game(lg, g, kind, a), "verdict": a["verdict"], "score": a["score"],
+                take = a["verdict"] in ("Take", "Take small")
+                # Every 4+ pick is logged so results can be broken out by confidence; the model P&L counts
+                # only Takes. A pick logged as a Fade that later turns into a Take is re-logged at the new price.
+                old = hist.get(pid)
+                if (take or a["score"] >= 4) and (not old or (take and old.get("verdict") not in ("Take", "Take small"))):
+                    try:
+                        pk = pick_from_game(lg, g, kind, a)
+                    except (KeyError, TypeError):
+                        continue
+                    if pk.get("price") is None:
+                        continue
+                    hist[pid] = {"id": pid, **pk, "verdict": a["verdict"], "score": a["score"],
                                  "stake": 0.5 if a["verdict"] == "Take small" else 1, "result": None, "logged": now}
                     added += 1
             for p in g.get("props") or []:
