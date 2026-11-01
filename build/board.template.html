@@ -284,6 +284,38 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .r-yes::before { content: "✓"; color: var(--win); } .r-no::before { content: "✗"; color: var(--loss); }
 .r-warn::before { content: "⚠"; color: var(--gold); } .r-tip::before { content: "$"; color: var(--cyan); }
 .pick .reason { grid-column: 1 / -1; font-size: .82rem; line-height: 1.45; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 6px; }
+.ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
+.srctabs button { display: grid; gap: 1px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 8px 16px; color: var(--muted); cursor: pointer; min-width: 130px; }
+.srctabs button span { font: 800 .95rem var(--f-display); letter-spacing: .04em; text-transform: uppercase; }
+.srctabs button b { font: 800 1.25rem var(--f-display); color: var(--ink); font-variant-numeric: tabular-nums; }
+.srctabs button[aria-selected="true"] { background: var(--board); box-shadow: inset 0 0 0 1px var(--cyan); }
+.srctabs button[aria-selected="true"] span { color: var(--cyan); }
+.pbtn.primary { background: var(--gold); border-color: var(--gold); color: #1a1405; font-weight: 800; }
+.pbtn.primary:hover { filter: brightness(1.08); }
+.ptool { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; }
+.dnav { display: flex; gap: 6px; align-items: center; }
+.ptool .unit input { width: 64px; }
+.sumbar { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); background: #0c1117; border: 1px solid var(--line); border-radius: 10px; }
+.sumbar > div { padding: 14px 18px; border-left: 1px solid var(--line); display: grid; gap: 2px; align-content: center; }
+.sumbar > div:first-child { border-left: 0; }
+.sumbar span { color: var(--muted); font-size: .85rem; } .sumbar small { color: var(--muted); font-size: .8rem; }
+.sumbar b { font: 800 1.6rem var(--f-display); font-variant-numeric: tabular-nums; }
+.sumbar .big b { font-size: 2.4rem; line-height: 1; }
+.empty { background: #0c1117; border: 1px dashed var(--line); border-radius: 10px; padding: 28px 22px; text-align: center; display: grid; gap: 8px; justify-items: center; }
+.empty b { font: 800 1.4rem var(--f-display); text-transform: uppercase; }
+.empty p { margin: 0; color: var(--muted); max-width: 520px; }
+.empty .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.how { background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--muted); }
+.how summary { cursor: pointer; font-weight: 700; color: var(--ink); }
+.how p { margin: 8px 0 0; }
+.foot { margin: 0; color: var(--muted); font-size: .85rem; }
+@media (max-width: 700px) {
+  .sumbar { grid-template-columns: repeat(3, 1fr); } .sumbar .big { grid-column: 1 / -1; border-bottom: 1px solid var(--line); }
+  .sumbar > div:nth-child(2) { border-left: 0; } .sumbar > div { padding: 12px 14px; } .sumbar b { font-size: 1.3rem; }
+  .srctabs { width: 100%; } .srctabs button { flex: 1; min-width: 0; }
+  .ptool .seg { width: 100%; } .ptool .seg button { flex: 1; padding: 8px 4px; }
+}
 .rec3 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .rec3 button { display: grid; gap: 2px; text-align: left; background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; color: var(--ink); cursor: pointer; min-width: 0; }
 .rec3 button[aria-pressed="true"] { border-color: var(--cyan); box-shadow: inset 0 -3px 0 var(--cyan); }
@@ -995,39 +1027,51 @@ function renderPlays() {
       <p class="msg" id="f-msg" style="grid-column:1/-1"><span id="f-risk"></span>${f.grade ? (f.grade.kind === 'prop' ? 'The price is pre-filled from Kalshi\'s fair odds (or -110 without one); change it to what your book shows. ' : '') + 'This play grades itself once the game is final.' : 'Manual plays are graded with the W / L / P buttons.'}</p>
     </form>` : '';
   const profit = s.units * U;
+  const pc = x => x > 0 ? 'pos' : x < 0 ? 'neg' : '';
+  const rec = x => `${x.w}-${x.l}${x.pu ? '-' + x.pu : ''}`;
+  const empty = dbState === 'ready' && !scope.length;
+  const when = period === 'day' ? 'on ' + periodLabel(period, pday) : period === 'all' ? 'yet' : 'in this ' + period;
   $('board').innerHTML = `<div class="plays">
-    <div class="pnav"><h2>${src === 'mine' ? 'My Plays' : esc(SRC[src].name)}</h2><span class="spacer"></span>
-      <label class="unit" for="p-unit">1 unit = $<input id="p-unit" type="number" min="1" step="1" value="${esc(U)}" inputmode="decimal"></label>
-      <button type="button" class="pbtn" id="p-grade">Grade</button>
-      <button type="button" class="pbtn" id="p-add">+ Add play</button></div>
-    <div class="pnav">
-      <div class="seg" role="group" aria-label="Period">${PERIODS.map(([k, v]) => `<button type="button" data-per="${k}" aria-pressed="${period === k}">${v}</button>`).join('')}</div>
+    <div class="ph">
+      <div class="srctabs" role="tablist" aria-label="Whose plays">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to)), v = ss.units * U;
+        return `<button type="button" role="tab" data-src="${key}" aria-selected="${src === key}"><span>${key === 'mine' ? 'My plays' : 'Model picks'}</span><b class="${pc(v)}">${ss.n ? money(v) : '—'}</b></button>`; }).join('')}</div>
       <span class="spacer"></span>
-      <button type="button" class="pbtn" id="p-prev" aria-label="Previous ${period}" ${period === 'all' ? 'disabled' : ''}>‹</button>
-      <span class="pdate">${esc(periodLabel(period, pday))}</span>
-      <button type="button" class="pbtn" id="p-next" aria-label="Next ${period}" ${period === 'all' ? 'disabled' : ''}>›</button>
-      <button type="button" class="pbtn" id="p-today">Today</button></div>
-    ${unitSize ? '' : `<p class="msg">Set what one unit is worth to you in dollars; it's saved with your plays. Until then, profit assumes $10 a unit.</p>`}${db && db.local && src === 'mine' ? `<p class="msg">Your plays are saved in this browser on this device.</p>` : ''}
-    ${form}
-    <div class="rec3">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to)), v = ss.units * U;
-      return `<button type="button" data-src="${key}" aria-pressed="${src === key}"><span>${esc(sr.name)}</span><b class="${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${money(v)}</b><small>${ss.w}-${ss.l}${ss.pu ? '-' + ss.pu : ''} · ${usign(ss.units)}${ss.n > ss.settledN ? ` · ${ss.n - ss.settledN} pending` : ''}</small></button>`; }).join('')}</div>
-    ${src === 'model' ? `<p class="msg">What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted): each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p>` : ''}
-    <div class="cards">
-      <div class="card"><span>Profit</span><b class="${profit > 0 ? 'pos' : profit < 0 ? 'neg' : ''}">${money(profit)}</b><small>${usign(s.units)} · ${profit >= 0 ? 'up' : 'down'}</small></div>
-      <div class="card"><span>Record</span><b>${s.w}-${s.l}${s.pu ? '-' + s.pu : ''}</b><small>${s.n} play${s.n === 1 ? '' : 's'}${s.n > s.settledN ? ` · ${s.n - s.settledN} pending` : ''}</small></div>
-      <div class="card"><span>ROI</span><b class="${s.roi > 0 ? 'pos' : s.roi < 0 ? 'neg' : ''}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small></div>
-      <div class="card"><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled play${s.settledN === 1 ? '' : 's'}</small></div>
+      ${src === 'mine' ? `<button type="button" class="pbtn" id="p-grade" title="Grade finished plays now">Grade</button><button type="button" class="pbtn primary" id="p-add">+ Add play</button>` : ''}
     </div>
-    ${chart(scope, period, from, to)}
-    ${src === 'model' && dbState !== 'off' ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to)) : ''}
-    ${body}
+    <div class="ptool">
+      <div class="seg" role="group" aria-label="Period">${PERIODS.map(([k, v]) => `<button type="button" data-per="${k}" aria-pressed="${period === k}">${v}</button>`).join('')}</div>
+      <div class="dnav">${period === 'all' ? '<span class="pdate">All time</span>' : `<button type="button" class="pbtn" id="p-prev" aria-label="Previous ${period}">‹</button>
+        <span class="pdate">${esc(periodLabel(period, pday))}</span>
+        <button type="button" class="pbtn" id="p-next" aria-label="Next ${period}">›</button>
+        <button type="button" class="pbtn" id="p-today">Today</button>`}</div>
+      <span class="spacer"></span>
+      <label class="unit" for="p-unit" title="${unitSize ? 'What one unit is worth to you' : 'Set what one unit is worth to you (assumes $10 until you do)'}">Unit $<input id="p-unit" type="number" min="1" step="1" value="${esc(U)}" inputmode="decimal"></label>
+    </div>
+    ${form}
+    ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
+    ${empty ? `<div class="empty"><b>No plays ${esc(when)}</b>
+        <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>
+        <div class="row">${src === 'mine' ? '<button type="button" class="pbtn primary" id="p-add2">+ Add play</button>' : ''}<button type="button" class="pbtn" id="p-home">Browse Top Picks</button>${period !== 'all' ? '<button type="button" class="pbtn" id="p-all">See all time</button>' : ''}</div></div>`
+    : dbState === 'ready' ? `<div class="sumbar">
+        <div class="big"><span>Profit</span><b class="${pc(profit)}">${money(profit)}</b><small>${usign(s.units)}${s.n > s.settledN ? ` · ${s.n - s.settledN} pending` : ''}</small></div>
+        <div><span>Record</span><b>${rec(s)}</b><small>${s.n} play${s.n === 1 ? '' : 's'}</small></div>
+        <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small></div>
+        <div><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled</small></div>
+      </div>
+      ${s.settledN ? chart(scope, period, from, to) : ''}` : ''}
+    ${src === 'model' && dbState !== 'off' && !empty ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to)) : ''}
+    ${empty ? '' : body}
+    ${db && db.local && src === 'mine' ? `<p class="foot">Your plays are saved in this browser on this device.</p>` : ''}
   </div>`;
   wireChart();
   $('board').querySelectorAll('[data-per]').forEach(b => b.onclick = () => { period = b.dataset.per; renderPlays(); });
   $('board').querySelectorAll('[data-src]').forEach(b => b.onclick = () => { src = b.dataset.src; confirmDel = null; renderPlays(); });
-  $('p-prev').onclick = () => { pday = shiftPeriod(period, pday, -1); renderPlays(); };
-  $('p-next').onclick = () => { pday = shiftPeriod(period, pday, 1); renderPlays(); };
-  $('p-today').onclick = () => { pday = todayET(); renderPlays(); };
+  const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+  on('p-prev', () => { pday = shiftPeriod(period, pday, -1); renderPlays(); });
+  on('p-next', () => { pday = shiftPeriod(period, pday, 1); renderPlays(); });
+  on('p-today', () => { pday = todayET(); renderPlays(); });
+  on('p-home', () => setMode('home'));
+  on('p-all', () => { period = 'all'; renderPlays(); });
   $('p-unit').onchange = e => setTimeout(() => saveUnit(e.target), 0);  // redraw after the input finishes losing focus
   const saveUnit = async el => {
     const e = { target: el };
@@ -1037,8 +1081,9 @@ function renderPlays() {
     if (!db) { toast('Unit size applies for this visit; sign in on claude.ai to save it.'); return; }
     try { await db.doc('plays/_settings').set({ unitSize: v }); toast(`1 unit = ${money(v, false)}`); } catch (err) { toast('Could not save the unit size.'); }
   };
-  $('p-grade').onclick = () => gradeAll(false);
-  $('p-add').onclick = () => { draft = { date: pday, time: '', league: league, matchup: '', play: '', price: -110, book: 'DK', stake: 1 }; renderPlays(); };
+  on('p-grade', () => gradeAll(false));
+  const addPlay = () => { draft = { date: pday, time: '', league: league, matchup: '', play: '', price: -110, book: 'DK', stake: 1 }; renderPlays(); };
+  on('p-add', addPlay); on('p-add2', addPlay);
   if (f) {
     const risk = () => { const st = +$('f-stake').value || 0, pr = priceNum($('f-price').value); $('f-risk').textContent = st > 0 ? `Risking ${money(st * U, false)}${isFinite(pr) && Math.abs(pr) >= 100 ? ` to win ${money(st * U * (pr > 0 ? pr / 100 : 100 / -pr), false)}` : ''}. ` : ''; };
     risk(); $('f-stake').oninput = risk; $('f-price').oninput = risk;

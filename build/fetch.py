@@ -1636,7 +1636,9 @@ def blend_confidence(lg, g, n):
         tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
         sig += tr
         side = pos if sig > 0 else ("home" if kind != "total" else "under")
-        score = round(min(10.0, abs(sig)), 1)
+        x = abs(sig)
+        # Soft ceiling above 7: stacked signals still read as a strong Play, but 10.0 means nearly everything agrees.
+        score = round(x if x <= 7 else min(10.0, 7 + 3 * (1 - math.exp(-(x - 7) / 3))), 1)
         ln = g["lines"]
         if kind == "total":
             call = f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}" if ln.get("totalNum") is not None else None
