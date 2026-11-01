@@ -233,6 +233,10 @@ td.rank { font-weight: 700; }
 .ctbl tbody th { min-width: 150px; text-align: left; font: 800 .95rem var(--f-display); text-transform: uppercase; }
 .ctbl tr.sub th { font: 600 .85rem var(--f-body); text-transform: none; color: var(--muted); padding-left: 18px; }
 .ctbl td small { display: block; color: var(--muted); font-size: .75rem; }
+.ctbl td small.pos { color: var(--win); } .ctbl td small.neg { color: var(--loss); }
+.ctbl tbody th small { display: block; font: 500 .72rem var(--f-body); text-transform: none; color: var(--muted); letter-spacing: 0; }
+.ctbl tr.sub th { padding-left: 8px; }
+.ct-sum { margin: 4px 0 10px; font-size: .95rem; line-height: 1.5; }
 .trendw { position: sticky; left: 0; width: min(760px, calc(100vw - 60px)); }
 table.trend { width: 100%; table-layout: fixed; } table.trend td, table.trend th { padding-left: 4px; padding-right: 4px; } table.trend td.stat { white-space: normal; } table.trend th { text-align: center; } table.trend td { text-align: center; } table.trend td.stat { color: var(--muted); }
 table.trend td small { color: var(--muted); font-weight: 600; }
@@ -1104,26 +1108,35 @@ function wireChart() {
   plot.onpointerleave = () => { tip.hidden = true; cross.style.opacity = 0; };
 }
 
-// Results by confidence: every 4+ pick the model logged (Takes and faded Leans), graded at 1 unit each.
+// Results: the bets we made, next to what the picks we skipped would have done (graded at 1 unit, never bet).
 function confTable(list) {
   const done = list.filter(p => p.result && p.score != null);
   const pending = list.filter(p => !p.result).length;
   const u1 = p => p.result === 'W' ? (priceNum(p.price) > 0 ? priceNum(p.price) / 100 : 100 / Math.abs(priceNum(p.price))) : p.result === 'L' ? -1 : 0;
-  const cell = ps => {
+  const rec = ps => { const w = ps.filter(p => p.result === 'W').length, l = ps.filter(p => p.result === 'L').length; return { w, l, pu: ps.length - w - l, u: ps.reduce((a, p) => a + u1(p) * (/^Take/.test(p.verdict) ? (+p.stake || 1) : 1), 0) }; };
+  const cell = (ps, skipped) => {
     if (!ps.length) return `<td class="dash">—</td>`;
-    const w = ps.filter(p => p.result === 'W').length, l = ps.filter(p => p.result === 'L').length, pu = ps.length - w - l;
-    const u = ps.reduce((a, p) => a + u1(p), 0);
-    return `<td><b>${w}-${l}${pu ? '-' + pu : ''}</b> <span class="${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${usign(u)}</span>${w + l ? `<small>${Math.round(100 * w / (w + l))}%</small>` : ''}</td>`;
+    const r = rec(ps);
+    const note = skipped ? (r.u > 0.05 ? `<small class="neg">missed ${usign(r.u)}</small>` : r.u < -0.05 ? `<small class="pos">saved ${Math.abs(r.u).toFixed(2)}u</small>` : '<small>even</small>')
+      : (r.w + r.l ? `<small>${Math.round(100 * r.w / (r.w + r.l))}% wins</small>` : '');
+    return `<td><b>${r.w}-${r.l}${r.pu ? '-' + r.pu : ''}</b>${skipped ? '' : ` <span class="${r.u > 0 ? 'pos' : r.u < 0 ? 'neg' : ''}">${usign(r.u)}</span>`}${note}</td>`;
   };
-  const tiers = [['7+ Play', p => p.score >= 7], ['4–7 Lean', p => p.score >= 4 && p.score < 7], ['…Leans we took', p => p.score >= 4 && p.score < 7 && p.verdict !== 'Fade'], ['…Leans we faded', p => p.score >= 4 && p.score < 7 && p.verdict === 'Fade'], ['Under 4 Pass', p => p.score < 4]];
   const kindOf = p => ({ ml: 'ml', spread: 'spread', total: 'total', prop: 'prop' })[p.grade?.kind] || 'other';
-  const cols1 = [['All', () => true], ...Object.entries(LEAGUES).map(([k, v]) => [v.short, p => p.league === k])];
-  const cols2 = [['Moneyline', p => kindOf(p) === 'ml'], ['Spread', p => kindOf(p) === 'spread'], ['Total', p => kindOf(p) === 'total'], ['Props', p => kindOf(p) === 'prop']];
+  const took = p => /^Take/.test(p.verdict || '');
+  const rows = [['Bets we made', p => took(p), false, 'Every Take, at its stake'],
+    ['Leans we skipped', p => !took(p) && p.score >= 4, true, 'Scored 4+, but not enough to bet'],
+    ['Passes we skipped', p => !took(p) && p.score < 4, true, 'Scored under 4: no real edge']];
+  const noMl = p => kindOf(p) !== 'ml';  // moneylines aren't in the P&L, so the sport columns leave them out too
+  const cols1 = [['All', noMl], ...Object.entries(LEAGUES).map(([k, v]) => [v.short, p => p.league === k && noMl(p)])];
+  const cols2 = [['Moneyline (not in P&L)', p => kindOf(p) === 'ml'], ['Spread', p => kindOf(p) === 'spread'], ['Total', p => kindOf(p) === 'total'], ['Props', p => kindOf(p) === 'prop']];
   const table = (title, cols) => `<div class="scroll"><table class="ctbl"><thead><tr><th>${title}</th>${cols.map(([n]) => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>
-    ${tiers.map(([n, f]) => `<tr class="${n.startsWith('…') ? 'sub' : ''}"><th>${esc(n)}</th>${cols.map(([, cf]) => cell(done.filter(p => f(p) && cf(p)))).join('')}</tr>`).join('')}</tbody></table></div>`;
-  return `<div class="ctab"><div class="ch-h"><span>Results by confidence level</span><small>${done.length} graded${pending ? ` · ${pending} pending` : ''}</small></div>
+    ${rows.map(([n, f, sk, sub]) => `<tr class="${sk ? 'sub' : ''}"><th>${esc(n)}<small>${esc(sub)}</small></th>${cols.map(([, cf]) => cell(done.filter(p => f(p) && cf(p)), sk)).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const bet = rec(done.filter(p => took(p) && noMl(p))), sk = rec(done.filter(p => !took(p) && noMl(p)));
+  const head = done.length ? `<p class="ct-sum">Our bets (spreads, totals and props, same as the profit above) are <b>${bet.w}-${bet.l}${bet.pu ? '-' + bet.pu : ''}</b>, <b class="${bet.u > 0 ? 'pos' : bet.u < 0 ? 'neg' : ''}">${usign(bet.u)}</b>. The picks we skipped would have gone ${sk.w}-${sk.l} at 1 unit each (${sk.u > 0.05 ? `<span class="neg">${usign(sk.u)} we left on the table</span>` : sk.u < -0.05 ? `<span class="pos">sitting out saved ${Math.abs(sk.u).toFixed(2)}u</span>` : 'about even'}). Skipped picks are never bet, so they don't count in the profit above.</p>` : '';
+  return `<div class="ctab"><div class="ch-h"><span>Bets vs. what we skipped</span><small>${done.length} graded${pending ? ` · ${pending} pending` : ''}</small></div>
+    ${head}
     ${done.length ? table('By sport', cols1) + table('By bet type', cols2) : '<p class="ch-empty">Fills in as picks are graded.</p>'}
-    <p class="ch-empty">Every game the model scored, graded at 1 unit at the price when it was logged on the side it leaned. Faded Leans and Passes aren't bet: if they lose, sitting them out was right. Use it to see which score ranges, sports and bet types to trust.</p></div>`;
+    <p class="ch-empty">"Missed" means the skipped picks would have won money if we'd bet them; "saved" means sitting them out was right. If a skipped row keeps showing "missed" over a few weeks, that bar is too strict and the calibration loosens it.</p></div>`;
 }
 
 // One small profit graph per sport, under the combined graph; tapping one filters the page to that sport.
