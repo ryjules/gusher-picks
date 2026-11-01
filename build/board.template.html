@@ -322,6 +322,12 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
 .rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.ptype { grid-column: 1 / -1; display: inline-flex; gap: 4px; } .ptype button { background: transparent; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 14px; font: 700 .85rem var(--f-display); letter-spacing: .05em; cursor: pointer; }
+.ptype button[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); }
+.legs { display: grid; gap: 6px; grid-column: 1 / -1; } .leg { display: grid; grid-template-columns: 70px 1fr 1.4fr 90px 34px; gap: 6px; align-items: center; }
+.leg-lg { font: 700 .8rem var(--f-display); color: var(--muted); } .leg-auto { grid-column: 2 / -1; color: var(--muted); font-size: .72rem; margin-top: -4px; }
+.lr { font-style: normal; font-weight: 800; margin-right: 3px; } .lr.W { color: var(--win); } .lr.L { color: var(--loss); } .lr.P { color: var(--muted); }
+@media (max-width: 640px) { .leg { grid-template-columns: 1fr 1fr; } }
 .ou { font: 800 1.05em var(--f-display); margin-right: 3px; display: inline-block !important; background: none; }
 .ou.o { color: var(--win); } .ou.u { color: var(--loss); }
 .lbar { margin-top: 4px; width: 165px; } .ptbl td:has(.lbar) { min-width: 180px; } .lbar span { display: block; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
@@ -987,6 +993,12 @@ function fromProp(p, lg = league) {
     grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: p.side === 'Under' ? 'under' : 'over', line: p.line } };
 }
 function gradeOf(p) {
+  if (p.type === 'parlay') {
+    const rs = (p.legs || []).map(l => l.grade ? gradeOf(l) : null);
+    if (rs.includes('L')) return 'L';
+    if (!rs.length || rs.includes(null)) return null;  // a leg is still pending or has to be graded by hand
+    return rs.every(r => r === 'P' || r === 'V') ? 'P' : 'W';
+  }
   const gr = p.grade; if (!gr) return null;
   const g = findGame(gr.league, gr.game); if (!g || !g.final) return null;
   const f = g.final, cmp = x => x > 0 ? 'W' : x < 0 ? 'L' : 'P';
@@ -1004,13 +1016,41 @@ async function gradeAll(quiet) {
   if (!db) return;
   const todo = plays.filter(p => !p.result).map(p => ['plays', p, gradeOf(p)]).filter(([, , r]) => r);
   for (const [col, p, r] of todo) {
-    try { await db.collection(col).doc(p.id).update({ result: r, gradedAt: new Date().toISOString() }); } catch (e) { if (!quiet) toast('Could not save a grade. Try again.'); return; }
+    const upd = { result: r, gradedAt: new Date().toISOString() };
+    if (p.type === 'parlay' && r === 'W') {  // pushed legs drop out: pay on the legs that won
+      const won = (p.legs || []).filter(l => gradeOf(l) === 'W'), pp = parlayPrice(won);
+      if (pp && won.length < (p.legs || []).length) upd.price = pp;
+    }
+    try { await db.collection(col).doc(p.id).update(upd); } catch (e) { if (!quiet) toast('Could not save a grade. Try again.'); return; }
   }
   if (!quiet) toast(todo.length ? `Graded ${todo.length} play${todo.length > 1 ? 's' : ''}` : 'Nothing new to grade yet. Grades fill in after the daily refresh.');
 }
 function openAdd(prefill) {
+  if (draft && draft.type === 'parlay' && prefill) {  // building a parlay: + Track adds a leg instead of starting over
+    syncDraft();
+    draft.legs.push({ league: prefill.league, matchup: prefill.matchup, play: prefill.play, price: prefill.price, grade: prefill.grade || null, date: prefill.date, time: prefill.time });
+    toast(`Added to parlay (${draft.legs.length} leg${draft.legs.length > 1 ? 's' : ''})`);
+    setMode('plays');
+    return;
+  }
   draft = prefill || { date: pday, time: '', league: league, matchup: '', play: '', price: -110, book: 'DK', stake: 1 };
   setMode('plays');
+}
+// Parlay odds from the legs: multiply the decimal odds.
+function parlayPrice(legs) {
+  const ds = legs.map(l => toDec(priceNum(l.price))).filter(x => isFinite(x) && x > 1);
+  if (!ds.length || ds.length !== legs.length) return null;
+  return Math.round(toAm(ds.reduce((a, b) => a * b, 1)));
+}
+// Read what's typed in the parlay form back into the draft before redrawing it.
+function syncDraft() {
+  if (!draft || draft.type !== 'parlay' || !$('addf')) return;
+  draft.legs.forEach((l, i) => {
+    const m = $(`f-lm-${i}`), pl = $(`f-lp-${i}`), pr = $(`f-lo-${i}`), lg = $(`f-ll-${i}`);
+    if (m) l.matchup = m.value.trim(); if (pl) l.play = pl.value.trim(); if (pr) l.price = priceNum(pr.value); if (lg) l.league = lg.value;
+  });
+  draft.date = $('f-date').value; draft.book = $('f-book').value; draft.stake = +$('f-stake').value || 1;
+  if (draft.priceManual) draft.price = priceNum($('f-price').value);
 }
 function summary(list) {
   const settled = list.filter(p => p.result && p.result !== 'V');
@@ -1235,7 +1275,11 @@ function renderPlays() {
         const u = unitsOf(p);
         const pm = isProp(p) ? (p.play || '').match(/^(.*?) ((?:[ou][\d.]+ .+)|anytime TD)$/) : null;
         const ou = pm && /^[ou]/.test(pm[2]) ? (pm[2][0] === 'o' ? '<b class="ou o">O</b> ' : '<b class="ou u">U</b> ') : '';
-        const play = pm ? `<b>${esc(pm[1])}</b><small class="pl-sub">${ou}${esc(pm[2].replace(/^o/, 'Over ').replace(/^u/, 'Under '))}</small>` : esc(p.play);
+        if (p.type === 'parlay') {
+          const st = l => { const r = l.grade ? gradeOf(l) : null; return r ? `<i class="lr ${r}">${r}</i>` : '<i class="lr">·</i>'; };
+          p._play = `<b>${(p.legs || []).length}-leg parlay</b>${(p.legs || []).map(l => `<small class="pl-sub">${st(l)} ${esc(l.play)}${l.matchup ? ` <span class="muted">${esc(l.matchup)}</span>` : ''}</small>`).join('')}`;
+        }
+        const play = p._play ? p._play : pm ? `<b>${esc(pm[1])}</b><small class="pl-sub">${ou}${esc(pm[2].replace(/^o/, 'Over ').replace(/^u/, 'Under '))}</small>` : esc(p.play);
         const chip = p.verdict === 'Take small' || p.verdict === 'Take large' ? ' ' + vchip(p.verdict) : '';
         return `<tr><td class="mu">${esc(p.time || '')}${daily ? ' ' + esc(LEAGUES[p.league]?.short || '') : ''}</td><td class="mu" title="${esc(p.matchup)}">${esc(p.matchup)}</td><td class="play">${play}</td>
           <td class="num">${esc(priceNum(p.price) > 0 ? '+' + priceNum(p.price) : priceNum(p.price))}</td><td>${esc(p.book)}</td><td class="num">${esc(p.stake)}u <small class="muted">${money((+p.stake || 1) * U, false)}</small></td>
@@ -1251,13 +1295,30 @@ function renderPlays() {
         <div class="scroll"><table class="ptbl" style="min-width:900px"><thead><tr><th>Time</th><th>Matchup</th><th>${label === 'Player props' ? 'Player' : 'Play'}</th><th>Price</th><th>Book</th><th>Stake</th><th>Result</th><th>Units</th><th>Profit</th><th></th></tr></thead>
         <tbody>${xs.map(row).join('')}</tbody></table></div></div>`;
       };
-      const games = ps.filter(p => !isProp(p)), props = ps.filter(isProp);
+      const parl = ps.filter(p => p.type === 'parlay');
+      const games = ps.filter(p => !isProp(p) && p.type !== 'parlay'), props = ps.filter(p => isProp(p) && p.type !== 'parlay');
       return `<details class="grp" data-gk="${esc(gk)}" ${closedGroups.has(gk) ? '' : 'open'}><summary class="lg-h">${esc(title)}<small>${ps.length} play${ps.length > 1 ? 's' : ''} · ${gs.w}-${gs.l}${gs.pu ? '-' + gs.pu : ''}${gs.settledN ? ` · <span class="${gm > 0 ? 'pos' : gm < 0 ? 'neg' : ''}">${money(gm)}</span>` : ''}</small></summary>
-      ${sect(games.some(p => p.grade?.kind === 'ml') ? 'Spreads, totals &amp; moneylines' : 'Spreads &amp; totals', games)}${sect('Player props', props)}</details>`;
+      ${sect(games.some(p => p.grade?.kind === 'ml') ? 'Spreads, totals &amp; moneylines' : 'Spreads &amp; totals', games)}${sect('Player props', props)}${sect('Parlays', parl)}</details>`;
     }).join('');
   }
   const f = draft;
-  const form = f ? `<form class="form" id="addf">
+  const legRow = (l, i) => `<div class="leg">${l.grade ? `<span class="leg-lg">${esc(LEAGUES[l.league]?.short || '')}</span>` : `<select id="f-ll-${i}" aria-label="Leg ${i + 1} league">${Object.entries(LEAGUES).map(([k, v]) => `<option value="${k}" ${l.league === k ? 'selected' : ''}>${v.short}</option>`).join('')}</select>`}
+      <input id="f-lm-${i}" value="${esc(l.matchup || '')}" placeholder="Matchup" aria-label="Leg ${i + 1} matchup">
+      <input id="f-lp-${i}" value="${esc(l.play || '')}" placeholder="Pick" aria-label="Leg ${i + 1} pick" required>
+      <input id="f-lo-${i}" value="${esc(l.price > 0 ? '+' + l.price : (l.price ?? ''))}" placeholder="-110" inputmode="numeric" aria-label="Leg ${i + 1} odds" required>
+      <button type="button" class="del" data-legdel="${i}" aria-label="Remove leg ${i + 1}">✕</button>${l.grade ? '<small class="leg-auto">grades itself</small>' : ''}</div>`;
+  const isParlay = f && f.type === 'parlay';
+  const typeSw = f ? `<div class="ptype" role="group" aria-label="Play type"><button type="button" data-ptype="single" aria-pressed="${!isParlay}">Single</button><button type="button" data-ptype="parlay" aria-pressed="${!!isParlay}">Parlay</button></div>` : '';
+  const form = isParlay ? `<form class="form" id="addf">${typeSw}
+      <label for="f-date">Date<input id="f-date" type="date" value="${esc(f.date)}" required></label>
+      <label for="f-book">Book<input id="f-book" value="${esc(f.book)}"></label>
+      <label for="f-stake">Stake (units)<input id="f-stake" type="number" step="0.25" min="0.25" value="${esc(f.stake)}"></label>
+      <div class="legs wide">${f.legs.map(legRow).join('') || '<p class="msg">No legs yet. Add one below, or tap + Track on any pick on the board while this form is open.</p>'}
+        <button type="button" class="pbtn" id="f-legadd">+ Add leg</button></div>
+      <label for="f-price">Parlay odds<input id="f-price" value="${esc((f.priceManual ? f.price : parlayPrice(f.legs)) > 0 ? '+' + (f.priceManual ? f.price : parlayPrice(f.legs)) : (f.priceManual ? f.price : parlayPrice(f.legs)) ?? '')}" inputmode="numeric" placeholder="from the legs" required></label>
+      <div class="actions"><button class="save" type="submit">Save parlay</button><button class="pbtn" type="button" id="f-cancel">Cancel</button></div>
+      <p class="msg" id="f-msg" style="grid-column:1/-1"><span id="f-risk"></span>Odds fill in from the legs; type your book's price to override. Tracked legs grade themselves; a parlay with a hand-entered leg is graded with the W / L / P buttons. A losing leg loses the parlay, and a pushed leg drops out.</p>
+    </form>` : f ? `<form class="form" id="addf">${typeSw}
       <label for="f-date">Date<input id="f-date" type="date" value="${esc(f.date)}" required></label>
       <label for="f-league">League<select id="f-league">${Object.entries(LEAGUES).map(([k, v]) => `<option value="${k}" ${f.league === k ? 'selected' : ''}>${v.short}</option>`).join('')}</select></label>
       <label for="f-time">Time<input id="f-time" value="${esc(f.time)}" placeholder="7:30 PM"></label>
@@ -1342,7 +1403,40 @@ function renderPlays() {
   on('p-grade', () => gradeAll(false));
   const addPlay = () => { draft = { date: pday, time: '', league: league, matchup: '', play: '', price: -110, book: 'DK', stake: 1 }; renderPlays(); };
   on('p-add', addPlay); on('p-add2', addPlay);
-  if (f) {
+  $('board').querySelectorAll('[data-ptype]').forEach(b => b.onclick = () => {
+    if (b.dataset.ptype === 'parlay' && draft.type !== 'parlay') {
+      const first = draft.play ? [{ league: draft.league, matchup: draft.matchup, play: draft.play, price: draft.price, grade: draft.grade || null, date: draft.date, time: draft.time }] : [];
+      draft = { type: 'parlay', date: draft.date, book: draft.book, stake: draft.stake, legs: first, price: null, priceManual: false };
+    } else if (b.dataset.ptype === 'single' && draft.type === 'parlay') {
+      syncDraft(); const l = draft.legs[0] || {};
+      draft = { date: draft.date, time: l.time || '', league: l.league || league, matchup: l.matchup || '', play: l.play || '', price: l.price || -110, book: draft.book, stake: draft.stake, grade: l.grade || null };
+    }
+    renderPlays();
+  });
+  if (isParlay) {
+    on('f-legadd', () => { syncDraft(); draft.legs.push({ league, matchup: '', play: '', price: -110, grade: null }); renderPlays(); });
+    $('board').querySelectorAll('[data-legdel]').forEach(b => b.onclick = () => { syncDraft(); draft.legs.splice(+b.dataset.legdel, 1); renderPlays(); });
+    const odds = () => { if (!draft.priceManual) { syncDraft(); const pp = parlayPrice(draft.legs); $('f-price').value = pp ? (pp > 0 ? '+' + pp : pp) : ''; } };
+    draft.legs.forEach((_, i) => { const e = $(`f-lo-${i}`); if (e) e.oninput = () => { odds(); risk(); }; });
+    const risk = () => { const st = +$('f-stake').value || 0, pr = priceNum($('f-price').value); $('f-risk').textContent = st > 0 ? `Risking ${money(st * U, false)}${isFinite(pr) && Math.abs(pr) >= 100 ? ` to win ${money(st * U * (pr > 0 ? pr / 100 : 100 / -pr), false)}` : ''}. ` : ''; };
+    risk(); $('f-stake').oninput = risk; $('f-price').oninput = () => { draft.priceManual = true; risk(); };
+    $('f-cancel').onclick = () => { draft = null; renderPlays(); };
+    $('addf').onsubmit = async ev => {
+      ev.preventDefault(); syncDraft();
+      const legs = draft.legs.filter(l => l.play);
+      const price = priceNum($('f-price').value);
+      if (legs.length < 2) { $('f-msg').textContent = 'A parlay needs at least two legs.'; $('f-msg').className = 'msg err'; return; }
+      if (!isFinite(price) || Math.abs(price) < 100) { $('f-msg').textContent = 'Enter the parlay odds, like +264.'; $('f-msg').className = 'msg err'; return; }
+      if (!db) { $('f-msg').textContent = 'Plays can only be saved when the board is open on claude.ai while you\'re signed in.'; $('f-msg').className = 'msg err'; return; }
+      const lgs = [...new Set(legs.map(l => l.league))];
+      const doc = { type: 'parlay', date: $('f-date').value, time: legs.map(l => l.time).filter(Boolean).sort()[0] || '', league: lgs[0],
+        matchup: `Parlay · ${legs.length} legs`, play: legs.map(l => l.play).join(' + '), price, book: $('f-book').value.trim() || '—',
+        stake: +$('f-stake').value || 1, result: null, legs: legs.map(l => ({ league: l.league, matchup: l.matchup, play: l.play, price: priceNum(l.price), grade: l.grade || null })),
+        created: new Date().toISOString() };
+      try { await db.collection('plays').add(doc); draft = null; pday = doc.date; src = 'mine'; toast('Parlay saved'); renderPlays(); }
+      catch (e) { $('f-msg').textContent = 'Could not save the parlay. Try again.'; $('f-msg').className = 'msg err'; }
+    };
+  } else if (f) {
     const risk = () => { const st = +$('f-stake').value || 0, pr = priceNum($('f-price').value); $('f-risk').textContent = st > 0 ? `Risking ${money(st * U, false)}${isFinite(pr) && Math.abs(pr) >= 100 ? ` to win ${money(st * U * (pr > 0 ? pr / 100 : 100 / -pr), false)}` : ''}. ` : ''; };
     risk(); $('f-stake').oninput = risk; $('f-price').oninput = risk;
     $('f-cancel').onclick = () => { draft = null; renderPlays(); };
