@@ -845,6 +845,8 @@ def injury_impact(inj, tid, per_team, key):
     d_total = 0.0
     for x in inj:
         w = INJ_W.get((x.get("status") or "").lower())
+        if key == "cfb" and (x.get("status") or "").lower() != "out":
+            w = 0  # college injury reports are unreliable: "everyone's questionable until they play", so only Out counts
         pid = x.get("id")
         if not w or pid not in seen:
             continue
@@ -1585,6 +1587,7 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                 line, opn = lines.get((market, pid)) or (None, None)
                 score, side, prob = prop_score(label, proj, line, hist, BB_COUNT, BB_FLOOR)
                 rows.append({"pid": pid, "open": opn, "cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
+                             "mpg": round(sum(mins[-5:]) / len(mins[-5:]), 1),
                              "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home", "oppRank": orank,
                              "matchup": round(10 * (orank - 1) / (nteams - 1), 1) if orank and nteams > 1 else None,
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
@@ -1618,7 +1621,7 @@ def fsp(v):
 
 
 BIG_SPREAD = {"cfb": 17, "nfl": 10, "nba": 12, "cbb": 14}
-LOW_TOTAL = {"cfb": 45, "nfl": 41, "nba": 215, "cbb": 135}
+LOW_TOTAL = {"cfb": 47.5, "nfl": 41, "nba": 215, "cbb": 135}  # college unders in the 40s: teams can pop off
 SPORT = {"cfb": "fb", "nfl": "fb", "nba": "bb", "cbb": "bb"}
 
 
@@ -1704,7 +1707,7 @@ def stat_matchup(lg, g, nteams):
     laid; the total compares recent scoring (each offense against the other defense) with the posted total.
     """
     R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
-    tot = wsum = tot_both = wsum_both = 0.0
+    tot = wsum = tot_both = wsum_both = max_gap = 0.0
     edges = []  # (net, text, side)
     a_better = h_better = 0
     for r in R.values():
@@ -1726,6 +1729,7 @@ def stat_matchup(lg, g, nteams):
             home_mm = L3_WEIGHT * home_mm + (1 - L3_WEIGHT) * (SR[dfn][0] - SR[off][1]) / nteams
         tot += wt * (away_mm - home_mm)
         wsum += wt
+        max_gap = max(max_gap, abs(away_mm), abs(home_mm))
         if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
             dz = lambda x: math.copysign(max(0.0, abs(x) - TOT_DEAD), x)  # only real gaps count, and by how big they are
             tot_both += wt * (dz(away_mm) + dz(home_mm))
@@ -1771,6 +1775,10 @@ def stat_matchup(lg, g, nteams):
                                       "away" if gap > 0 else "home"))
         side = "away" if strength > 0 else "home"
         base = min(10.0, abs(strength))
+        if SPORT[lg] == "fb" and max_gap < TOT_DEAD:
+            # No real mismatch anywhere (good meets good, bad meets bad): nothing to bet on the side.
+            base = min(base, 3.9)
+            rec_notes.append(("No unit has a big edge on either side: strengths cancel out", "away" if side == "home" else "home"))
         team = g[side]
         notes = [(t, sd) for _, t, sd in sorted(edges, reverse=True)[:3]] + rec_notes
         price = pnum(ln.get("homeML" if side == "home" else "awayML"))
@@ -2012,6 +2020,10 @@ def analyze_game(lg, g, kind, nteams):
             kn = next((x for x in (3, 7, 10) if abs(abs(line_num) - x) <= 0.5), None)
             if kn:
                 tips.append(f"Near the key number {kn}: shop books for the best half-point.")
+    if kind == "total" and lg == "cfb" and ln.get("totalNum") is not None:
+        kt = next((x for x in (52, 56) if abs(ln["totalNum"] - x) <= 0.5), None)
+        if kt:
+            tips.append(f"Near the key total {kt}: shop for {kt} or buy the half-point so a {kt} pushes.")
     if k and k.get("p") is not None:
         (why if k["p"] >= 0.5 else against).append(
             f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']})" + ("." if k["p"] >= 0.5 else ", so the market leans the other way."))
@@ -2064,6 +2076,8 @@ def analyze_prop(p, g=None, lg=None):
         warn.append("Line is far from his recent numbers: check injury or role news.")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
+    if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < 24:
+        warn.append(f"Bench role ({p['mpg']:.0f} minutes a game): his minutes swing night to night.")
     if g is not None:
         w = g.get("wx") or weather_of(g)
         wet = SPORT.get(lg) == "fb" and not w["indoor"] and (w["rain"] >= 35 or w["wind"] >= 15)
