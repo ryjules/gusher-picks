@@ -181,9 +181,12 @@ def parse_summary(d, lg):
                     if "Touchdown" in ty or (nxt and nxt["start"].get("down") == 1
                                              and (nxt["start"].get("team") or {}).get("id") == (start.get("team") or {}).get("id")):
                         o["d3c"] += 1
-            if ty == "Passing Touchdown":
+            # ESPN sometimes files an offensive touchdown under the plain play type ("Pass Reception", "Rush").
+            td = ty in ("Pass Reception", "Rush") and p.get("scoringPlay") \
+                and (p.get("scoringType") or {}).get("name") == "touchdown" and not re.search(r"fumble|intercept", text, re.I)
+            if ty == "Passing Touchdown" or (td and ty == "Pass Reception"):
                 o["passTD"] += 1
-            elif ty == "Rushing Touchdown":
+            elif ty == "Rushing Touchdown" or (td and ty == "Rush"):
                 o["rushTD"] += 1
             if ty.startswith("Sack"):
                 o["sacks"] += 1  # sacks allowed by the offense
@@ -245,16 +248,16 @@ def game_line(g, tid):
 
 
 def summarize(lines):
-    """Average a list of per-game dicts; 3rd-down % is pooled (conversions / attempts)."""
+    """Average a list of per-game dicts. 3rd-down % is the average of each game's rate (the way the
+    Profit Hunt boards show it), so one game with many attempts doesn't outweigh the rest."""
     if not lines:
         return {}
     out = {}
     for k in ["pts", "passY", "passTD", "rushY", "rushTD", "sacksA", "o_pts", "o_passY", "o_passTD", "o_rushY",
               "o_rushTD", "sacks", "toM", "penY", "plays"]:
         out[k] = avg([l.get(k) for l in lines])
-    a, oa = sum(l["d3a"] for l in lines), sum(l["o_d3a"] for l in lines)
-    out["d3pct"] = 100 * sum(l["d3c"] for l in lines) / a if a else None
-    out["o_d3pct"] = 100 * sum(l["o_d3c"] for l in lines) / oa if oa else None
+    out["d3pct"] = avg([100 * l["d3c"] / l["d3a"] if l["d3a"] else None for l in lines])
+    out["o_d3pct"] = avg([100 * l["o_d3c"] / l["o_d3a"] if l["o_d3a"] else None for l in lines])
     return out
 
 
@@ -1374,8 +1377,9 @@ def weather_of(g):
     return {"indoor": "Indoors" in w, "rain": int(rain.group(1)) if rain else 0, "wind": int(wind.group(1)) if wind else 0}
 
 
-SM_SPREAD = {"cfb": (0.15, 0.006), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
-SM_TOTAL_UNIT = {"cfb": 0.7, "nfl": 2.0, "nba": 0.5, "cbb": 0.6}  # NFL: 3 games is a small sample, so be less sensitive
+SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
+ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+SM_TOTAL_UNIT = {"cfb": 0.65, "nfl": 1.8, "nba": 0.5, "cbb": 0.6}  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -1433,7 +1437,7 @@ def stat_matchup(lg, g, nteams):
         notes = [(t, sd) for _, t, sd in sorted(edges, reverse=True)[:3]]
         price = pnum(ln.get("homeML" if side == "home" else "awayML"))
         # Laying a big price has little value even when the team should win: shrink the moneyline score.
-        ml = base * ((150 / abs(price)) ** 0.5 if price is not None and price <= -150 else 1.0)
+        ml = base * ((150 / abs(price)) ** ML_FAV_EXP[lg] if price is not None and price <= -150 else 1.0)
         out["moneyline"] = {"score": round(ml, 1), "side": side, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
         if ln.get("spreadNum") is not None:
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
