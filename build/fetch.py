@@ -1057,8 +1057,8 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
         when = datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET)
         status = e["status"]["type"]
         if BACKFILL and key == "cfb":
-            if et_day(e["date"]) != BACKFILL or not status.get("completed"):
-                continue
+            if et_day(e["date"]) != BACKFILL or status.get("state") == "pre":
+                continue  # rebuild started games (finished or in progress); upcoming ones keep their live board
             status = {"state": "pre"}  # score it as a pregame board (the line is ESPN's closing line)
 
         def team_block(x):
@@ -1408,7 +1408,7 @@ def run_basketball(lg, key, start, groups):
         when = datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET)
         status = e["status"]["type"]
         if BACKFILL and key == "nba":
-            if et_day(e["date"]) != BACKFILL or not status.get("completed"):
+            if et_day(e["date"]) != BACKFILL or status.get("state") == "pre":
                 continue
             status = {"state": "pre"}
 

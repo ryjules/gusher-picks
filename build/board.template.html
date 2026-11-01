@@ -323,6 +323,14 @@ details.grp > summary:hover { color: var(--cyan); }
 .gbar button:not(.on):not([disabled]):hover { border-color: var(--gold); color: var(--gold); }
 .gbar button#to-props:not([disabled]) { border-color: var(--gold); }
 .gbar button[disabled] { opacity: .5; cursor: default; }
+.why-box { background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0 10px; }
+.why-box p { margin: 0 0 8px; font-size: .92rem; line-height: 1.4; }
+.why-t { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.why-t td { padding: 3px 0; color: var(--muted); border-bottom: 1px dashed var(--line); text-align: left; font: 500 .85rem var(--f-body); white-space: normal; }
+.why-cap { display: block; margin-top: 6px; color: var(--muted); font-size: .8rem; }
+.why-t td:last-child { text-align: right; color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 8px; }
+.why-t tr.tot td { border-bottom: 0; color: var(--ink); font-weight: 700; padding-top: 6px; }
+.why-t tr.tot td:last-child { color: var(--gold); font: 800 1.05rem var(--f-display); }
 .ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
 .srctabs button { display: grid; gap: 1px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 8px 16px; color: var(--muted); cursor: pointer; min-width: 130px; }
@@ -647,14 +655,43 @@ function dataCheck(g) {
   return `<details class="dcheck" ${bad ? 'open' : ''}><summary><span class="ball"></span>Data check <b class="${bad ? 'neg' : 'pos'}">${bad ? `⚠ ${bad} to review` : '✓ all match'}</b><small>ESPN compared with independent sources</small></summary>
     <ul>${c.map(x => `<li class="${x.ok ? 'r-yes' : 'r-warn'}">${esc(x.text)}</li>`).join('')}</ul></details>`;
 }
+// "Why X.X": how each piece moves the score, in the order the model adds them, with a plain-English summary.
+function whyScore(g, kind, a) {
+  const pk = (g.pick || {})[kind], c = (g.confidence || {})[kind];
+  if (!pk || !c) return '';
+  const nm = sd => sd === 'over' ? 'the Over' : sd === 'under' ? 'the Under' : g[sd] ? g[sd].abbr : '';
+  const sgn = sd => sd === pk.side ? 1 : -1;
+  const stat = pk.stat != null ? pk.stat * sgn(pk.statSide) : 0;
+  const price = pk.valueSide ? 0.35 * pk.value * sgn(pk.valueSide) : 0;
+  const tr = pk.trend || 0, cal = pk.cal || 1;
+  const raw = (stat + price + tr) * cal, fin = c[0];
+  const f = x => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(1);
+  const rows = [[`Stat matchup${pk.statSide && pk.statSide !== pk.side ? ` (leans ${nm(pk.statSide)})` : ''}`, f(stat)],
+    [`Price model ${pk.value.toFixed(1)} × 0.35${pk.valueSide && pk.valueSide !== pk.side ? ` (leans ${nm(pk.valueSide)})` : ''}`, f(price)],
+    ['Betting trends', f(tr)]];
+  if (Math.abs(cal - 1) >= 0.01) rows.push([`Calibration ×${cal.toFixed(2)} (how this sport's ${kind}s have done)`, '']);
+  const capped = Math.abs(raw - fin) >= 0.15;
+  let cap = '';
+  if (capped) cap = pk.tooShort ? 'Price too short to bet (−1000 or more), so it is a Pass.'
+    : raw > 7 && fin < raw && fin >= 6.9 && fin <= 7 ? 'Capped at a Lean: the price model leans the other way.'
+    : raw > 7 ? 'Scores above 7 ease toward 10, so a 10 means nearly everything agrees.'
+    : 'Capped (long-shot price).';
+  // Plain-English summary from the strongest reasons.
+  const lead = (a.why || []).slice(0, 1).map(t => t.replace(/\.$/, '')).join('; ');
+  const vs = (a.against || [])[0];
+  const word = fin >= 7 ? 'a Play' : fin >= 4 ? 'a Lean' : 'a Pass';
+  const sum = `${fin.toFixed(1)} on ${esc(nm(pk.side))} makes this ${word}. ${pk.stat >= 6 ? 'The stat matchup does most of the work' : pk.stat >= 3 ? 'The stat matchup leans this way' : 'The stat matchup is close to even'}${Math.abs(price) >= 0.5 ? (price > 0 ? ', and the price model agrees' : ', but the price model disagrees') : ''}${lead ? `: ${esc(lead)}` : ''}.${vs ? ` Holding it back: ${esc(vs.replace(/\.$/, ''))}.` : ''}`;
+  return `<div class="why-box"><p>${sum}</p><table class="why-t">${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}
+    <tr class="tot"><td>Score</td><td>${fin.toFixed(1)}</td></tr></table>${capped ? `<small class="why-cap">${esc(cap)}</small>` : ''}</div>`;
+}
 function breakdown(lg, g) {
-  if (g.state !== 'pre' || !g.model) return '';
+  if (!g.analysis || !g.confidence) return '';
   const cols = [['moneyline', 'Moneyline'], ['spread', 'Spread'], ['total', 'Total']].map(([k, lbl]) => {
     const a = analyze(lg, g, k);
     if (!a) return '';
-    return `<div class="bd-col"><div class="bd-h"><span>${lbl}</span>${vchip(a.verdict)}</div><b>${esc(a.call === 'Pass' ? ((g.pick || {})[k] || {}).call || '' : a.call)}</b><ul>${reasonList(a)}</ul></div>`;
+    return `<div class="bd-col"><div class="bd-h"><span>${lbl}</span>${vchip(a.verdict)}</div><b>${esc(a.call === 'Pass' ? ((g.pick || {})[k] || {}).call || '' : a.call)}</b>${whyScore(g, k, a)}<ul>${reasonList(a)}</ul></div>`;
   }).join('');
-  return cols ? `<div class="conf-h"><span><span class="ball"></span>Take or fade?</span><small>✓ supports the pick · ✗ works against it · ⚠ warning</small></div><div class="bd">${cols}</div>` : '';
+  return cols ? `<div class="conf-h"><span><span class="ball"></span>Take or fade?</span><small>${g.state !== 'pre' ? 'Pregame analysis, locked at tip-off · ' : ''}✓ supports the pick · ✗ works against it · ⚠ warning</small></div><div class="bd">${cols}</div>` : '';
 }
 
 /* ---------------- top picks (home) ---------------- */
