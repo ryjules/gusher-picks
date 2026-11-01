@@ -2571,6 +2571,14 @@ def update_history(path_in, path_out):
                     if BACKFILL and lg in ("cfb", "nba"):
                         hist[pid]["backfilled"] = True
                     added += 1
+            # A logged prop whose player has dropped off the board before tip-off (ruled out, or under the
+            # minutes floor) is no longer a play.
+            here = {f"{lg}-{g['id']}-{p.get('pid')}-{re.sub('[^A-Za-z0-9]', '', p.get('cat') or '')}" for p in g.get("props") or []}
+            for old in hist.values():
+                gr = old.get("grade") or {}
+                if (old.get("league") == lg and gr.get("game") == g["id"] and gr.get("kind") == "prop" and not old.get("result")
+                        and old.get("verdict") in TAKES and old["id"] not in here and not BACKFILL):
+                    old["verdict"], old["stake"], old["dropped"] = "Fade", 1, True
             for p in g.get("props") or []:
                 a = p.get("analysis")
                 ppid = f"{lg}-{g['id']}-{p.get('pid')}-{re.sub('[^A-Za-z0-9]', '', p.get('cat') or '')}"
