@@ -563,8 +563,9 @@ function render(g) {
 
 function picks(g) {
   if (!g.confidence) return '';
-  return ['moneyline', 'spread', 'total'].map(k => g.confidence[k]).filter(([s]) => s >= 4)
-    .map(([s, t]) => `<span class="pk ${s >= 7 ? '' : 'lean'}">${esc(t)}</span>`).join('');
+  // Only picks the model says to take (Take or Take small); Leans it fades and Passes get no chip.
+  return ['moneyline', 'spread', 'total'].filter(k => { const v = (analyze(league, g, k) || {}).verdict; return v === 'Take' || v === 'Take small'; })
+    .map(k => g.confidence[k]).map(([s, t]) => `<span class="pk ${s >= 7 ? '' : 'lean'}">${esc(t)}</span>`).join('');
 }
 
 let showDone = false;
