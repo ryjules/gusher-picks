@@ -1010,6 +1010,7 @@ def injury_notes(g, side):
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
+LOW_PASS_LINE = 215.5  # passing unders below this carry a warning
 NFL_PROP_FLOOR = {"Passing": 150.5, "Rushing": 30.5, "Receiving": 25.5, "Receptions": 2.5, "Rush + Rec": 35.5}  # smaller lines are backups  # basketball props: Take from here up
 BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
@@ -2396,6 +2397,8 @@ def analyze_prop(p, g=None, lg=None):
         why.append(f"Kalshi prices this at {round(p['kalshiP'] * 100)}% ({p['kalshiOdds']}); the model's edge over that is {p['edge'] * 100:.1f} points.")
     if p.get("flag"):
         warn.append("Line is far from his recent numbers: check injury or role news.")
+    if p["cat"] == "Passing" and under and p["line"] < LOW_PASS_LINE:
+        warn.append(f"Low passing line ({p['line']:g}) for a starting QB: one garbage-time drive or a game where his team is chasing points clears it.")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
     if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < BB_MIN_MPG:
