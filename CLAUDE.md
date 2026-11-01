@@ -28,3 +28,6 @@ Don't tell the user a change is live until both publishes succeed.
 - API keys: `CFBD_API_KEY` and `ODDS_API_KEY` (GitHub Actions secrets, and the Claude environment).
 - Page scripts can't use apostrophes inside single-quoted JS strings; run `node --check` on the
   extracted script before publishing.
+- Sessions may not have the API keys, and a local build then publishes "no API key" data checks.
+  After pushing a change, run the `refresh.yml` workflow (`gh workflow run refresh.yml`), pull its
+  rebuilt `docs/index.html`, and republish the artifact from that.
