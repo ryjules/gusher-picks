@@ -284,6 +284,12 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .r-yes::before { content: "✓"; color: var(--win); } .r-no::before { content: "✗"; color: var(--loss); }
 .r-warn::before { content: "⚠"; color: var(--gold); } .r-tip::before { content: "$"; color: var(--cyan); }
 .pick .reason { grid-column: 1 / -1; font-size: .82rem; line-height: 1.45; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 6px; }
+.sportf { display: flex; gap: 6px; flex-wrap: wrap; }
+.sportf button { display: inline-flex; align-items: center; gap: 6px; font: 800 .9rem var(--f-display); letter-spacing: .05em; text-transform: uppercase; background: #0c1117; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
+.sportf button small { font: 700 .75rem var(--f-body); background: var(--board); color: var(--muted); border-radius: 999px; padding: 1px 7px; letter-spacing: 0; }
+.sportf button[aria-pressed="true"] { background: var(--cyan); border-color: var(--cyan); color: #04141a; }
+.sportf button[aria-pressed="true"] small { background: rgba(0,0,0,.2); color: #04141a; }
+.sportf button.none { opacity: .45; }
 .ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
 .srctabs button { display: grid; gap: 1px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 8px 16px; color: var(--muted); cursor: pointer; min-width: 130px; }
@@ -764,6 +770,7 @@ function renderProps() {
 /* ---------------- plays tracker ---------------- */
 let src = 'mine';
 const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => (p.verdict === 'Take' || p.verdict === 'Take small') && p.grade?.kind !== 'ml') } };
+let psport = 'all';
 let db = null, plays = [], dbState = 'loading', pday = todayET(), period = 'day', unitSize = null, draft = null, confirmDel = null, autoGraded = false;
 function todayET() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
 function shiftDay(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -981,7 +988,8 @@ function confTable(list) {
 
 function renderPlays() {
   const [from, to] = periodRange(period, pday);
-  const scope = SRC[src].list().filter(p => p.date >= from && p.date <= to);
+  const inSport = p => psport === 'all' || p.league === psport;
+  const scope = SRC[src].list().filter(p => p.date >= from && p.date <= to && inSport(p));
   const s = summary(scope);
   const U = UNIT();
   let body = '';
@@ -1031,9 +1039,10 @@ function renderPlays() {
   const rec = x => `${x.w}-${x.l}${x.pu ? '-' + x.pu : ''}`;
   const empty = dbState === 'ready' && !scope.length;
   const when = period === 'day' ? 'on ' + periodLabel(period, pday) : period === 'all' ? 'yet' : 'in this ' + period;
+  const sportWord = psport === 'all' ? '' : LEAGUES[psport].short + ' ';
   $('board').innerHTML = `<div class="plays">
     <div class="ph">
-      <div class="srctabs" role="tablist" aria-label="Whose plays">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to)), v = ss.units * U;
+      <div class="srctabs" role="tablist" aria-label="Whose plays">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to && inSport(p))), v = ss.units * U;
         return `<button type="button" role="tab" data-src="${key}" aria-selected="${src === key}"><span>${key === 'mine' ? 'My plays' : 'Model picks'}</span><b class="${pc(v)}">${ss.n ? money(v) : '—'}</b></button>`; }).join('')}</div>
       <span class="spacer"></span>
       ${src === 'mine' ? `<button type="button" class="pbtn" id="p-grade" title="Grade finished plays now">Grade</button><button type="button" class="pbtn primary" id="p-add">+ Add play</button>` : ''}
@@ -1048,8 +1057,11 @@ function renderPlays() {
       <label class="unit" for="p-unit" title="${unitSize ? 'What one unit is worth to you' : 'Set what one unit is worth to you (assumes $10 until you do)'}">Unit $<input id="p-unit" type="number" min="1" step="1" value="${esc(U)}" inputmode="decimal"></label>
     </div>
     ${form}
+    <div class="sportf" role="group" aria-label="Sport">${[['all', 'All sports'], ...Object.entries(LEAGUES).map(([k, v]) => [k, v.short])].map(([k, n]) => {
+      const c = SRC[src].list().filter(p => p.date >= from && p.date <= to && (k === 'all' || p.league === k)).length;
+      return `<button type="button" data-sport="${k}" aria-pressed="${psport === k}"${c || k === 'all' || psport === k ? '' : ' class="none"'}>${esc(n)}<small>${c}</small></button>`; }).join('')}</div>
     ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
-    ${empty ? `<div class="empty"><b>No plays ${esc(when)}</b>
+    ${empty ? `<div class="empty"><b>No ${esc(sportWord)}plays ${esc(when)}</b>
         <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>
         <div class="row">${src === 'mine' ? '<button type="button" class="pbtn primary" id="p-add2">+ Add play</button>' : ''}<button type="button" class="pbtn" id="p-home">Browse Top Picks</button>${period !== 'all' ? '<button type="button" class="pbtn" id="p-all">See all time</button>' : ''}</div></div>`
     : dbState === 'ready' ? `<div class="sumbar">
@@ -1059,12 +1071,13 @@ function renderPlays() {
         <div><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled</small></div>
       </div>
       ${s.settledN ? chart(scope, period, from, to) : ''}` : ''}
-    ${src === 'model' && dbState !== 'off' && !empty ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to)) : ''}
+    ${src === 'model' && dbState !== 'off' && !empty ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to && inSport(p))) : ''}
     ${empty ? '' : body}
     ${db && db.local && src === 'mine' ? `<p class="foot">Your plays are saved in this browser on this device.</p>` : ''}
   </div>`;
   wireChart();
   $('board').querySelectorAll('[data-per]').forEach(b => b.onclick = () => { period = b.dataset.per; renderPlays(); });
+  $('board').querySelectorAll('[data-sport]').forEach(b => b.onclick = () => { psport = b.dataset.sport; renderPlays(); });
   $('board').querySelectorAll('[data-src]').forEach(b => b.onclick = () => { src = b.dataset.src; confirmDel = null; renderPlays(); });
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   on('p-prev', () => { pday = shiftPeriod(period, pday, -1); renderPlays(); });
