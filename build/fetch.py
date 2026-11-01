@@ -762,7 +762,16 @@ def rescore_prop(pr):
         likely = max(0.0, min(10.0, (blend - 0.05) / 0.6 * 10))
         pr["score"] = round(max(0.0, min(10.0, 0.7 * likely + 0.3 * (pr.get("matchup") or 5))), 1)
         return
-    pr["score"] = round(min(10.0, max(0.0, blend - market) * 100 / 1.2), 1)
+    # Score = how strongly the player's data backs the pick (like the Profit Hunt sheets): the model's chance
+    # for the side, his last-5 hit rate at this line and the matchup. Edge (vs Kalshi) then decides whether the
+    # price is worth it: a strong data score the market already agrees with is a Fade, not a Take.
+    under = pr.get("side") == "Under"
+    l5 = pr.get("l5") or []
+    hit = sum(1 for v in l5 if (v < pr["line"] if under else v > pr["line"])) / len(l5) if l5 else 0.5
+    m = pr.get("matchup")
+    m = 5.0 if m is None else (10 - m if under else m)
+    s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
+    pr["score"] = round(max(0.0, min(10.0, 0.6 * s_prob + 0.2 * 10 * hit + 0.2 * m)), 1)
 
 
 def _dig(d, *ks):
@@ -1544,6 +1553,8 @@ def weather_of(g):
 
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
+LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
@@ -1646,7 +1657,24 @@ def stat_matchup(lg, g, nteams):
                 sp = base + (0.0 if SPORT[lg] == "fb" else k1 * line_side)
             else:
                 sp = base - (k1 * abs(line_side) + k2 * line_side ** 2)
-            out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": side, "call": f"{team['abbr']} {fsp(line_side)}", "notes": notes}
+            sp_side, sp_notes = side, list(notes)
+            if SPORT[lg] == "fb":
+                # Line check (a lighter blend): turn the data edge into points and compare it with the spread,
+                # so laying a big number costs confidence and getting points the data says aren't deserved helps.
+                margin_away = LINE_PTS[lg][0] * strength       # data's expected margin for the away team
+                e_away = margin_away - ln["spreadNum"]          # beat the away line by this many points (home line = spreadNum)
+                line_signed = max(-10.0, min(10.0, e_away / LINE_PTS[lg][1]))
+                old_signed = max(0.0, min(10.0, sp)) * (1 if side == "away" else -1)
+                blended = (1 - LINE_W) * old_signed + LINE_W * line_signed
+                sp_side = "away" if blended > 0 else "home"
+                sp = abs(blended)
+                fav = g["away"] if margin_away > 0 else g["home"]
+                sp_notes.append((f"The data makes {fav['abbr']} about {abs(margin_away):.1f} points better; against the line that leaves "
+                                 f"{abs(e_away):.1f} points of edge for {g['away']['abbr'] if e_away > 0 else g['home']['abbr']}",
+                                 "away" if e_away > 0 else "home"))
+            sl = ln["spreadNum"] if sp_side == "home" else -ln["spreadNum"]
+            out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": sp_side, "call": f"{g[sp_side]['abbr']} {fsp(sl)}",
+                             "notes": sp_notes}
     off, dfn = R.get("PPG"), R.get("PPG/A") or R.get("Opp PPG")
     if off and dfn and ln.get("totalNum") is not None and None not in (off[1][3], off[2][1], dfn[1][3], dfn[2][1]):
         recent = (off[1][3] + dfn[2][1]) / 2 + (off[2][1] + dfn[1][3]) / 2  # last 3 (football) / last 5 (hoops)
@@ -1910,9 +1938,10 @@ def analyze_prop(p, g=None, lg=None):
         q = next((x for x in ((g.get("inj") or {}).get(side) or []) if x.get("id") == p.get("pid")), None)
         if q:
             warn.append(f"{p['player']} is listed {q['status'].lower()}.")
-    if p["cat"] == "Touchdowns" and (p.get("edge") or 0) <= 0:
-        # Likely to score, but the price already says so: no value in betting it.
-        against.append("The price already reflects the chance he scores, so there's no value at this number.")
+    if (p.get("edge") or 0) < 0.02 and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
+        # The data likes it, but the price already says so: no value in betting it.
+        against.append("The price already reflects what the data shows, so there's no value at this number."
+                       if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif p["score"] >= 7:
         verdict = "Take small" if warn else "Take"
