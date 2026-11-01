@@ -1800,8 +1800,11 @@ SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 VALUE_W = 0.2  # how much the season price model adds to the stats (was 0.35): the stats lead
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
+DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
+LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
+DEF_TOTAL_W = 1.5  # two top (or bottom) quarter defenses push a football total this much
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
-SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
+SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.1)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -1944,6 +1947,18 @@ def stat_matchup(lg, g, nteams):
                     better = g["away"] if gap > 0 else g["home"]
                     rec_notes.append((f"Adjusted for opponents played, {better['abbr']} rates {abs(gap):.1f} points per game better",
                                       "away" if gap > 0 else "home"))
+        if SPORT[lg] == "fb":
+            # Low-scoring games are closer to coin flips: fewer possessions, and one score decides it.
+            dfr = R.get("PPG/A")
+            if dfr and None not in (dfr[1][4], dfr[2][0]) and max(dfr[1][4], dfr[2][0]) <= nteams * 0.25:
+                strength *= DEF_BATTLE
+                rec_notes.append((f"Two top scoring defenses ({ordn(dfr[1][4])} and {ordn(dfr[2][0])}): a low-scoring game is closer to a coin flip",
+                                  "away" if strength < 0 else "home"))
+            tl = ln.get("totalNum")
+            if tl and LG_TOTALS.get(lg):
+                shrink = max(LOW_TOTAL_FLOOR, min(1.0, tl / LG_TOTALS[lg]))
+                strength *= shrink
+                parts["lowTotal"] = round(shrink, 2)
         side = "away" if strength > 0 else "home"
         base = min(10.0, abs(strength))
         if SPORT[lg] == "fb" and max_gap < TOT_DEAD:
@@ -2014,6 +2029,15 @@ def stat_matchup(lg, g, nteams):
             blend_total = PROJ_W[lg] * proj + (1 - PROJ_W[lg]) * m_total
             sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             wild = abs(blend_total - ln["totalNum"]) >= TOT_WILD[lg]
+            dfr = R.get("PPG/A")
+            def_note = []
+            if dfr and None not in (dfr[1][4], dfr[2][0]):
+                if max(dfr[1][4], dfr[2][0]) <= nteams * 0.25:
+                    sig -= DEF_TOTAL_W
+                    def_note = [(f"Both defenses are top-quarter in points allowed ({ordn(dfr[1][4])} and {ordn(dfr[2][0])})", "under")]
+                elif min(dfr[1][4], dfr[2][0]) > nteams * 0.75:
+                    sig += DEF_TOTAL_W
+                    def_note = [(f"Both defenses are bottom-quarter in points allowed ({ordn(dfr[1][4])} and {ordn(dfr[2][0])})", "over")]
             pace = R.get("Pace")
             pace_note = []
             if pace and None not in (pace[1][4], pace[2][0]):
@@ -2028,7 +2052,7 @@ def stat_matchup(lg, g, nteams):
                 pace_note = pace_note + [(f"Our number is {abs(blend_total - ln['totalNum']):.0f} points from the market: a gap that big usually "
                                           "means the line knows something (injuries, weather, a backup QB), so this stays a Lean at most",
                                           "under" if blend_total > ln["totalNum"] else "over")]
-            notes = tot_notes + pace_note + [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
+            notes = tot_notes + def_note + pace_note + [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
                       "over" if proj > ln["totalNum"] else "under"),
                      (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
                       "over" if m_total > ln["totalNum"] else "under")]
