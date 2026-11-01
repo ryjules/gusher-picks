@@ -207,13 +207,24 @@ td.rank { font-weight: 700; }
 .chart { background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
 .ch-h { display: flex; justify-content: space-between; align-items: baseline; font: 600 .9rem var(--f-body); color: var(--muted); }
 .ch-h b { font: 800 1.4rem var(--f-display); }
-.chart svg { width: 100%; height: 130px; display: block; margin: 6px 0; }
-.ch-zero { stroke: var(--line); stroke-dasharray: 4 4; }
-.ch-line { fill: none; stroke-width: 2.5; }
+.ch-grid { display: grid; grid-template-columns: 58px 1fr; margin: 10px 0 2px; }
+.ch-y { position: relative; height: 190px; }
+.ch-y span { position: absolute; right: 8px; transform: translateY(-50%); font: 600 .78rem var(--f-body); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ch-plot { position: relative; height: 190px; touch-action: pan-y; cursor: crosshair; }
+.ch-plot svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.ch-gl { stroke: var(--line); stroke-width: 1; }
+.ch-zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
+.ch-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
 .ch-line.pos { stroke: var(--win); } .ch-line.neg { stroke: var(--loss); }
 .ch-fill.pos { fill: var(--win); opacity: .12; } .ch-fill.neg { fill: var(--loss); opacity: .12; }
-.ch-dot.pos { fill: var(--win); } .ch-dot.neg { fill: var(--loss); }
-.ch-x { display: flex; justify-content: space-between; color: var(--muted); font-size: .8rem; }
+.ch-pt { stroke-width: 8; stroke-linecap: round; } .ch-pt.pos { stroke: var(--win); } .ch-pt.neg { stroke: var(--loss); }
+.ch-cross { stroke: var(--ink); stroke-width: 1; opacity: 0; }
+.ch-tip { position: absolute; top: 2px; transform: translateX(-50%); background: var(--board); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font: 600 .8rem var(--f-body); color: var(--ink); display: grid; gap: 2px; white-space: nowrap; pointer-events: none; z-index: 2; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+.ch-tip span { color: var(--muted); }
+.ch-xa { position: relative; height: 22px; border-top: 1px solid var(--line); }
+.ch-xa span { position: absolute; top: 5px; transform: translateX(-50%); font: 600 .78rem var(--f-body); color: var(--muted); white-space: nowrap; }
+.ch-xa span:first-child { transform: none; } .ch-xa span:last-child:not(:first-child) { transform: translateX(-100%); }
+.ch-empty { margin: 8px 0 2px; color: var(--muted); font-size: .9rem; }
 .nav2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .nav2 button { font: 800 .95rem var(--f-display); text-transform: uppercase; letter-spacing: .05em; padding: 10px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--board); color: var(--ink); cursor: pointer; }
 .nav2 button[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: #1a1405; }
@@ -798,25 +809,81 @@ function shiftPeriod(per, iso, n) {
 const timeKey = t => { const m = String(t || '').match(/(\d+):(\d+)\s*(AM|PM)/i); return m ? ((+m[1] % 12) + (/pm/i.test(m[3]) ? 12 : 0)) * 60 + +m[2] : 0; };
 const byWhen = (a, b) => a.date.localeCompare(b.date) || timeKey(a.time) - timeKey(b.time) || String(a.created || '').localeCompare(String(b.created || ''));
 
-// Running profit in dollars across the period's settled plays.
-function chart(list) {
-  const pts = list.filter(p => p.result).sort(byWhen);
-  if (pts.length < 2) return '';
+// Profit line graph: y = running profit in dollars, x = time across the period.
+// Day view steps through each settled play by game time; longer periods plot one point per day.
+const dayNum = iso => Math.floor(Date.parse(iso + 'T12:00:00Z') / 864e5);
+const isoAt = n => isoOf(new Date(n * 864e5));
+const shortDay = (iso, opt) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', Object.assign({ timeZone: 'UTC' }, opt || { month: 'short', day: 'numeric' }));
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+function chart(list, per, from, to) {
+  const done = list.filter(p => p.result).sort(byWhen);
+  if (!done.length) return `<div class="chart"><div class="ch-h"><span>Profit over time</span></div><p class="ch-empty">The graph starts once a play is graded.</p></div>`;
+  const U = UNIT();
   let run = 0;
-  const ys = [0, ...pts.map(p => (run += unitsOf(p) * UNIT()))];
-  const W = 600, H = 130, pad = 8, lo = Math.min(0, ...ys), hi = Math.max(0, ...ys), span = hi - lo || 1;
-  const X = i => pad + (W - 2 * pad) * i / (ys.length - 1), Y = v => pad + (H - 2 * pad) * (hi - v) / span;
-  const line = ys.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
-  const end = ys[ys.length - 1], cls = end >= 0 ? 'pos' : 'neg';
-  const first = pts[0].date, last = pts[pts.length - 1].date;
-  const fd = x => new Date(x + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
-  return `<div class="chart"><div class="ch-h"><span>Running profit</span><b class="${cls}">${money(end)}</b></div>
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Running profit over ${pts.length} settled plays, ending at ${money(end)}">
-      <line x1="${pad}" x2="${W - pad}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" class="ch-zero"></line>
-      <polygon points="${X(0).toFixed(1)},${Y(0).toFixed(1)} ${line} ${X(ys.length - 1).toFixed(1)},${Y(0).toFixed(1)}" class="ch-fill ${cls}"></polygon>
-      <polyline points="${line}" class="ch-line ${cls}" vector-effect="non-scaling-stroke"></polyline>
-      <circle cx="${X(ys.length - 1).toFixed(1)}" cy="${Y(end).toFixed(1)}" r="4" class="ch-dot ${cls}"></circle>
-    </svg><div class="ch-x"><span>${fd(first)}</span><span>${pts.length} settled plays</span><span>${fd(last)}</span></div></div>`;
+  const pts = [], xt = [];
+  if (per === 'day') {
+    pts.push({ x: 0, y: 0, t: 'Start of day', d: '' });
+    done.forEach((p, i) => {
+      const u = unitsOf(p) * U; run += u;
+      pts.push({ x: (i + 1) / done.length, y: run, t: (p.time ? p.time + ' · ' : '') + p.play, d: money(u) });
+    });
+    const step = Math.max(1, Math.ceil(done.length / 5));
+    xt.push([0, 'Start']);
+    done.forEach((p, i) => { if ((i + 1) % step === 0 || i === done.length - 1) xt.push([(i + 1) / done.length, p.time || '#' + (i + 1)]); });
+  } else {
+    const a = per === 'all' ? done[0].date : from, b = per === 'all' ? done[done.length - 1].date : to;
+    const d0 = dayNum(a), days = dayNum(b) - d0 + 1, X = iso => (dayNum(iso) - d0 + 0.5) / days;
+    const byDay = {};
+    for (const p of done) byDay[p.date] = (byDay[p.date] || 0) + unitsOf(p) * U;
+    pts.push({ x: 0, y: 0, t: 'Start · ' + shortDay(a), d: '' });
+    for (const iso of Object.keys(byDay).sort()) { run += byDay[iso]; pts.push({ x: X(iso), y: run, t: prettyDay(iso), d: money(byDay[iso]) + ' that day' }); }
+    if (per === 'week') for (let n = 0; n < 7; n++) { const iso = isoAt(d0 + n); xt.push([(n + 0.5) / 7, shortDay(iso, { weekday: 'short' })]); }
+    else if (per === 'year') for (let m = 0; m < 12; m += 2) { const iso = a.slice(0, 4) + '-' + String(m + 1).padStart(2, '0') + '-01'; xt.push([(dayNum(iso) - d0 + 0.5) / days, shortDay(iso, { month: 'short' })]); }
+    else { const n = Math.min(days, window.innerWidth < 600 ? 3 : 5); for (let k = 0; k < n; k++) { const off = Math.round((days - 1) * k / Math.max(1, n - 1)); xt.push([(off + 0.5) / days, shortDay(isoAt(d0 + off))]); } }
+  }
+  const ys = pts.map(p => p.y), step = niceStep(Math.max(Math.max(...ys) - Math.min(...ys), U) / 4);
+  const lo = Math.floor(Math.min(0, ...ys) / step) * step, hi = Math.max(Math.ceil(Math.max(0, ...ys) / step) * step, lo + step);
+  const Y = v => (hi - v) / (hi - lo) * 100, W = 1000, H = 100;
+  const ticks = []; for (let v = lo; v <= hi + step / 2; v += step) ticks.push(v);
+  const line = pts.map(p => `${(p.x * W).toFixed(1)},${Y(p.y).toFixed(2)}`).join(' ');
+  const end = run, cls = end >= 0 ? 'pos' : 'neg';
+  const yl = v => (v > 0 ? '+' : v < 0 ? '−' : '') + '$' + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: step < 1 ? 2 : 0 });
+  return `<div class="chart"><div class="ch-h"><span>Profit over time</span><b class="${cls}">${money(end)}</b></div>
+    <div class="ch-grid">
+      <div class="ch-y">${ticks.map(v => `<span style="top:${Y(v).toFixed(2)}%">${yl(v)}</span>`).join('')}</div>
+      <div class="ch-plot" data-pts="${esc(JSON.stringify(pts))}">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Profit over time: ${done.length} settled plays, ending at ${money(end)}">
+          ${ticks.map(v => `<line x1="0" x2="${W}" y1="${Y(v).toFixed(2)}" y2="${Y(v).toFixed(2)}" class="${v === 0 ? 'ch-zero' : 'ch-gl'}" vector-effect="non-scaling-stroke"></line>`).join('')}
+          <polygon points="0,${Y(0).toFixed(2)} ${line} ${(pts[pts.length - 1].x * W).toFixed(1)},${Y(0).toFixed(2)}" class="ch-fill ${cls}"></polygon>
+          <polyline points="${line}" class="ch-line ${cls}" vector-effect="non-scaling-stroke"></polyline>
+          ${pts.slice(1).map(p => `<line x1="${(p.x * W).toFixed(1)}" x2="${(p.x * W).toFixed(1)}" y1="${Y(p.y).toFixed(2)}" y2="${Y(p.y).toFixed(2)}" class="ch-pt ${p.y >= 0 ? 'pos' : 'neg'}" vector-effect="non-scaling-stroke"></line>`).join('')}
+          <line class="ch-cross" x1="0" x2="0" y1="0" y2="${H}" vector-effect="non-scaling-stroke"></line>
+        </svg>
+        <div class="ch-tip" hidden></div>
+      </div>
+      <div></div>
+      <div class="ch-xa">${xt.map(([x, t]) => `<span style="left:${(x * 100).toFixed(2)}%">${esc(t)}</span>`).join('')}</div>
+    </div></div>`;
+}
+// Crosshair and tooltip: snap to the nearest point under the pointer.
+function wireChart() {
+  const plot = document.querySelector('.ch-plot');
+  if (!plot) return;
+  const pts = JSON.parse(plot.dataset.pts), tip = plot.querySelector('.ch-tip'), cross = plot.querySelector('.ch-cross');
+  const ys = [...plot.querySelectorAll('.ch-y span')];
+  const show = e => {
+    const r = plot.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width;
+    let best = pts[0]; for (const p of pts) if (Math.abs(p.x - fx) < Math.abs(best.x - fx)) best = p;
+    cross.setAttribute('x1', best.x * 1000); cross.setAttribute('x2', best.x * 1000); cross.style.opacity = 1;
+    tip.innerHTML = `<b>${esc(best.t)}</b>${best.d ? `<span>${esc(best.d)}</span>` : ''}<span>Running: <b class="${best.y > 0 ? 'pos' : best.y < 0 ? 'neg' : ''}">${money(best.y)}</b></span>`;
+    tip.hidden = false;
+    tip.style.left = Math.min(Math.max(best.x * r.width, 70), r.width - 70) + 'px';
+  };
+  plot.onpointermove = show; plot.onpointerdown = show;
+  plot.onpointerleave = () => { tip.hidden = true; cross.style.opacity = 0; };
 }
 
 function renderPlays() {
@@ -890,9 +957,10 @@ function renderPlays() {
       <div class="card"><span>ROI</span><b class="${s.roi > 0 ? 'pos' : s.roi < 0 ? 'neg' : ''}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small></div>
       <div class="card"><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled play${s.settledN === 1 ? '' : 's'}</small></div>
     </div>
-    ${period !== 'day' ? chart(scope) : ''}
+    ${chart(scope, period, from, to)}
     ${body}
   </div>`;
+  wireChart();
   $('board').querySelectorAll('[data-per]').forEach(b => b.onclick = () => { period = b.dataset.per; renderPlays(); });
   $('board').querySelectorAll('[data-src]').forEach(b => b.onclick = () => { src = b.dataset.src; confirmDel = null; renderPlays(); });
   $('p-prev').onclick = () => { pday = shiftPeriod(period, pday, -1); renderPlays(); };
