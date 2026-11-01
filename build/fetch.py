@@ -1686,6 +1686,7 @@ ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.2, "nba": 0.5, "cbb": 0.5}  # how hard a heav
 TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
 TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 35)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 52.5))}  # points per unit of real gap
 CFB_HOME_EDGE = 1.0  # extra strength toward the home team in college
+NFL_HOME_EDGE = 2.0  # about 1.2 points at the NFL points scale
 LETDOWN = 1.0  # strength taken off a team coming off a big upset win
 HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
@@ -1700,9 +1701,10 @@ TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushi
 TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
 TOT_WILD_CAP = 6.0
 TOT_EXTRA = {"cfb": 0.5, "nfl": 2.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
-PROJ_W = {"cfb": 0.5, "nfl": 0.65}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
+PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.75  # most a line move can add
+NEUTRAL_ROWS = {"Pace"}  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
@@ -1733,6 +1735,8 @@ def stat_matchup(lg, g, nteams):
     edges = []  # (net, text, side)
     a_better = h_better = 0
     for r in R.values():
+        if r[0] in NEUTRAL_ROWS:
+            continue  # playing fast or slow isn't better or worse
         ra, rh = r[1][4], r[2][0]
         if ra is not None and rh is not None:
             a_better += ra < rh
@@ -1808,6 +1812,8 @@ def stat_matchup(lg, g, nteams):
         if lg == "cfb" and not g.get("neutral"):
             # College road teams struggle ("you have to play a perfect game to win on the road"): lean home.
             strength -= CFB_HOME_EDGE
+        if lg == "nfl" and not g.get("neutral"):
+            strength -= NFL_HOME_EDGE  # home field is worth about a point and a half; the line already includes it
         for sd, sgn in (("away", -1), ("home", 1)):
             if (g.get("letdown") or {}).get(sd):
                 # Coming off a big upset win as a 7+ point underdog: the emotional letdown spot.
