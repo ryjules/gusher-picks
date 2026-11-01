@@ -1782,7 +1782,7 @@ REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
 REC_W_LG = {"nfl": float(os.environ.get("GP_RECW_NFL", 1.5))}
 POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
 POW_W_LG = {"nfl": float(os.environ.get("GP_POWW_NFL", 1.0))}
-SIDE_DEAD = {"nfl": float(os.environ.get("GP_SD_NFL", 0.15))}  # rank gaps (share of the league) too small to matter on sides
+SIDE_DEAD = {"nfl": float(os.environ.get("GP_SD_NFL", 0.15)), "nba": 0.1, "cbb": 0.08}  # rank gaps (share of the league) too small to matter on sides
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
 SIDE_SCALE = {"cfb": 14, "nfl": float(os.environ.get("GP_SS_NFL", 18)), "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
 TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
@@ -1792,8 +1792,8 @@ TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a fo
 PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.75  # most a line move can add
-NEUTRAL_ROWS = {"Pace"}
-ROW_W = {"Penalties": 0.25}  # weight in the "better in more stat categories" count
+NEUTRAL_ROWS = {"Pace", "Team Pace"}
+ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
 SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
 SHORT_ML_CAP = 5.5
@@ -1812,7 +1812,7 @@ UNIT_PAIRS = {
            ("Pass TD/G", "Pass TD/A", 1, "passing TDs"), ("Rush TD/G", "Rush TD/A", 1, "rushing TDs"),
            ("Sacks Allow/G", "Sacks/G", 0.5, "pass protection"), ("Off 3rd %", "Def 3rd %", 1, "third downs")],
     "bb": [("PPG", "Opp PPG", 2, "scoring"), ("2PT%", "Opp 2PT%", 1, "2-point shooting"), ("3PT%", "Opp 3PT%", 1, "3-point shooting"),
-           ("FT%", "Opp FT%", 0.5, "free throws"), ("Paint PPG", "Opp Paint PPG", 1, "paint scoring")],
+           ("FT%", "Opp FT%", 0.2, "free throws"), ("Paint PPG", "Opp Paint PPG", 1, "paint scoring")],
 }
 DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": "run defense", "passing TDs": "pass-TD defense",
             "rushing TDs": "run-TD defense", "pass protection": "pass rush", "third downs": "third-down defense",

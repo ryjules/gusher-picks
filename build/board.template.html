@@ -233,6 +233,9 @@ td.rank { font-weight: 700; }
 .ctbl tbody th { min-width: 150px; text-align: left; font: 800 .95rem var(--f-display); text-transform: uppercase; }
 .ctbl tr.sub th { font: 600 .85rem var(--f-body); text-transform: none; color: var(--muted); padding-left: 18px; }
 .ctbl td small { display: block; color: var(--muted); font-size: .75rem; }
+.psec { margin: 6px 0 14px; } .psec-h { display: flex; align-items: baseline; gap: 10px; padding: 8px 4px 4px; border-bottom: 2px solid var(--line); }
+.psec-h span { font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--accent, #22c3d6); } .psec-h small { color: var(--muted); }
+.ptbl td.play { min-width: 210px; white-space: normal; } .ptbl td.play b { display: block; white-space: nowrap; } .ptbl td.play .pl-sub { display: block; color: var(--muted); font-size: .8rem; font-weight: 600; }
 .ctbl td small.pos { color: var(--win); } .ctbl td small.neg { color: var(--loss); }
 .ctbl tbody th small { display: block; font: 500 .72rem var(--f-body); text-transform: none; color: var(--muted); letter-spacing: 0; }
 .ctbl tr.sub th { padding-left: 8px; }
@@ -1198,17 +1201,29 @@ function renderPlays() {
       const title = daily ? prettyDay(k) : LEAGUES[k]?.short || k;
       const gm = gs.units * U;
       const gk = src + ':' + k;
-      return `<details class="grp" data-gk="${esc(gk)}" ${closedGroups.has(gk) ? '' : 'open'}><summary class="lg-h">${esc(title)}<small>${ps.length} play${ps.length > 1 ? 's' : ''} · ${gs.w}-${gs.l}${gs.pu ? '-' + gs.pu : ''}${gs.settledN ? ` · <span class="${gm > 0 ? 'pos' : gm < 0 ? 'neg' : ''}">${money(gm)}</span>` : ''}</small></summary>
-      <div class="scroll"><table class="ptbl" style="min-width:900px"><thead><tr><th>Time</th><th>Matchup</th><th>Play</th><th>Price</th><th>Book</th><th>Stake</th><th>Result</th><th>Units</th><th>Profit</th><th></th></tr></thead><tbody>
-      ${ps.map(p => {
+      const isProp = p => p.grade?.kind === 'prop';
+      const row = p => {
         const u = unitsOf(p);
-        return `<tr><td class="mu">${esc(p.time || '')}${daily ? ' ' + esc(LEAGUES[p.league]?.short || '') : ''}</td><td class="mu" title="${esc(p.matchup)}">${esc(p.matchup)}</td><td class="play">${esc(p.play)}</td>
+        const pm = isProp(p) ? (p.play || '').match(/^(.*?) ((?:[ou][\d.]+ .+)|anytime TD)$/) : null;
+        const play = pm ? `<b>${esc(pm[1])}</b><small class="pl-sub">${esc(pm[2].replace(/^o/, 'Over ').replace(/^u/, 'Under '))}</small>` : esc(p.play);
+        const chip = p.verdict === 'Take small' || p.verdict === 'Take large' ? ' ' + vchip(p.verdict) : '';
+        return `<tr><td class="mu">${esc(p.time || '')}${daily ? ' ' + esc(LEAGUES[p.league]?.short || '') : ''}</td><td class="mu" title="${esc(p.matchup)}">${esc(p.matchup)}</td><td class="play">${play}</td>
           <td class="num">${esc(priceNum(p.price) > 0 ? '+' + priceNum(p.price) : priceNum(p.price))}</td><td>${esc(p.book)}</td><td class="num">${esc(p.stake)}u <small class="muted">${money((+p.stake || 1) * U, false)}</small></td>
-          <td>${src === 'mine' ? `<span class="res3">${['W', 'L', 'P'].map(r => `<button type="button" class="${r} ${p.result === r ? 'on' : ''}" data-res="${r}" data-id="${esc(p.id)}" aria-label="Mark ${r === 'W' ? 'won' : r === 'L' ? 'lost' : 'push'}">${r}</button>`).join('')}</span>` : `<span class="res3">${p.result ? `<button type="button" class="${p.result === 'V' ? 'P' : p.result} on" disabled>${p.result === 'V' ? 'V' : p.result}</button>` : '<span class="dash">pending</span>'}</span>${p.verdict === 'Take small' ? ' ' + vchip('Take small') : ''}`}</td>
+          <td>${src === 'mine' ? `<span class="res3">${['W', 'L', 'P'].map(r => `<button type="button" class="${r} ${p.result === r ? 'on' : ''}" data-res="${r}" data-id="${esc(p.id)}" aria-label="Mark ${r === 'W' ? 'won' : r === 'L' ? 'lost' : 'push'}">${r}</button>`).join('')}</span>` : `<span class="res3">${p.result ? `<button type="button" class="${p.result === 'V' ? 'P' : p.result} on" disabled>${p.result === 'V' ? 'V' : p.result}</button>` : '<span class="dash">pending</span>'}</span>${chip}`}</td>
           <td class="num ${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${p.result ? usign(u) : dash}</td>
           <td class="num ${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${p.result ? money(u * U) : dash}</td>
           <td>${src === 'mine' ? `<button type="button" class="del" data-del="${esc(p.id)}">${confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button>` : ''}</td></tr>`;
-      }).join('')}</tbody></table></div></details>`;
+      };
+      const sect = (label, xs) => {
+        if (!xs.length) return '';
+        const ss = summary(xs), sm = ss.units * U;
+        return `<div class="psec"><div class="psec-h"><span>${label}</span><small>${xs.length} · ${ss.w}-${ss.l}${ss.pu ? '-' + ss.pu : ''}${ss.settledN ? ` · <b class="${sm > 0 ? 'pos' : sm < 0 ? 'neg' : ''}">${money(sm)}</b>` : ''}</small></div>
+        <div class="scroll"><table class="ptbl" style="min-width:900px"><thead><tr><th>Time</th><th>Matchup</th><th>${label === 'Player props' ? 'Player' : 'Play'}</th><th>Price</th><th>Book</th><th>Stake</th><th>Result</th><th>Units</th><th>Profit</th><th></th></tr></thead>
+        <tbody>${xs.map(row).join('')}</tbody></table></div></div>`;
+      };
+      const games = ps.filter(p => !isProp(p)), props = ps.filter(isProp);
+      return `<details class="grp" data-gk="${esc(gk)}" ${closedGroups.has(gk) ? '' : 'open'}><summary class="lg-h">${esc(title)}<small>${ps.length} play${ps.length > 1 ? 's' : ''} · ${gs.w}-${gs.l}${gs.pu ? '-' + gs.pu : ''}${gs.settledN ? ` · <span class="${gm > 0 ? 'pos' : gm < 0 ? 'neg' : ''}">${money(gm)}</span>` : ''}</small></summary>
+      ${sect(games.some(p => p.grade?.kind === 'ml') ? 'Spreads, totals &amp; moneylines' : 'Spreads &amp; totals', games)}${sect('Player props', props)}</details>`;
     }).join('');
   }
   const f = draft;
