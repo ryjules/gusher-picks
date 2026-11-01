@@ -38,6 +38,7 @@ body { background: var(--bg); color: var(--ink); font-family: var(--f-body); fon
 @media (max-width: 900px) { .games { max-height: 340px; overflow-y: auto; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
 .game-btn { text-align: left; background: var(--board); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; color: var(--ink); cursor: pointer; display: grid; gap: 2px; font: 600 .9rem var(--f-body); }
 .game-btn small { color: var(--muted); font-weight: 500; }
+.live-at { display: block; color: var(--muted); font-size: .72rem; margin: 2px 2px 0; min-height: 0; }
 .game-btn[aria-current="true"] { border-color: var(--cyan); box-shadow: inset 3px 0 0 var(--cyan); }
 .empty { color: var(--muted); font-size: .85rem; line-height: 1.45; background: var(--board); border: 1px dashed var(--line); border-radius: 4px; padding: 12px; margin: 0; }
 button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
@@ -418,6 +419,7 @@ details.grp > summary:hover { color: var(--cyan); }
       <button type="button" id="v-props" aria-pressed="false">Player Props</button>
     </div>
     <input class="search" id="q" type="search" placeholder="Find a team or player" aria-label="Find a team or player">
+    <small class="live-at" id="live-at" aria-live="polite"></small>
     <div class="games" id="games"></div>
   </aside>
   <section class="board" id="board" aria-live="polite"></section>
@@ -543,12 +545,21 @@ function trends(g, L, R) {
 }
 const pnum0 = v => v == null || v === '' ? null : +v;
 
+function bannerHtml(g) {
+  const L = g.away, R = g.home;
+  if (g.state === 'in') return `<div class="banner" data-live="${esc(g.id)}">Live · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)} · ${esc(g.score.detail)} · ${g.frozen || g.liveOnly ? 'pregame lines and picks, locked at kickoff' : 'lines may be live, not pregame'}</div>`;
+  if (g.state === 'post') return `<div class="banner post" data-live="${esc(g.id)}">${esc(g.score.detail)} · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)}${g.frozen || g.liveOnly ? ' · pregame lines and picks shown' : ''}</div>`;
+  return '';
+}
+function stHtml(g) {
+  return g.state === 'in' ? `<span class="st live">Live ${esc(g.score.away)}-${esc(g.score.home)}</span>`
+    : g.state === 'post' ? `<span class="st">Final ${esc(g.score.away)}-${esc(g.score.home)}</span>`
+    : `<span class="st">${esc(g.date.split(' · ')[1].replace(' ET', ''))}</span>`;
+}
 function render(g) {
   current[league] = g.id;
   const L = g.away, R = g.home, c = g.confidence, ln = g.lines, op = ln.open || {}, k = g.kalshi || {};
-  let banner = '';
-  if (g.state === 'in') banner = `<div class="banner">Live · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)} · ${esc(g.score.detail)} · ${g.frozen ? 'pregame lines and picks, locked at kickoff' : 'lines may be live, not pregame'}</div>`;
-  if (g.state === 'post') banner = `<div class="banner post">${esc(g.score.detail)} · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)}${g.frozen ? ' · pregame lines and picks shown' : ''}</div>`;
+  const banner = bannerHtml(g);
   const strip = g.strip || [['Date / Time', g.date], ['Location', g.location + (g.neutral ? ' (neutral)' : '')], ['Weather', g.weather], ['Surface', g.surface],
     ['Off Rank', g.offRank], ['Def Rank', g.defRank], ['Overall Rank', g.overallRank]];
   if (!g.model && g.state === 'pre') banner += `<div class="banner post">These teams haven't played a game this season yet, so stats and model picks fill in after their first games.</div>`;
@@ -592,9 +603,7 @@ function list() {
   const order = { in: 0, pre: 1, post: 2 };
   const active = shown.filter(g => g.state !== 'post'), done = shown.filter(g => g.state === 'post');
   const item = g => {
-    const st = g.state === 'in' ? `<span class="st live">Live ${esc(g.score.away)}-${esc(g.score.home)}</span>`
-      : g.state === 'post' ? `<span class="st">Final ${esc(g.score.away)}-${esc(g.score.home)}</span>`
-      : `<span class="st">${esc(g.date.split(' · ')[1].replace(' ET', ''))}</span>`;
+    const st = stHtml(g);
     return `<button type="button" class="game-btn" data-id="${esc(g.id)}"><span class="gtop"><span>${esc(tl(g.away))} @ ${esc(tl(g.home))}</span>${st}</span>
       <small>${esc(g.home.abbr)} ${esc(g.lines.homeSpread)} · O/U ${esc(g.lines.total)}${(g.check || []).some(x => !x.ok) ? ' · <span class="warn-t">⚠ data</span>' : (g.check || []).length ? ' · ✓ checked' : ''}</small>${g.state === 'pre' ? `<span class="picks">${picks(g)}</span>` : ''}</button>`;
   };
@@ -1397,7 +1406,7 @@ function setMode(m) {
 function foot() {
   const m = DATA[league + '_meta'] || {};
   const bb = LEAGUES[league].sport === 'bb';
-  $('foot').innerHTML = mode === 'home' ? `Data from ESPN, DraftKings (via ESPN) and Kalshi, pulled ${esc(DATA.generated.replace('T', ' ').replace('Z', ' UTC'))}. The board refreshes every morning at 8:40 AM ET.`
+  $('foot').innerHTML = mode === 'home' ? `Data from ESPN, DraftKings (via ESPN) and Kalshi, pulled ${esc(DATA.generated.replace('T', ' ').replace('Z', ' UTC'))}. Picks and lines rebuild at 8:40 AM and 4:40 PM ET; live scores update every minute while this page is open.`
     : mode === 'plays' ? 'Your plays and the model picks are stored privately with this board. Profit uses each play\'s price: a win at -110 pays 0.91 units, a win at +150 pays 1.5 units, a loss costs the stake, a push is $0. Dollars are units times your unit size. Weeks run Monday to Sunday. ROI is profit divided by the amount risked on settled plays. Plays added with + Track grade themselves from final scores and box scores after the daily refresh.'
     : `Data from ESPN, pulled ${esc(DATA.generated.replace('T', ' ').replace('Z', ' UTC'))}: stats from ${m.games || 0} completed games across ${m.teams || 0} ${LEAGUES[league].n} teams. Lines are DraftKings via ESPN.
     ${bb ? 'L5 Rank uses each team\'s last 5 games; shooting percentages pool makes and attempts. Off and Def Rank use points per 100 possessions; L5 SOS ranks the average rating of the last 5 opponents (1st = toughest).'
@@ -1415,6 +1424,56 @@ $('q').addEventListener('input', () => mode === 'props' ? renderProps() : list()
 // League tabs show how many games are still to play.
 document.querySelectorAll('.tabs button').forEach(b => { const n = (DATA[b.dataset.lg] || []).filter(g => g.state !== 'post').length; b.innerHTML += `<small>${n ? n + ' game' + (n > 1 ? 's' : '') : 'no games'}</small>`; });
 setMode('home');
+
+/* ---------------- live scores ----------------
+   The board is rebuilt twice a day, so scores come straight from ESPN's scoreboard every minute while the page is
+   open. Only the score and game state change here: lines, confidence and picks stay locked at kickoff. */
+const SCOREBOARD = { cfb: 'football/college-football/scoreboard?groups=80&limit=300', nfl: 'football/nfl/scoreboard',
+  nba: 'basketball/nba/scoreboard', cbb: 'basketball/mens-college-basketball/scoreboard?groups=50&limit=300' };
+let liveAt = null;
+async function pollScores() {
+  if (document.hidden) return;
+  let moved = false, changed = false;
+  for (const [lg, path] of Object.entries(SCOREBOARD)) {
+    const games = DATA[lg] || [];
+    if (!games.some(g => g.state !== 'post')) continue;
+    let data;
+    try {
+      const r = await fetch('https://site.api.espn.com/apis/site/v2/sports/' + path, { cache: 'no-store' });
+      if (!r.ok) continue;
+      data = await r.json();
+    } catch (e) { continue; }  // offline, or this host blocks outside requests: keep the built scores
+    for (const ev of data.events || []) {
+      const g = games.find(x => x.id === ev.id);
+      if (!g) continue;
+      const comp = (ev.competitions || [])[0] || {}, side = {};
+      for (const c of comp.competitors || []) side[c.homeAway] = c.score;
+      const st = (ev.status || {}).type || {};
+      const state = st.state || g.state, detail = st.shortDetail || st.detail || '';
+      const score = { away: side.away ?? '', home: side.home ?? '', detail };
+      if (state === 'pre') continue;
+      const before = JSON.stringify([g.state, g.score]);
+      if (g.state !== state) { moved = true; if (g.state === 'pre') g.liveOnly = true; }
+      g.state = state; g.score = score;
+      if (JSON.stringify([g.state, g.score]) === before) continue;
+      changed = true;
+      if (lg === league && mode === 'games') {
+        const b = document.querySelector(`.game-btn[data-id="${CSS.escape(g.id)}"] .st`);
+        if (b) b.outerHTML = stHtml(g);
+        const ban = document.querySelector(`.banner[data-live="${CSS.escape(g.id)}"]`);
+        if (ban) ban.outerHTML = bannerHtml(g);
+      }
+    }
+  }
+  if (changed) liveAt = new Date();
+  // A game that just started or finished moves between the list's sections, so redraw the list itself.
+  if (moved && mode === 'games') list();
+  const tag = $('live-at');
+  if (tag && liveAt) tag.textContent = 'Scores updated ' + liveAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+pollScores();
+setInterval(pollScores, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollScores(); });
 </script>
 </body>
 </html>
