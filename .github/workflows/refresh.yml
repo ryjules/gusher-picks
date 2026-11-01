@@ -4,8 +4,8 @@ on:
   schedule:
     # GitHub runs schedules in UTC. 12:40 and 20:40 UTC are 8:40 AM and 4:40 PM Eastern
     # during daylight time (7:40 AM and 3:40 PM in winter).
-    - cron: "40 12 * * *"
-    - cron: "40 20 * * *"
+    - cron: "40 13 * * *"
+    - cron: "40 21 * * *"
   workflow_dispatch: {}
 
 permissions:
