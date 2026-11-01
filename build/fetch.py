@@ -1704,7 +1704,8 @@ TOT_EXTRA = {"cfb": 0.5, "nfl": 2.0}  # most that price + trends can add to a fo
 PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.75  # most a line move can add
-NEUTRAL_ROWS = {"Pace"}  # stat rows that are style, not quality
+NEUTRAL_ROWS = {"Pace"}
+PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
@@ -1855,7 +1856,7 @@ def stat_matchup(lg, g, nteams):
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
             k1, k2 = SM_SPREAD[lg]
             line_w = LINE_W
-            if lg == "cfb" and side == "home" and line_side < 0 and gap_h >= HUGE_GAP:
+            if SPORT[lg] == "fb" and side == "home" and line_side < 0 and gap_h >= HUGE_GAP:
                 # A massive mismatch at home (e.g. 12th vs 109th): big spreads are fine, so soften the penalty.
                 k1, k2, line_w = k1 / 2, k2 / 2, LINE_W / 2
                 notes = notes + [(f"Massive mismatch at home for {g['home']['abbr']}: a big spread is fine here", "home")]
@@ -1910,11 +1911,13 @@ def stat_matchup(lg, g, nteams):
             pace = R.get("Pace")
             pace_note = []
             if pace and None not in (pace[1][4], pace[2][0]):
-                fast, slow = nteams / 3, 2 * nteams / 3
-                if pace[1][4] <= fast and pace[2][0] <= fast:
-                    sig += 0.5; pace_note = [("Both teams play fast (lots of plays)", "over")]
-                elif pace[1][4] >= slow and pace[2][0] >= slow:
-                    sig -= 0.5; pace_note = [("Both teams play slow (fewer plays)", "under")]
+                # Pace nudges every total a little: two fast teams mean more plays, two slow ones fewer.
+                p = ((pace[1][4] + pace[2][0]) / 2 - 1) / max(1, nteams - 1)  # 0 = fastest, 1 = slowest
+                nudge = PACE_W * (1 - 2 * p)
+                sig += nudge
+                if abs(nudge) >= PACE_W / 2:
+                    pace_note = [(f"Pace: {g['away']['abbr']} ranks {ordn(pace[1][4])} and {g['home']['abbr']} {ordn(pace[2][0])} in plays per game",
+                                  "over" if nudge > 0 else "under")]
             if wild:
                 pace_note = pace_note + [(f"Our number is {abs(blend_total - ln['totalNum']):.0f} points from the market: a gap that big usually "
                                           "means the line knows something (injuries, weather, a backup QB), so this stays a Lean at most",
