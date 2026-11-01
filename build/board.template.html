@@ -731,7 +731,7 @@ function renderProps() {
 
 /* ---------------- plays tracker ---------------- */
 let src = 'mine';
-const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => p.verdict === 'Take' || p.verdict === 'Take small') } };
+const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => (p.verdict === 'Take' || p.verdict === 'Take small') && p.grade?.kind !== 'ml') } };
 let db = null, plays = [], dbState = 'loading', pday = todayET(), period = 'day', unitSize = null, draft = null, confirmDel = null, autoGraded = false;
 function todayET() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
 function shiftDay(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -1011,7 +1011,7 @@ function renderPlays() {
     ${form}
     <div class="rec3">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to)), v = ss.units * U;
       return `<button type="button" data-src="${key}" aria-pressed="${src === key}"><span>${esc(sr.name)}</span><b class="${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${money(v)}</b><small>${ss.w}-${ss.l}${ss.pu ? '-' + ss.pu : ''} · ${usign(ss.units)}${ss.n > ss.settledN ? ` · ${ss.n - ss.settledN} pending` : ''}</small></button>`; }).join('')}</div>
-    ${src === 'model' ? `<p class="msg">What you'd have made betting every green TAKE pick: each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p>` : ''}
+    ${src === 'model' ? `<p class="msg">What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted): each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p>` : ''}
     <div class="cards">
       <div class="card"><span>Profit</span><b class="${profit > 0 ? 'pos' : profit < 0 ? 'neg' : ''}">${money(profit)}</b><small>${usign(s.units)} · ${profit >= 0 ? 'up' : 'down'}</small></div>
       <div class="card"><span>Record</span><b>${s.w}-${s.l}${s.pu ? '-' + s.pu : ''}</b><small>${s.n} play${s.n === 1 ? '' : 's'}${s.n > s.settledN ? ` · ${s.n - s.settledN} pending` : ''}</small></div>
