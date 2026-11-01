@@ -657,6 +657,73 @@ function dataCheck(g) {
     <ul>${c.map(x => `<li class="${x.ok ? 'r-yes' : 'r-warn'}">${esc(x.text)}</li>`).join('')}</ul></details>`;
 }
 // "Why X.X": a plain-English summary of what drives the score.
+// Turn the model's reason lines into plain sentences a bettor would say out loud.
+function humanize(t) {
+  t = t.replace(/\.$/, '');
+  let m;
+  if ((m = t.match(/^Injuries cost (\S+) about ([\d.]+) points: (.+)$/))) {
+    const who = m[3].split(/\), /).map(x => x.replace(/ \(.*$/, '')).slice(0, 2);
+    return `${m[1]} is missing ${who.join(' and ')}, which we count as about ${m[2]} points`;
+  }
+  if ((m = t.match(/^(\S+) (.+?) \((\d+\w\w)\) vs (\S+) (.+?) \((\d+\w\w)\)$/)))
+    return `${m[1]}'s ${m[2]} (${m[3]}) faces ${m[4]}'s ${m[5]} (${m[6]})`;
+  if ((m = t.match(/^Price model has (\S+) (winning|losing) by ([\d.]+); the line is \S+ (.+)$/)))
+    return `our projection has ${m[1]} ${m[2]} by ${m[3]} with the line at ${m[4]}`;
+  if ((m = t.match(/^Price model gives (\S+) a (\d+)% chance to win at (\S+)(?: \(the price implies (\d+)%\))?$/)))
+    return `we give ${m[1]} a ${m[2]}% chance to win${m[4] ? ` while ${m[3]} only implies ${m[4]}%` : ''}`;
+  if ((m = t.match(/^Price model projects ([\d.]+) points against a total of ([\d.]+)$/)))
+    return `our projection lands at ${m[1]} points against a ${m[2]} total`;
+  if ((m = t.match(/^Records: (\S+) (\d+-\d+) vs (\S+) (\d+-\d+)$/)))
+    return `${m[1]} is ${m[2]} and ${m[3]} is ${m[4]}`;
+  if ((m = t.match(/^Total moved ([\d.]+) → ([\d.]+): money has come in on the (\w+)$/)))
+    return `the total has moved from ${m[1]} to ${m[2]} with money on the ${m[3]}`;
+  if ((m = t.match(/^Line moved (\S+) → (\S+): money has come in on (\S+)$/)))
+    return `the line has moved from ${m[1]} to ${m[2]}, so money is coming in on ${m[3]}`;
+  if ((m = t.match(/^Trend: (\S+) (\S+) (.+)$/)))
+    return `${m[1]} is ${m[2]} ${m[3]}`;
+  if ((m = t.match(/^Early season: the model only counts (\d+)% .*$/)))
+    return `it's early in the season, so our numbers only carry ${m[1]}% weight against the market`;
+  if ((m = t.match(/^(\S+) has (\d+) starters-level players listed doubtful or out \((.+)\)$/)))
+    return `${m[1]} has ${m[2]} starters listed doubtful or out (${m[3]})`;
+  if ((m = t.match(/^The data makes (\S+) about ([\d.]+) points better; against the line that leaves ([\d.]+) points of edge for (\S+)$/)))
+    return `the numbers make ${m[1]} about ${m[2]} points better, which leaves ${m[3]} points of value on ${m[4]}`;
+  if ((m = t.match(/^Scoring projects to ([\d.]+) \(last 3 games ([\d.]+), full season ([\d.]+)\) against a total of ([\d.]+)$/)))
+    return `we project ${m[1]} points (${m[2]} over the last 3 games, ${m[3]} for the season) against a ${m[4]} total`;
+  if ((m = t.match(/^Recent scoring \(each offense vs the other defense\) adds up to ([\d.]+) against a total of ([\d.]+)$/)))
+    return `recent scoring for these two adds up to ${m[1]} against a ${m[2]} total`;
+  if ((m = t.match(/^Offense-vs-defense gaps point to about ([\d.]+) points.*$/)))
+    return `the offense-vs-defense matchups point to about ${m[1]} points`;
+  if ((m = t.match(/^Scoring offenses rank (\S+) and (\S+), defenses (\S+) and (\S+) in points allowed.*$/)))
+    return `the offenses rank ${m[1]} and ${m[2]} in scoring, with the defenses ${m[3]} and ${m[4]} in points allowed`;
+  if ((m = t.match(/^(\S+) has the better recent rank in (\d+) of (\d+) stat categories; biggest edge: (.+)$/)))
+    return `${m[1]} ranks better in ${m[2]} of ${m[3]} categories, led by ${m[4]}`;
+  if ((m = t.match(/^(\S+) has the better recent rank in (\d+) of (\d+) stat categories$/)))
+    return `${m[1]} ranks better in ${m[2]} of ${m[3]} categories`;
+  const w = t.split(' ')[0].replace(/[:,]$/, '');
+  return /^(The|Scoring|Recent|Both|Two|Our|Offense|Line|Total|Weather|Near|Big|Long|Massive|Adjusted|Pace|Price)$/.test(w) ? t.charAt(0).toLowerCase() + t.slice(1) : t;
+}
+function humanSummary(g, kind, a, pk, fin, price) {
+  const call = a.call && a.call !== 'Pass' ? a.call : pk.call;
+  const weak = /^(Price model|Kalshi|.*better recent rank|Trend:|Line moved|Total moved|Early season)/;
+  const why = a.why || [], vs = [...(a.warn || []), ...(a.against || [])].sort((x, y) => /^Early season/.test(x) - /^Early season/.test(y));
+  const strong = why.filter(t => !weak.test(t)), soft = why.filter(t => weak.test(t));
+  const lead = [...strong, ...soft].slice(0, 2).map(humanize);
+  const joinAnd = xs => xs.length > 1 ? `${xs[0]}, and ${xs[1]}` : xs[0];
+  const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  const sc = `${fin.toFixed(1)} out of 10`;
+  const open = {
+    'Take large': `This is one of our strongest spots: ${call} (${sc}), and everything we look at points the same way.`,
+    'Take': `We're on ${call} at ${sc}.`,
+    'Take small': `We like ${call} (${sc}), but at a smaller stake.`,
+    'Fade': `There's a lean to ${call} (${sc}), but not enough for us to put money on it.`,
+    'Pass': `No bet here (${sc}): ${pk.stat != null && pk.stat < 3 ? 'the matchup is close to even' : 'nothing separates enough to trust it'}.`,
+  }[a.verdict] || `${call}: ${sc}.`;
+  const caseFor = lead.length ? ` ${a.verdict === 'Pass' ? 'The little it has going for it' : 'The case for it'}: ${joinAnd(lead)}.` : '';
+  const priceBit = Math.abs(price) >= 0.5 && !lead.some(x => /projection|chance to win/.test(x))
+    ? (price > 0 ? ' Our projection agrees.' : ' Our projection disagrees, which keeps the score down.') : '';
+  const risk = vs.length ? ` ${/^Take/.test(a.verdict) ? 'The risk' : 'What holds us back'}: ${humanize(vs[0])}.` : '';
+  return esc(cap(open + caseFor + priceBit + risk).replace(/ +/g, ' '));
+}
 function whyScore(g, kind, a) {
   const pk = (g.pick || {})[kind], c = (g.confidence || {})[kind];
   if (!pk || !c) return '';
@@ -676,11 +743,7 @@ function whyScore(g, kind, a) {
     : kind === 'total' && raw > fin && pk.stat != null && fin <= pk.stat * (pk.cal || 1) + 0.6 ? 'The stats decide football totals: the price and trends can add at most half a point.'
     : raw > 7 ? 'Scores above 7 ease toward 10, so a 10 means nearly everything agrees.'
     : 'Capped (long-shot price).';
-  // Plain-English summary from the strongest reasons.
-  const lead = (a.why || []).slice(0, 1).map(t => t.replace(/\.$/, '')).join('; ');
-  const vs = (a.against || [])[0];
-  const word = fin >= 7 ? 'a Play' : fin >= 4 ? 'a Lean' : 'a Pass';
-  const sum = `${fin.toFixed(1)} on ${esc(nm(pk.side))} makes this ${word}. ${pk.stat >= 6 ? 'The stat matchup does most of the work' : pk.stat >= 3 ? 'The stat matchup leans this way' : 'The stat matchup is close to even'}${Math.abs(price) >= 0.5 ? (price > 0 ? ', and the price model agrees' : ', but the price model disagrees') : ''}${lead ? `: ${esc(lead)}` : ''}.${vs ? ` Holding it back: ${esc(vs.replace(/\.$/, ''))}.` : ''}`;
+  const sum = humanSummary(g, kind, a, pk, fin, price);
   return `<div class="why-box"><p>${sum}</p>${capped ? `<small class="why-cap">${esc(cap)}</small>` : ''}</div>`;
 }
 function breakdown(lg, g) {
