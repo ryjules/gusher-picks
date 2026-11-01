@@ -285,6 +285,8 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .r-warn::before { content: "⚠"; color: var(--gold); } .r-tip::before { content: "$"; color: var(--cyan); }
 .pick .reason { grid-column: 1 / -1; font-size: .82rem; line-height: 1.45; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 6px; }
 .sportf { display: flex; gap: 6px; flex-wrap: wrap; }
+.chart .sportf { margin: 10px 0 4px; }
+.sportf::before { content: 'Sport'; align-self: center; font: 700 .75rem var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
 .sportf button { display: inline-flex; align-items: center; gap: 6px; font: 800 .9rem var(--f-display); letter-spacing: .05em; text-transform: uppercase; background: #0c1117; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
 .sportf button small { font: 700 .75rem var(--f-body); background: var(--board); color: var(--muted); border-radius: 999px; padding: 1px 7px; letter-spacing: 0; }
 .sportf button[aria-pressed="true"] { background: var(--cyan); border-color: var(--cyan); color: #04141a; }
@@ -908,7 +910,7 @@ function niceStep(raw) {
   const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
 }
-function chart(list, per, from, to) {
+function chart(list, per, from, to, sw = '') {
   const done = list.filter(p => p.result).sort(byWhen);
   if (!done.length) return `<div class="chart"><div class="ch-h"><span>Profit over time</span></div><p class="ch-empty">The graph starts once a play is graded.</p></div>`;
   const U = UNIT();
@@ -941,7 +943,8 @@ function chart(list, per, from, to) {
   const line = pts.map(p => `${(p.x * W).toFixed(1)},${Y(p.y).toFixed(2)}`).join(' ');
   const end = run, cls = end >= 0 ? 'pos' : 'neg';
   const yl = v => (v > 0 ? '+' : v < 0 ? '−' : '') + '$' + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: step < 1 ? 2 : 0 });
-  return `<div class="chart"><div class="ch-h"><span>Profit over time</span><b class="${cls}">${money(end)}</b></div>
+  return `<div class="chart"><div class="ch-h"><span>Profit over time${psport !== 'all' ? ' · ' + esc(LEAGUES[psport].name) : ' · All sports'}</span><b class="${cls}">${money(end)}</b></div>
+    ${sw}
     <div class="ch-grid">
       <div class="ch-y">${ticks.map(v => `<span style="top:${Y(v).toFixed(2)}%">${yl(v)}</span>`).join('')}</div>
       <div class="ch-plot" data-pts="${esc(JSON.stringify(pts))}">
@@ -1070,6 +1073,9 @@ function renderPlays() {
   const pc = x => x > 0 ? 'pos' : x < 0 ? 'neg' : '';
   const rec = x => `${x.w}-${x.l}${x.pu ? '-' + x.pu : ''}`;
   const empty = dbState === 'ready' && !scope.length;
+  const sportSw = `<div class="sportf" role="group" aria-label="Sport">${[['all', 'All sports'], ...Object.entries(LEAGUES).map(([k, v]) => [k, v.short])].map(([k, n]) => {
+      const c = SRC[src].list().filter(p => p.date >= from && p.date <= to && (k === 'all' || p.league === k)).length;
+      return `<button type="button" data-sport="${k}" aria-pressed="${psport === k}"${c || k === 'all' || psport === k ? '' : ' class="none"'}>${esc(n)}<small>${c}</small></button>`; }).join('')}</div>`;
   const when = period === 'day' ? 'on ' + periodLabel(period, pday) : period === 'all' ? 'yet' : 'in this ' + period;
   const sportWord = psport === 'all' ? '' : LEAGUES[psport].short + ' ';
   $('board').innerHTML = `<div class="plays">
@@ -1089,9 +1095,7 @@ function renderPlays() {
       <label class="unit" for="p-unit" title="${unitSize ? 'What one unit is worth to you' : 'Set what one unit is worth to you (assumes $10 until you do)'}">Unit $<input id="p-unit" type="number" min="1" step="1" value="${esc(U)}" inputmode="decimal"></label>
     </div>
     ${form}
-    <div class="sportf" role="group" aria-label="Sport">${[['all', 'All sports'], ...Object.entries(LEAGUES).map(([k, v]) => [k, v.short])].map(([k, n]) => {
-      const c = SRC[src].list().filter(p => p.date >= from && p.date <= to && (k === 'all' || p.league === k)).length;
-      return `<button type="button" data-sport="${k}" aria-pressed="${psport === k}"${c || k === 'all' || psport === k ? '' : ' class="none"'}>${esc(n)}<small>${c}</small></button>`; }).join('')}</div>
+    ${s.settledN ? '' : sportSw}
     ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
     ${empty ? `<div class="empty"><b>No ${esc(sportWord)}plays ${esc(when)}</b>
         <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>
@@ -1102,7 +1106,7 @@ function renderPlays() {
         <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small></div>
         <div><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled</small></div>
       </div>
-      ${s.settledN ? chart(scope, period, from, to) : ''}
+      ${s.settledN ? chart(scope, period, from, to, sportSw) : ''}
       ${psport === 'all' ? sportCards(scope) : ''}` : ''}
     ${src === 'model' && dbState !== 'off' && !empty ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to && inSport(p))) : ''}
     ${empty ? '' : body}
