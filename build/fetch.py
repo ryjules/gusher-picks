@@ -1431,6 +1431,7 @@ def weather_of(g):
 
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
 SM_TOTAL_UNIT = {"cfb": 0.65, "nfl": 1.8, "nba": 0.5, "cbb": 0.6}  # NFL: 3 games is a small sample, so be less sensitive
 
 
@@ -1456,7 +1457,7 @@ def stat_matchup(lg, g, nteams):
     laid; the total compares recent scoring (each offense against the other defense) with the posted total.
     """
     R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
-    tot = wsum = 0.0
+    tot = wsum = tot_both = wsum_both = 0.0
     edges = []  # (net, text, side)
     a_better = h_better = 0
     for r in R.values():
@@ -1473,6 +1474,9 @@ def stat_matchup(lg, g, nteams):
         away_mm, home_mm = (hd - ao) / nteams, (ad - ho) / nteams  # > 0: the offense out-ranks the defense it faces
         tot += wt * (away_mm - home_mm)
         wsum += wt
+        if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
+            tot_both += wt * (away_mm + home_mm)
+            wsum_both += wt
         for mm, team, opp, o_rank, d_rank in ((away_mm, g["away"], g["home"], ao, hd), (home_mm, g["home"], g["away"], ho, ad)):
             if mm > 0.25:
                 edges.append((mm, f"{team['abbr']} {unit} ({ordn(o_rank)}) vs {opp['abbr']} {DEF_NAME[unit]} ({ordn(d_rank)})",
@@ -1482,7 +1486,7 @@ def stat_matchup(lg, g, nteams):
     if wsum:
         u = tot / wsum
         share = a_better / (a_better + h_better) if a_better + h_better else 0.5
-        strength = 12 * u + 4 * (share - 0.5)  # > 0 favors the away team
+        strength = SIDE_SCALE[lg] * u + 4 * (share - 0.5)  # > 0 favors the away team
         side = "away" if strength > 0 else "home"
         base = min(10.0, abs(strength))
         team = g[side]
@@ -1498,12 +1502,27 @@ def stat_matchup(lg, g, nteams):
             out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": side, "call": f"{team['abbr']} {fsp(line_side)}", "notes": notes}
     off, dfn = R.get("PPG"), R.get("PPG/A") or R.get("Opp PPG")
     if off and dfn and ln.get("totalNum") is not None and None not in (off[1][3], off[2][1], dfn[1][3], dfn[2][1]):
-        proj = (off[1][3] + dfn[2][1]) / 2 + (off[2][1] + dfn[1][3]) / 2  # recent window: last 3 (football) / last 5 (hoops)
-        diff = proj - ln["totalNum"]
-        side = "over" if diff > 0 else "under"
-        out["total"] = {"score": round(min(10.0, abs(diff) / SM_TOTAL_UNIT[lg]), 1), "side": side, "proj": round(proj, 1),
-                        "call": f"{'Over' if diff > 0 else 'Under'} {ln['totalNum']:g}",
-                        "notes": [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}", side)]}
+        recent = (off[1][3] + dfn[2][1]) / 2 + (off[2][1] + dfn[1][3]) / 2  # last 3 (football) / last 5 (hoops)
+        proj = recent
+        if SPORT[lg] == "fb" and None not in (off[1][0], off[2][4], dfn[1][0], dfn[2][4]):
+            # Football: last 3 games alone swing too much (a couple of blowouts), so blend in the full season and
+            # weigh how the offenses match up with the defenses they face (both units beating bad defenses = over).
+            season = (off[1][0] + dfn[2][4]) / 2 + (off[2][4] + dfn[1][0]) / 2
+            proj = (recent + season) / 2
+            both = 12 * tot_both / wsum_both if wsum_both else 0.0
+            sig = 0.45 * (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg] + 0.65 * both
+            notes = [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
+                      "over" if proj > ln["totalNum"] else "under")]
+            if abs(both) >= 1:
+                notes.append((f"Both offenses vs the defenses they face: {'mismatches favor the offenses' if both > 0 else 'the defenses have the edge'}",
+                              "over" if both > 0 else "under"))
+        else:
+            sig = (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
+            notes = [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}",
+                      "over" if sig > 0 else "under")]
+        side = "over" if sig > 0 else "under"
+        out["total"] = {"score": round(min(10.0, abs(sig)), 1), "side": side, "proj": round(proj, 1),
+                        "call": f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}", "notes": notes}
     return out
 
 
@@ -1547,6 +1566,8 @@ def blend_confidence(lg, g, n):
             continue
         if kind == "moneyline" and (pnum(price) or 0) > 500:
             score = min(score, 5.0)  # long shots: cap at a lean
+        if kind != "moneyline" and vs and vs != side and v >= 1.0:
+            score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most, not a Play
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                       "value": v, "valueSide": vs}
@@ -1765,15 +1786,32 @@ def grade_pick(pk):
     return sign(v - gr["line"] if gr["side"] == "over" else gr["line"] - v)
 
 
+FROZEN = ("lines", "confidence", "pick", "valueConf", "analysis", "matchup", "model", "kalshi", "props")
+
+
 def update_history(path_in, path_out):
-    hist = {}
+    hist, snaps = {}, {}
     if path_in and os.path.exists(path_in):
         try:
             with open(path_in) as f:
-                hist = {p["id"]: p for p in json.load(f).get("picks", [])}
-        except (ValueError, KeyError):
-            hist = {}
+                saved = json.load(f)
+            hist = {p["id"]: p for p in saved.get("picks", [])}
+            snaps = saved.get("pregame") or {}
+        except (ValueError, KeyError, AttributeError):
+            hist, snaps = {}, {}
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    # Freeze each game at kickoff: once a game starts, the board keeps its last pregame lines, scores and
+    # verdicts instead of recomputing them from live odds. Snapshots older than a week are dropped.
+    keep_from = (datetime.now(ET) - timedelta(days=7)).strftime("%Y-%m-%d")
+    for lg in ("cfb", "nfl", "nba", "cbb"):
+        for g in OUT_DATA.get(lg) or []:
+            key = f"{lg}-{g['id']}"
+            if g.get("state") == "pre":
+                snaps[key] = {"at": now, "day": game_day(g), **{k: g[k] for k in FROZEN if k in g}}
+            elif key in snaps:
+                g.update({k: v for k, v in snaps[key].items() if k in FROZEN})
+                g["frozen"] = snaps[key]["at"]
+    snaps = {k: v for k, v in snaps.items() if v.get("day", "") >= keep_from}
     added = 0
     for lg in ("cfb", "nfl", "nba", "cbb"):
         for g in OUT_DATA.get(lg) or []:
@@ -1822,7 +1860,7 @@ def update_history(path_in, path_out):
     OUT_DATA["modelHistory"] = picks
     if path_out:
         with open(path_out, "w") as f:
-            json.dump({"updated": now, "picks": picks}, f, separators=(",", ":"))
+            json.dump({"updated": now, "picks": picks, "pregame": snaps}, f, separators=(",", ":"))
     print("history", len(picks), "picks;", added, "new;", graded, "graded", file=sys.stderr)
 
 

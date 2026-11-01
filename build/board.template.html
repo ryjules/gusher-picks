@@ -460,8 +460,8 @@ function render(g) {
   current[league] = g.id;
   const L = g.away, R = g.home, c = g.confidence, ln = g.lines, op = ln.open || {}, k = g.kalshi || {};
   let banner = '';
-  if (g.state === 'in') banner = `<div class="banner">Live · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)} · ${esc(g.score.detail)} · lines may be live, not pregame</div>`;
-  if (g.state === 'post') banner = `<div class="banner post">${esc(g.score.detail)} · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)}</div>`;
+  if (g.state === 'in') banner = `<div class="banner">Live · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)} · ${esc(g.score.detail)} · ${g.frozen ? 'pregame lines and picks, locked at kickoff' : 'lines may be live, not pregame'}</div>`;
+  if (g.state === 'post') banner = `<div class="banner post">${esc(g.score.detail)} · ${esc(L.abbr)} ${esc(g.score.away)} – ${esc(R.abbr)} ${esc(g.score.home)}${g.frozen ? ' · pregame lines and picks shown' : ''}</div>`;
   const strip = g.strip || [['Date / Time', g.date], ['Location', g.location + (g.neutral ? ' (neutral)' : '')], ['Weather', g.weather], ['Surface', g.surface],
     ['Off Rank', g.offRank], ['Def Rank', g.defRank], ['Overall Rank', g.overallRank]];
   if (!g.model && g.state === 'pre') banner += `<div class="banner post">These teams haven't played a game this season yet, so stats and model picks fill in after their first games.</div>`;
