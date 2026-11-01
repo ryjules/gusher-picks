@@ -290,6 +290,17 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .sportf button[aria-pressed="true"] { background: var(--cyan); border-color: var(--cyan); color: #04141a; }
 .sportf button[aria-pressed="true"] small { background: rgba(0,0,0,.2); color: #04141a; }
 .sportf button.none { opacity: .45; }
+.spcs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.spc { display: grid; gap: 4px; text-align: left; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--ink); cursor: pointer; }
+.spc:hover { border-color: var(--cyan); }
+.spc-h { display: flex; justify-content: space-between; font: 800 1.1rem var(--f-display); text-transform: uppercase; }
+.spc small { color: var(--muted); } .spc em { color: var(--muted); font-size: .85rem; font-style: normal; padding: 18px 0; }
+.spc svg { width: 100%; height: 56px; display: block; }
+details.grp > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; }
+details.grp > summary::-webkit-details-marker { display: none; }
+details.grp > summary::before { content: '▾'; color: var(--muted); font-size: .9rem; transition: transform .15s; display: inline-block; }
+details.grp:not([open]) > summary::before { transform: rotate(-90deg); }
+details.grp > summary:hover { color: var(--cyan); }
 .ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
 .srctabs button { display: grid; gap: 1px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 8px 16px; color: var(--muted); cursor: pointer; min-width: 130px; }
@@ -771,6 +782,7 @@ function renderProps() {
 let src = 'mine';
 const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => (p.verdict === 'Take' || p.verdict === 'Take small') && p.grade?.kind !== 'ml') } };
 let psport = 'all';
+const closedGroups = new Set();
 let db = null, plays = [], dbState = 'loading', pday = todayET(), period = 'day', unitSize = null, draft = null, confirmDel = null, autoGraded = false;
 function todayET() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
 function shiftDay(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -986,6 +998,25 @@ function confTable(list) {
     <p class="ch-empty">Every pick scored 4 or higher, graded at 1 unit at the price when it was logged, including Leans the model faded (those show how the Lean side did: if they lose, fading was right). Use it to see which score ranges, sports and bet types to trust.</p></div>`;
 }
 
+// One small profit graph per sport, under the combined graph; tapping one filters the page to that sport.
+function sportCards(list) {
+  const U = UNIT();
+  const cards = Object.entries(LEAGUES).map(([k, v]) => {
+    const ps = list.filter(p => p.league === k), done = ps.filter(p => p.result).sort(byWhen);
+    if (!ps.length) return '';
+    const sm = summary(ps), prof = sm.units * U;
+    let run = 0; const ys = [0, ...done.map(p => (run += unitsOf(p) * U))];
+    const lo = Math.min(0, ...ys), hi = Math.max(0, ...ys), span = hi - lo || 1, W = 200, H = 56;
+    const X = i => ys.length > 1 ? W * i / (ys.length - 1) : 0, Y = y => 4 + (H - 8) * (hi - y) / span;
+    const line = ys.map((y, i) => `${X(i).toFixed(1)},${Y(y).toFixed(1)}`).join(' ');
+    const cls = run > 0 ? 'pos' : run < 0 ? 'neg' : '';
+    return `<button type="button" class="spc" data-sport="${k}"><span class="spc-h"><b>${esc(v.short)}</b><b class="${cls}">${done.length ? money(prof) : '—'}</b></span>
+      <small>${sm.w}-${sm.l}${sm.pu ? '-' + sm.pu : ''}${sm.n > sm.settledN ? ` · ${sm.n - sm.settledN} pending` : ''}</small>
+      ${done.length ? `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="${esc(v.short)} profit over time, ${money(prof)}"><line x1="0" x2="${W}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" class="ch-zero" vector-effect="non-scaling-stroke"></line><polyline points="${line}" class="ch-line ${cls || 'pos'}" vector-effect="non-scaling-stroke"></polyline></svg>` : '<em>No graded plays yet</em>'}</button>`;
+  }).join('');
+  return cards ? `<div class="spcs">${cards}</div>` : '';
+}
+
 function renderPlays() {
   const [from, to] = periodRange(period, pday);
   const inSport = p => psport === 'all' || p.league === psport;
@@ -1008,7 +1039,8 @@ function renderPlays() {
       const gs = summary(ps);
       const title = daily ? prettyDay(k) : LEAGUES[k]?.short || k;
       const gm = gs.units * U;
-      return `<div class="lg-h">${esc(title)}<small>${ps.length} play${ps.length > 1 ? 's' : ''} · ${gs.w}-${gs.l}${gs.pu ? '-' + gs.pu : ''}${gs.settledN ? ` · <span class="${gm > 0 ? 'pos' : gm < 0 ? 'neg' : ''}">${money(gm)}</span>` : ''}</small></div>
+      const gk = src + ':' + k;
+      return `<details class="grp" data-gk="${esc(gk)}" ${closedGroups.has(gk) ? '' : 'open'}><summary class="lg-h">${esc(title)}<small>${ps.length} play${ps.length > 1 ? 's' : ''} · ${gs.w}-${gs.l}${gs.pu ? '-' + gs.pu : ''}${gs.settledN ? ` · <span class="${gm > 0 ? 'pos' : gm < 0 ? 'neg' : ''}">${money(gm)}</span>` : ''}</small></summary>
       <div class="scroll"><table class="ptbl" style="min-width:900px"><thead><tr><th>Time</th><th>Matchup</th><th>Play</th><th>Price</th><th>Book</th><th>Stake</th><th>Result</th><th>Units</th><th>Profit</th><th></th></tr></thead><tbody>
       ${ps.map(p => {
         const u = unitsOf(p);
@@ -1018,7 +1050,7 @@ function renderPlays() {
           <td class="num ${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${p.result ? usign(u) : dash}</td>
           <td class="num ${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${p.result ? money(u * U) : dash}</td>
           <td>${src === 'mine' ? `<button type="button" class="del" data-del="${esc(p.id)}">${confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button>` : ''}</td></tr>`;
-      }).join('')}</tbody></table></div>`;
+      }).join('')}</tbody></table></div></details>`;
     }).join('');
   }
   const f = draft;
@@ -1070,14 +1102,16 @@ function renderPlays() {
         <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small></div>
         <div><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled</small></div>
       </div>
-      ${s.settledN ? chart(scope, period, from, to) : ''}` : ''}
+      ${s.settledN ? chart(scope, period, from, to) : ''}
+      ${psport === 'all' ? sportCards(scope) : ''}` : ''}
     ${src === 'model' && dbState !== 'off' && !empty ? confTable((DATA.modelHistory || []).filter(p => p.date >= from && p.date <= to && inSport(p))) : ''}
     ${empty ? '' : body}
     ${db && db.local && src === 'mine' ? `<p class="foot">Your plays are saved in this browser on this device.</p>` : ''}
   </div>`;
   wireChart();
   $('board').querySelectorAll('[data-per]').forEach(b => b.onclick = () => { period = b.dataset.per; renderPlays(); });
-  $('board').querySelectorAll('[data-sport]').forEach(b => b.onclick = () => { psport = b.dataset.sport; renderPlays(); });
+  $('board').querySelectorAll('[data-sport]').forEach(b => b.onclick = () => { psport = b.dataset.sport; renderPlays(); if (b.classList.contains('spc')) window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $('board').querySelectorAll('details.grp').forEach(d => d.ontoggle = () => { d.open ? closedGroups.delete(d.dataset.gk) : closedGroups.add(d.dataset.gk); });
   $('board').querySelectorAll('[data-src]').forEach(b => b.onclick = () => { src = b.dataset.src; confirmDel = null; renderPlays(); });
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   on('p-prev', () => { pday = shiftPeriod(period, pday, -1); renderPlays(); });
