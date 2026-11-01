@@ -422,7 +422,7 @@ function confCell(g, kind, label, c) {
   const canAdd = g.state === 'pre' && g.model && (kind !== 'moneyline' || g.model.mlSide) && (kind !== 'spread' || g.model.spreadSide) && (kind !== 'total' || g.model.totalSide);
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
-  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? ' ' + sideName(pk.valueSide) : ''}</small>` : '';
+  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? ' ' + sideName(pk.valueSide) : ''}${pk.trend ? ` · Trends ${pk.trend > 0 ? '+' : ''}${pk.trend.toFixed(1)}` : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}</small>` : '';
   return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 

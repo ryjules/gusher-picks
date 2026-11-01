@@ -1535,11 +1535,16 @@ def stat_matchup(lg, g, nteams):
         price = pnum(ln.get("homeML" if side == "home" else "awayML"))
         # Laying a big price has little value even when the team should win: shrink the moneyline score.
         ml = base * ((150 / abs(price)) ** ML_FAV_EXP[lg] if price is not None and price <= -150 else 1.0)
+        if price is not None and price > 100:
+            ml *= (100 / price) ** 0.5  # an underdog has to win outright: +150 keeps 82%, +300 keeps 58%
         out["moneyline"] = {"score": round(ml, 1), "side": side, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
         if ln.get("spreadNum") is not None:
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
             k1, k2 = SM_SPREAD[lg]
-            sp = base + k1 * line_side if line_side > 0 else base - (k1 * abs(line_side) + k2 * line_side ** 2)
+            if line_side > 0:  # getting points: football gets no bonus (the data decides); basketball a small one
+                sp = base + (0.0 if SPORT[lg] == "fb" else k1 * line_side)
+            else:
+                sp = base - (k1 * abs(line_side) + k2 * line_side ** 2)
             out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": side, "call": f"{team['abbr']} {fsp(line_side)}", "notes": notes}
     off, dfn = R.get("PPG"), R.get("PPG/A") or R.get("Opp PPG")
     if off and dfn and ln.get("totalNum") is not None and None not in (off[1][3], off[2][1], dfn[1][3], dfn[2][1]):
@@ -1567,6 +1572,42 @@ def stat_matchup(lg, g, nteams):
     return out
 
 
+def trend_records(g, kind):
+    """Per-team betting-trend rates that apply to this game: (away, home), each a list of (label, rate, games)."""
+    out = []
+    sp = g["lines"].get("spreadNum")  # home line
+    for side in ("away", "home"):
+        b = g[side].get("bet") or {}
+        venue = None if g.get("neutral") else ("Away" if side == "away" else "Home")
+        if kind == "total":
+            keys = [("ou", "O/U"), (f"ou{venue}", f"O/U {venue.lower()}")] if venue else [("ou", "O/U")]
+        else:
+            fav = sp is not None and ((sp > 0) if side == "away" else (sp < 0))
+            dog = sp is not None and ((sp < 0) if side == "away" else (sp > 0))
+            keys = [("ats", "ATS")] + ([(f"ats{venue}", f"ATS {venue.lower()}")] if venue else []) \
+                + ([("atsFav", "ATS as favorite")] if fav else [("atsDog", "ATS as underdog")] if dog else [])
+        rows = []
+        for k, label in keys:
+            r = b.get(k) or [0, 0, 0]
+            if r[0] + r[1] >= 3:
+                rows.append((label, r[0] / (r[0] + r[1]), r))
+        out.append(rows)
+    return out
+
+
+def trend_nudge(g, kind):
+    """Betting trends as a small tiebreaker (at most 0.6 of a point), signed toward away/over."""
+    if kind == "moneyline":
+        return 0.0
+    a, h = trend_records(g, kind)
+    lean = lambda rows: sum(r for _, r, _ in rows) / len(rows) - 0.5 if rows else 0.0
+    if kind == "total":
+        x = 2 * (lean(a) + lean(h)) / 2
+    else:
+        x = 1.5 * (lean(a) - lean(h))
+    return max(-0.6, min(0.6, x))
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -1592,6 +1633,8 @@ def blend_confidence(lg, g, n):
             sig += st["score"] * (1 if st["side"] == pos else -1)
         if vs:
             sig += 0.35 * v * (1 if vs == pos else -1)
+        tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
+        sig += tr
         side = pos if sig > 0 else ("home" if kind != "total" else "under")
         score = round(min(10.0, abs(sig)), 1)
         ln = g["lines"]
@@ -1607,11 +1650,16 @@ def blend_confidence(lg, g, n):
             continue
         if kind == "moneyline" and (pnum(price) or 0) > 500:
             score = min(score, 5.0)  # long shots: cap at a lean
+        if kind == "moneyline" and (pnum(price) or 0) <= -1000:
+            conf[kind] = [0.0, "Pass"]  # too short to bet: risking 10+ to win 1
+            pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
+                          "value": v, "valueSide": vs, "trend": 0.0, "tooShort": True}
+            continue
         if kind != "moneyline" and vs and vs != side and v >= 1.0:
             score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most, not a Play
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
-                      "value": v, "valueSide": vs}
+                      "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1)}
     g["confidence"], g["pick"] = conf, pick
 
 
@@ -1683,10 +1731,8 @@ def analyze_game(lg, g, kind, nteams):
             (why if steam else against).append(f"Line moved {ot} → {ct}: money has come in on {team['abbr'] if steam else opp['abbr']}.")
         for t in injury_notes(g, side):
             warn.append(t)
-        if lg == "nfl" and side == "away" and not g.get("neutral") and score < 7:
-            warn.append("Road team: back road sides only when the edge is clear.")
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
-            warn.append("Road favorite in college: road teams have struggled to cover this season.")
+            tips.append("Road favorite: worth knowing, but the data drives this pick.")
         if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
             warn.append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
         if kind == "spread" and SPORT[lg] == "fb" and line_num is not None:
@@ -1698,6 +1744,14 @@ def analyze_game(lg, g, kind, nteams):
             f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']})" + ("." if k["p"] >= 0.5 else ", so the market leans the other way."))
     if m.get("trust") is not None and m["trust"] < 0.3:
         warn.append(f"Early season: the model only counts {round(m['trust'] * 100)}% against the market with this few games played.")
+    if kind != "moneyline":
+        a_rows, h_rows = trend_records(g, kind)
+        for tm_side, rows in (("away", a_rows), ("home", h_rows)):
+            for label, rate, r in rows[1:]:  # the situational splits (venue, favorite/underdog)
+                if abs(rate - 0.5) >= 0.2:
+                    good = (rate > 0.5) == (side == "over" if kind == "total" else tm_side == side)
+                    rec = f"{r[0]}-{r[1]}" + (f"-{r[2]}" if r[2] else "")
+                    (why if good else against).append(f"Trend: {g[tm_side]['abbr']} {rec} {label}.")
     sm = (g.get("matchup") or {}).get(kind)
     oppose = False
     if sm:
