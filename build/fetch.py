@@ -404,9 +404,6 @@ PROP_CATS = [
      "o_totY", True, 45, lambda p: p.get("car", 0) >= 4 or p.get("rec", 0) >= 2),
     ("Touchdowns", lambda p: (p.get("rushTD", 0) + p.get("recTD", 0)) if ("rushYds" in p or "recYds" in p) else None,
      "o_td", True, 0.0, lambda p: p.get("car", 0) >= 1 or p.get("rec", 0) >= 1),  # every active rusher / receiver
-    ("Sacks", lambda p: p.get("sacks") if "tackles" in p else None, "sacksA", True, 0.3, lambda p: "tackles" in p),
-    ("Tackles + Ast", lambda p: p.get("tackles"), "plays", True, 4, lambda p: "tackles" in p),
-    ("FG Made", lambda p: p.get("fg"), "o_pts", False, 1.0, lambda p: "fg" in p),
 ]
 # ESPN prop market for each category (DraftKings lines via ESPN's odds feed).
 PROP_MARKETS = {
@@ -1696,7 +1693,8 @@ REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
 POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
 SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
-SM_TOTAL_UNIT = {"cfb": 0.65, "nfl": 1.8, "nba": 0.5, "cbb": 0.6}  # NFL: 3 games is a small sample, so be less sensitive
+TOT_EXTRA = 0.5  # most that price + trends can add to a football total
+SM_TOTAL_UNIT = {"cfb": 0.9, "nfl": 2.2, "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -1861,13 +1859,14 @@ def stat_matchup(lg, g, nteams):
             blend_total = 0.5 * proj + 0.5 * m_total
             sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             pace = R.get("Pace")
+            pace_note = []
             if pace and None not in (pace[1][4], pace[2][0]):
                 fast, slow = nteams / 3, 2 * nteams / 3
                 if pace[1][4] <= fast and pace[2][0] <= fast:
-                    sig += 0.5; notes = notes + [("Both teams play fast (lots of plays)", "over")]
+                    sig += 0.5; pace_note = [("Both teams play fast (lots of plays)", "over")]
                 elif pace[1][4] >= slow and pace[2][0] >= slow:
-                    sig -= 0.5; notes = notes + [("Both teams play slow (fewer plays)", "under")]
-            notes = [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
+                    sig -= 0.5; pace_note = [("Both teams play slow (fewer plays)", "under")]
+            notes = pace_note + [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
                       "over" if proj > ln["totalNum"] else "under"),
                      (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
                       "over" if m_total > ln["totalNum"] else "under")]
@@ -1947,6 +1946,10 @@ def blend_confidence(lg, g, n):
             sig += 0.35 * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
         sig += tr
+        if kind == "total" and SPORT[lg] == "fb" and st and abs(sig) > st["score"] + TOT_EXTRA:
+            # Football totals: the stats decide. Price and trends can add at most half a point on top, so they
+            # can't lift a weak stat read into a Play.
+            sig = math.copysign(st["score"] + TOT_EXTRA, sig)
         cal = CAL.get((lg, kind), 1.0)  # learned from this league's graded picks of this bet type
         sig *= cal
         side = pos if sig > 0 else ("home" if kind != "total" else "under")
