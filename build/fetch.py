@@ -818,6 +818,60 @@ def injury_report(summ, away, home):
     return out
 
 
+INJ_W = {"out": 1.0, "doubtful": 0.8, "questionable": 0.25}  # chance-weighted: questionable players usually play
+INJ_QB = {"nfl": 5.0, "cfb": 7.0}  # points a starting QB is worth over his backup
+
+
+def injury_impact(inj, tid, per_team, key):
+    """Points an injury report costs a team: {"off": points its offense loses, "def": points its defense gives up,
+    "players": [(name, pos, status, points)]}.
+
+    Only players who played in one of the team's last two games count; anyone out longer is already missing from
+    the stats. The starting QB (most pass attempts in the latest game) is worth INJ_QB; backs and receivers are
+    valued by their share of the team's scrimmage yards over the last 3 games; defenders by their share of tackles.
+    """
+    gl = per_team.get(tid, [])
+    res = {"off": 0.0, "def": 0.0, "players": []}
+    if not gl or not inj:
+        return res
+    recent = gl[-3:]
+    pl = lambda g: g["teams"][tid].get("players", {})
+    latest = pl(gl[-1])
+    qb = max(latest.items(), key=lambda kv: kv[1].get("passAtt", 0), default=(None, {}))[0] if latest else None
+    seen = set(pl(gl[-1])) | (set(pl(gl[-2])) if len(gl) > 1 else set())
+    scrim = lambda q: (q.get("rushYds", 0) or 0) + (q.get("recYds", 0) or 0)
+    team_scrim = sum(scrim(q) for g in recent for q in pl(g).values()) or 1.0
+    team_tkl = sum((q.get("tackles", 0) or 0) for g in recent for q in pl(g).values()) or 1.0
+    d_total = 0.0
+    for x in inj:
+        w = INJ_W.get((x.get("status") or "").lower())
+        pid = x.get("id")
+        if not w or pid not in seen:
+            continue
+        pts, side = 0.0, "off"
+        if pid == qb and latest.get(pid, {}).get("passAtt", 0) >= 10:
+            pts = INJ_QB.get(key, 5.0)
+        else:
+            mine = [pl(g).get(pid) for g in recent if pl(g).get(pid)]
+            share = sum(scrim(q) for q in mine) / team_scrim
+            if share >= 0.05:
+                pts = min(2.0, 6 * share)
+            else:
+                t_share = sum((q.get("tackles", 0) or 0) for q in mine) / team_tkl
+                if t_share >= 0.04:
+                    pts, side = min(0.8, 3 * t_share), "def"
+        pts *= w
+        if pts < 0.15:
+            continue
+        if side == "def":
+            pts = min(pts, max(0.0, 2.5 - d_total)); d_total += pts
+        res[side] += pts
+        res["players"].append([x.get("name"), x.get("pos"), x.get("status"), round(pts, 1), side])
+    res["off"] = round(min(res["off"], 2 * INJ_QB.get(key, 5.0)), 1)
+    res["def"] = round(res["def"], 1)
+    return res
+
+
 def injury_notes(g, side):
     """Warnings about the chosen team's injuries (football)."""
     inj = (g.get("inj") or {}).get(side) or []
@@ -1046,6 +1100,13 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
         aml = (pc.get("awayTeamOdds") or {}).get("moneyLine")
         hml = (pc.get("homeTeamOdds") or {}).get("moneyLine")
 
+        # Injuries: players who have been playing and are listed out, doubtful or questionable.
+        inj = injury_report(summ, away, home) if status.get("state") == "pre" else None
+        inj_adj = None
+        if inj:
+            inj_adj = {"away": injury_impact(inj["away"], away["id"], per_team, key),
+                       "home": injury_impact(inj["home"], home["id"], per_team, key)}
+
         # Model projection.
         model = None
         confidence = None
@@ -1054,6 +1115,9 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             adj = 0 if c.get("neutralSite") else hfa / 2
             pa = mu - adj + ra[0] - rh[1]
             ph = mu + adj + rh[0] - ra[1]
+            if inj_adj:  # a team scores less without its injured players, and allows more without its defenders
+                pa += -inj_adj["away"]["off"] + inj_adj["home"]["def"]
+                ph += -inj_adj["home"]["off"] + inj_adj["away"]["def"]
             margin = ph - pa
             p_home = phi(margin / sigma)
             model = {"away": round(pa, 1), "home": round(ph, 1), "pHome": round(p_home, 3)}
@@ -1090,9 +1154,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             confidence = cs
 
         props = []
-        inj = None
         if key == "nfl" and status.get("state") == "pre":
-            inj = injury_report(summ, away, home)
             injured = {(i.get("athlete") or {}).get("id") for tm in summ.get("injuries", []) for i in tm.get("injuries", [])
                        if (i.get("status") or "").lower() in OUT_STATUSES}
             lines = prop_lines(lg, e["id"])
@@ -1136,7 +1198,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             "sections": sections, "confidence": confidence, "model": model,
             "state": status.get("state"), "score": score,
             "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final, "inj": inj,
-            "seasonRanks": season_ranks, "power": power, "wl": [wl(away["id"]), wl(home["id"])],
+            "seasonRanks": season_ranks, "power": power, "wl": [wl(away["id"]), wl(home["id"])], "injAdj": inj_adj,
         })
     enrich(key, slate)
     OUT_DATA[key] = slate
@@ -1622,6 +1684,16 @@ def stat_matchup(lg, g, nteams):
         share = a_better / (a_better + h_better) if a_better + h_better else 0.5
         strength = SIDE_SCALE[lg] * u + SHARE_W * (share - 0.5)  # > 0 favors the away team; share = rows where the away team ranks better
         rec_notes = []
+        ia = g.get("injAdj")
+        if ia and SPORT[lg] == "fb":
+            # Injuries move the expected margin; convert those points into matchup strength.
+            swing = (ia["home"]["off"] + ia["home"]["def"]) - (ia["away"]["off"] + ia["away"]["def"])  # > 0 helps the away team
+            strength += swing / LINE_PTS[lg][0]
+            for sd in ("away", "home"):
+                cost = ia[sd]["off"] + ia[sd]["def"]
+                if cost >= 0.5:
+                    who = ", ".join(f"{n} ({pos}, {st.lower()})" for n, pos, st, _, _ in ia[sd]["players"][:3])
+                    rec_notes.append((f"Injuries cost {g[sd]['abbr']} about {cost:.1f} points: {who}", "home" if sd == "away" else "away"))
         if SPORT[lg] == "fb":
             # Records and opponent-adjusted power (the team-rating model credits who each team has played).
             (wa, la), (wh, lh) = g.get("wl") or [[0, 0], [0, 0]]
@@ -1684,6 +1756,9 @@ def stat_matchup(lg, g, nteams):
             # weigh how the offenses match up with the defenses they face (both units beating bad defenses = over).
             season = (off[1][0] + dfn[2][4]) / 2 + (off[2][4] + dfn[1][0]) / 2
             proj = (recent + season) / 2
+            ia = g.get("injAdj")
+            if ia:  # missing scorers lower the total, missing defenders raise it
+                proj += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
             both = 12 * tot_both / wsum_both if wsum_both else 0.0
             sig = 0.45 * (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg] + 0.65 * both
             notes = [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
