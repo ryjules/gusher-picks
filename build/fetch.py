@@ -2252,6 +2252,8 @@ def analyze_prop(p, g=None, lg=None):
         against.append("The price already reflects what the data shows, so there's no value at this number."
                        if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif p["score"] >= 7 and warn and p["score"] < PROP_WARN_BAR:
+        verdict = "Fade"  # a warning (bench role, injury tag, tough defense) needs a really strong read to still bet
     elif p["score"] >= 7:
         verdict = "Take small" if warn else "Take"
         if verdict == "Take" and p["score"] >= 9 and won >= 4 and not against and (p.get("edge") or 0) >= 0.05:
@@ -2263,6 +2265,26 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": []}
 
 
+PROP_WARN_BAR = 8.5  # a prop with a warning stays a (small) Take only from here up
+
+
+def one_prop_per_player(g):
+    """A player's props move together (one bad night sinks his points, PRA and Pts+Reb at once), so only his
+    best-scoring prop stays a Take; the rest become Fades."""
+    best = {}
+    for p in g.get("props") or []:
+        a = p.get("analysis")
+        if a and a["verdict"].startswith("Take"):
+            k = p.get("pid")
+            if k not in best or p["score"] > best[k]["score"]:
+                best[k] = p
+    for p in g.get("props") or []:
+        a = p.get("analysis")
+        if a and a["verdict"].startswith("Take") and best.get(p.get("pid")) is not p:
+            a["verdict"] = "Fade"
+            a["against"].append(f"Already playing his {best[p['pid']]['cat']} prop: one bet per player, since his numbers move together.")
+
+
 def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
@@ -2272,6 +2294,7 @@ def attach_analysis():
             g["analysis"] = {k2: v for k2, v in a.items() if v}
             for p in g.get("props") or []:
                 p["analysis"] = analyze_prop(p, g, key)
+            one_prop_per_player(g)
 
 
 # --- model picks history: hypothetical P/L of every green (Take) pick ---------------------
@@ -2370,6 +2393,8 @@ def update_history(path_in, path_out):
                 # only Takes. A pick logged as a Fade that later turns into a Take is re-logged at the new price.
                 old = hist.get(pid)
                 # Passes (under 4) are logged too, so the results table can show whether passing was right.
+                if old and not old.get("result") and old.get("verdict") in TAKES and not take:
+                    old["verdict"], old["score"], old["stake"] = a["verdict"], a["score"], 1  # dropped before kickoff
                 if not old or (take and old.get("verdict") not in TAKES):
                     try:
                         pk = pick_from_game(lg, g, kind, a)
@@ -2384,6 +2409,10 @@ def update_history(path_in, path_out):
                     added += 1
             for p in g.get("props") or []:
                 a = p.get("analysis")
+                ppid = f"{lg}-{g['id']}-{p.get('pid')}-{re.sub('[^A-Za-z0-9]', '', p.get('cat') or '')}"
+                old = hist.get(ppid)
+                if a and old and not old.get("result") and old.get("verdict") in TAKES and a["verdict"] not in TAKES:
+                    old["verdict"], old["stake"] = a["verdict"], 1  # dropped before kickoff
                 if BACKFILL or not a or a["verdict"] not in TAKES or p["score"] < 7 or p.get("flag"):
                     continue  # (a rebuilt day has no live prop prices, so its props are not logged)
                 pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
