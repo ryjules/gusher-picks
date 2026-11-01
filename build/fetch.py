@@ -2079,11 +2079,12 @@ def analyze_game(lg, g, kind, nteams):
             (why if sd == side else against).append(txt + ".")
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
+    TAKE_BAR = 6.5
     if score >= 7:
         verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
     elif score >= 4:
-        # Not every game needs a play: a Lean becomes a Take only from 5 up, with nothing against it.
-        verdict = "Take" if (score >= 5 and not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
+        # Not every game needs a play: a Lean becomes a Take only from 6.5 up (raised from 5 after a 42-play college Saturday), with nothing against it.
+        verdict = "Take" if (score >= TAKE_BAR and not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
