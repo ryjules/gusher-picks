@@ -872,6 +872,37 @@ def injury_impact(inj, tid, per_team, key):
     return res
 
 
+def injury_impact_bb(inj, tid, per_team):
+    """Basketball: points a team loses for injured rotation players (same shape as injury_impact).
+
+    Each injured player is worth 0.15 x points + 0.15 x rebounds + 0.2 x assists per game in the last 5 games
+    he played 15+ minutes (a 28-point star is about 6 points), scaled by the share of the team's last 5 games he
+    played in (out the whole stretch = already missing from the stats), capped at 7 each and 15 per team, and
+    weighted by status.
+    """
+    gl = per_team.get(tid, [])
+    res = {"off": 0.0, "def": 0.0, "players": []}
+    if not gl or not inj:
+        return res
+    pl = lambda g: g["teams"][tid].get("players", {})
+    window = gl[-5:]
+    for x in inj:
+        w = INJ_W.get((x.get("status") or "").lower())
+        pid = x.get("id")
+        games = [pl(g)[pid] for g in window if (pl(g).get(pid) or {}).get("min", 0) >= 15]
+        if not w or not games:
+            continue  # out the whole window: already missing from the stats
+        a = lambda k: sum(q.get(k, 0) for q in games) / len(games)
+        # Count him by the share of the recent games he played in, since only those games carry his production.
+        pts = min(7.0, 0.15 * a("pts") + 0.15 * a("reb") + 0.2 * a("ast")) * w * len(games) / len(window)
+        if pts < 0.3:
+            continue
+        res["off"] += pts
+        res["players"].append([x.get("name"), x.get("pos"), x.get("status"), round(pts, 1), "off"])
+    res["off"] = round(min(res["off"], 15.0), 1)
+    return res
+
+
 def injury_notes(g, side):
     """Warnings about the chosen team's injuries (football)."""
     inj = (g.get("inj") or {}).get(side) or []
@@ -1056,6 +1087,8 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
                 rest = (day(e["date"]) - day(gl[-1]["date"])).days
             rank = (x.get("curatedRank") or {}).get("current")
             overall = next((r["summary"] for r in x.get("records", []) if r.get("type") == "total"), "")
+            if BACKFILL:  # a rebuilt pregame board shows the record going into the game
+                overall = f"{sum(r[2] == 'W' for r in results)}-{sum(r[2] == 'L' for r in results)}"
             return {"id": tid, "name": t.get("shortDisplayName") or t.get("location"), "full": t.get("displayName"),
                     "abbr": t.get("abbreviation", "?"), "rank": rank if rank and rank <= 25 else None,
                     "color": "#" + (t.get("color") or "333333"), "alt": "#" + (t.get("alternateColor") or "ffffff"),
@@ -1281,22 +1314,29 @@ BB_ROWS = [  # (section, label, key, higher_is_better, kind)
 ]
 
 
-def bb_window(gl, tid):
-    """Averages (pooled shooting percentages) over a list of games from team tid's perspective."""
+def bb_window(gl, tid, per_game_pct=False):
+    """Averages over a list of games from team tid's perspective. Shooting percentages pool makes and attempts,
+    or (per_game_pct, used for the last-5 window as on the Profit Hunt boards) average each game's percentage."""
     if not gl:
         return {}
     S = lambda f: sum(f(g) for g in gl)
     me = lambda g: g["teams"][tid]
     op = lambda g: next(v for k, v in g["teams"].items() if k != tid)
     n = len(gl)
-    pct = lambda m, a: 100 * m / a if a else None
+    if per_game_pct:
+        def pct(fm, fa):  # fm, fa: per-game functions
+            vals = [100 * fm(g) / fa(g) for g in gl if fa(g)]
+            return sum(vals) / len(vals) if vals else None
+        P = lambda fm, fa: pct(fm, fa)
+    else:
+        P = lambda fm, fa: (100 * S(fm) / S(fa)) if S(fa) else None
     return {
         "pts": S(lambda g: me(g)["pts"]) / n, "paint": S(lambda g: me(g)["paint"]) / n,
-        "p2": pct(S(lambda g: me(g)["fgm"] - me(g)["tpm"]), S(lambda g: me(g)["fga"] - me(g)["tpa"])),
-        "p3": pct(S(lambda g: me(g)["tpm"]), S(lambda g: me(g)["tpa"])), "pft": pct(S(lambda g: me(g)["ftm"]), S(lambda g: me(g)["fta"])),
+        "p2": P(lambda g: me(g)["fgm"] - me(g)["tpm"], lambda g: me(g)["fga"] - me(g)["tpa"]),
+        "p3": P(lambda g: me(g)["tpm"], lambda g: me(g)["tpa"]), "pft": P(lambda g: me(g)["ftm"], lambda g: me(g)["fta"]),
         "o_pts": S(lambda g: op(g)["pts"]) / n, "o_paint": S(lambda g: op(g)["paint"]) / n,
-        "o_p2": pct(S(lambda g: op(g)["fgm"] - op(g)["tpm"]), S(lambda g: op(g)["fga"] - op(g)["tpa"])),
-        "o_p3": pct(S(lambda g: op(g)["tpm"]), S(lambda g: op(g)["tpa"])), "o_pft": pct(S(lambda g: op(g)["ftm"]), S(lambda g: op(g)["fta"])),
+        "o_p2": P(lambda g: op(g)["fgm"] - op(g)["tpm"], lambda g: op(g)["fga"] - op(g)["tpa"]),
+        "o_p3": P(lambda g: op(g)["tpm"], lambda g: op(g)["tpa"]), "o_pft": P(lambda g: op(g)["ftm"], lambda g: op(g)["fta"]),
         "reb": S(lambda g: me(g)["reb"]) / n, "ast": S(lambda g: me(g)["ast"]) / n,
         "stlblk": S(lambda g: me(g)["stl"] + me(g)["blk"]) / n, "tov": S(lambda g: me(g)["tov"]) / n,
         "fb": S(lambda g: me(g)["fb"]) / n, "pace": S(lambda g: (me(g)["poss"] + op(g)["poss"]) / 2) / n,
@@ -1328,6 +1368,8 @@ def run_basketball(lg, key, start, groups):
     with ThreadPoolExecutor(24) as ex:
         games = sorted([g for g in ex.map(load, done) if g], key=lambda g: g["date"])
     record_finals(key, games)
+    if BACKFILL and key == "nba":
+        games = [g for g in games if et_day(g["date"]) < BACKFILL]  # pregame view of that day: earlier games only
     print(lg, "completed", len(games), file=sys.stderr)
     counts = {}
     for g in games:
@@ -1337,7 +1379,7 @@ def run_basketball(lg, key, start, groups):
     per_team = {t: [g for g in games if t in g["teams"]] for t in teams_in}
     agg = {t: {"season": bb_window(gl, t), "home": bb_window([g for g in gl if g["teams"][t]["ha"] == "home" and not g["neutral"]], t),
                "away": bb_window([g for g in gl if g["teams"][t]["ha"] == "away" and not g["neutral"]], t),
-               "l10": bb_window(gl[-10:], t), "l5": bb_window(gl[-5:], t)} for t, gl in per_team.items() if gl}
+               "l10": bb_window(gl[-10:], t), "l5": bb_window(gl[-5:], t, per_game_pct=True)} for t, gl in per_team.items() if gl}
     ranks = {k: rank_map({t: a["l5"].get(k) for t, a in agg.items()}, hb) for _, _, k, hb, _ in BB_ROWS}
     nteams = len(agg)
     mu, hfa, rat = fit_ratings(games, key, teams_in) if games else (0, 0, {})
@@ -1365,6 +1407,10 @@ def run_basketball(lg, key, start, groups):
         addr = venue.get("address") or {}
         when = datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET)
         status = e["status"]["type"]
+        if BACKFILL and key == "nba":
+            if et_day(e["date"]) != BACKFILL or not status.get("completed"):
+                continue
+            status = {"state": "pre"}
 
         def team_block(x):
             t = x["team"]; tid = t["id"]
@@ -1387,7 +1433,8 @@ def run_basketball(lg, key, start, groups):
             return {"id": tid, "name": t.get("shortDisplayName") or t.get("location"), "full": t.get("displayName"),
                     "abbr": t.get("abbreviation", "?"), "rank": rank if rank and rank <= 25 else None,
                     "color": "#" + (t.get("color") or "333333"), "alt": "#" + (t.get("alternateColor") or "ffffff"),
-                    "overall": next((r["summary"] for r in x.get("records", []) if r.get("type") == "total"), ""),
+                    "overall": (f"{sum(r[2] == 'W' for r in res)}-{sum(r[2] == 'L' for r in res)}" if BACKFILL else
+                                next((r["summary"] for r in x.get("records", []) if r.get("type") == "total"), "")),
                     "streak": streak, "rest": (dday(e["date"]) - dday(gl[-1]["date"])).days if gl else None,
                     "last5": res[:5], "ha": x["homeAway"], "loc": t.get("location"), "bet": bet_record(gl, tid)}
 
@@ -1407,11 +1454,16 @@ def run_basketball(lg, key, start, groups):
 
         spread, total = pc.get("spread"), pc.get("overUnder")
         aml, hml = (pc.get("awayTeamOdds") or {}).get("moneyLine"), (pc.get("homeTeamOdds") or {}).get("moneyLine")
+        inj = injury_report(summ, away, home) if status.get("state") == "pre" else None
+        inj_adj = ({"away": injury_impact_bb(inj["away"], away["id"], per_team), "home": injury_impact_bb(inj["home"], home["id"], per_team)}
+                   if inj and key == "nba" else None)
         model, confidence = None, None
         ra, rh = rat.get(away["id"]), rat.get(home["id"])
         if ra and rh:
             adj = 0 if c.get("neutralSite") else hfa / 2
             pa, ph = mu - adj + ra[0] - rh[1], mu + adj + rh[0] - ra[1]
+            if inj_adj:  # missing rotation players cost their team points
+                pa -= inj_adj["away"]["off"]; ph -= inj_adj["home"]["off"]
             margin, p_home = ph - pa, phi((ph - pa) / sigma)
             model = {"away": round(pa, 1), "home": round(ph, 1), "pHome": round(p_home, 3)}
             w = trust(min(len(per_team.get(away["id"], [])), len(per_team.get(home["id"], []))), key)
@@ -1478,7 +1530,7 @@ def run_basketball(lg, key, start, groups):
                       "overOdds": fmt_ml(pc.get("overOdds")), "underOdds": fmt_ml(pc.get("underOdds")),
                       "spreadNum": spread, "totalNum": total},
             "sections": sections, "confidence": confidence, "model": model, "state": status.get("state"),
-            "score": score, "final": final, "props": props, "fbs": [True, True],
+            "score": score, "final": final, "props": props, "fbs": [True, True], "injAdj": inj_adj, "inj": inj,
         })
     enrich(key, slate)
     OUT_DATA[key] = slate
@@ -1620,7 +1672,7 @@ ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heav
 TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
 TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 30)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 45))}  # points per unit of real gap
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
-LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6)}  # (points per unit of strength, points of edge per score point)
+LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
@@ -1690,7 +1742,7 @@ def stat_matchup(lg, g, nteams):
         strength = SIDE_SCALE[lg] * u + SHARE_W * (share - 0.5)  # > 0 favors the away team; share = rows where the away team ranks better
         rec_notes = []
         ia = g.get("injAdj")
-        if ia and SPORT[lg] == "fb":
+        if ia and lg in LINE_PTS:
             # Injuries move the expected margin; convert those points into matchup strength.
             swing = (ia["home"]["off"] + ia["home"]["def"]) - (ia["away"]["off"] + ia["away"]["def"])  # > 0 helps the away team
             strength += swing / LINE_PTS[lg][0]
@@ -1730,12 +1782,12 @@ def stat_matchup(lg, g, nteams):
         if ln.get("spreadNum") is not None:
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
             k1, k2 = SM_SPREAD[lg]
-            if line_side > 0:  # getting points: football gets no bonus (the data decides); basketball a small one
-                sp = base + (0.0 if SPORT[lg] == "fb" else k1 * line_side)
+            if line_side > 0:  # getting points: no bonus; the line check below weighs points against the data
+                sp = base
             else:
                 sp = base - (k1 * abs(line_side) + k2 * line_side ** 2)
             sp_side, sp_notes = side, list(notes)
-            if SPORT[lg] == "fb":
+            if lg in LINE_PTS:
                 # Line check (a lighter blend): turn the data edge into points and compare it with the spread,
                 # so laying a big number costs confidence and getting points the data says aren't deserved helps.
                 margin_away = LINE_PTS[lg][0] * strength       # data's expected margin for the away team
@@ -1777,6 +1829,9 @@ def stat_matchup(lg, g, nteams):
                      (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
                       "over" if m_total > ln["totalNum"] else "under")]
         else:
+            ia = g.get("injAdj")
+            if ia:
+                proj -= ia["away"]["off"] + ia["home"]["off"]
             sig = (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             notes = [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}",
                       "over" if sig > 0 else "under")]
@@ -2105,7 +2160,8 @@ def grade_pick(pk):
     return sign(v - gr["line"] if gr["side"] == "over" else gr["line"] - v)
 
 
-FROZEN = ("lines", "confidence", "pick", "valueConf", "analysis", "matchup", "model", "kalshi", "props")
+FROZEN = ("lines", "confidence", "pick", "valueConf", "analysis", "matchup", "model", "kalshi", "props", "sections", "away", "home",
+          "strip", "offRank", "defRank", "overallRank", "seasonRanks", "power", "wl", "injAdj", "inj")
 
 
 def update_history(path_in, path_out):
@@ -2152,13 +2208,13 @@ def update_history(path_in, path_out):
                         continue
                     hist[pid] = {"id": pid, **pk, "verdict": a["verdict"], "score": a["score"],
                                  "stake": 0.5 if a["verdict"] == "Take small" else 1, "result": None, "logged": now}
-                    if BACKFILL and lg == "cfb":
+                    if BACKFILL and lg in ("cfb", "nba"):
                         hist[pid]["backfilled"] = True
                     added += 1
             for p in g.get("props") or []:
                 a = p.get("analysis")
-                if not a or a["verdict"] not in ("Take", "Take small") or p["score"] < 7 or p.get("flag"):
-                    continue
+                if BACKFILL or not a or a["verdict"] not in ("Take", "Take small") or p["score"] < 7 or p.get("flag"):
+                    continue  # (a rebuilt day has no live prop prices, so its props are not logged)
                 pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
                 if pid in hist:
                     continue
@@ -2245,7 +2301,9 @@ def league_recap(lg):
     for (clg, kind), m in sorted(CAL.items()):
         if clg == lg and abs(m - 1) >= 0.02:
             w, l, u = CAL_TALLY.get(f"{clg}-{kind}", [0, 0, 0.0])
-            changes.append(f"{kind.capitalize()}s scored x{m:.2f} ({w}-{l}, {u:+.1f}u graded so far)")
+            effect = ("borderline Plays drop to Leans and borderline Leans to Passes" if m < 1
+                      else "strong Leans can reach Play")
+            changes.append(f"{kind.capitalize()}s x{m:.2f} ({w}-{l}, {u:+.1f}u graded so far): a 7.0 now reads {7 * m:.1f}, so {effect}")
     return {"day": day, "takes": rec(takes), "all": rec(dayp), "passes": rp, "wrong": wrong, "right": right,
             "misses": [fmt(p) for p in misses], "hits": [fmt(p) for p in hits], "calibration": changes,
             "note": "" if changes else "No changes yet: calibration needs 12 graded picks per bet type, and it moves slowly."}
