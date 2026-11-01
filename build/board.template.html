@@ -881,7 +881,7 @@ function moveTag(open, cur) {
 }
 function renderProps() {
   const C = cat[league];
-  const games = (DATA[league] || []).filter(g => g.state === 'pre');
+  const games = (DATA[league] || []).filter(g => g.state !== 'post');  // upcoming and live games (live ones show a progress bar)
   const q = $('q').value.trim().toLowerCase();
   // Rank every prop in the category first, so # stays the same when filtering by game or player.
   const all = games.flatMap(g => g.props).filter(p => p.cat === C);
@@ -908,7 +908,7 @@ function renderProps() {
     const edge = p.edge != null ? `<span class="${p.edge > 0 ? 'g' : 'rd'}">${p.edge > 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</span>` : '';
     const pa = analyzeProp(p);
     return `<tr><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${vchip(pa.verdict)}</div>` : ''}</td>
-      <td class="ln">${lineTxt}${moveTag(p.open, p.line)}${p.lineSrc === 'Kalshi' ? '<small class="ksrc">Kalshi line</small>' : ''}</td>
+      <td class="ln">${lineTxt}${moveTag(p.open, p.line)}${p.lineSrc === 'Kalshi' ? '<small class="ksrc">Kalshi line</small>' : ''}${p.line != null ? liveBar({ grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: under ? 'under' : 'over', line: p.line } }) : ''}</td>
       <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small>${p.check && !p.check.ok ? `<small class="flag" title="${esc(p.check.text)}">⚠ game log differs from nflverse</small>` : ''}${p.flag ? '<small class="flag" title="The line is far from this player\'s recent numbers and the market agrees, which usually means injury or role news.">⚠ line far from form, check news</small>' : ''}</td>
       <td class="op">${p.home ? 'vs' : '@'} ${esc(p.oppName)} <small>(${ord(p.oppRank)})</small></td>
       <td class="rank ${mcls(p.matchup)}">${p.matchup != null ? p.matchup.toFixed(1) : dash}</td>
@@ -1573,6 +1573,8 @@ async function pollScores() {
   const pend = [...(DATA.modelHistory || []), ...plays].filter(p => !p.result && p.grade?.kind === 'prop');
   let liveNew = false;
   for (const p of pend) { const g = findGame(p.grade.league, p.grade.game); if (g && g.state === 'in' && await fetchLive(p.grade.league, g)) liveNew = true; }
+  if (mode === 'props') for (const g of (DATA[league] || []).filter(g => g.state === 'in' && (pgame === 'all' || g.id === pgame))) if (await fetchLive(league, g)) liveNew = true;
+  if ((liveNew || changed) && mode === 'props') renderProps();
   if ((liveNew || changed) && mode === 'plays' && !draft) renderPlays();
   // Games that ended before this page loaded but after the last rebuild.
   for (const [lg] of Object.entries(SCOREBOARD)) for (const g of DATA[lg] || []) if (g.state === 'post' && !g.final && await fetchFinal(lg, g)) graded = true;
