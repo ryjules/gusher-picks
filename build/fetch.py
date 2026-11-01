@@ -638,7 +638,7 @@ def enrich(key, slate):
     if not events:
         for g in slate:
             for pr in g.get("props") or []:
-                rescore_prop(pr)
+                rescore_prop(pr, key)
                 pr.pop("_hist", None)
         return
     series = {"GAME": f"{prefix}GAME", "SPREAD": f"{prefix}SPREAD", "TOTAL": f"{prefix}TOTAL", **prop_series}
@@ -730,11 +730,11 @@ def enrich(key, slate):
     print(key, "kalshi matched", matched, "of", len(slate), file=sys.stderr)
     for g in slate:
         for pr in g.get("props") or []:
-            rescore_prop(pr)
+            rescore_prop(pr, key)
             pr.pop("_hist", None)
 
 
-def rescore_prop(pr):
+def rescore_prop(pr, key=None):
     """Final prop score: how far a market-anchored blend beats the market price.
 
     The market price is Kalshi's when there is one, otherwise a coin flip at DraftKings' line
@@ -755,7 +755,7 @@ def rescore_prop(pr):
     gap = abs(form - pr["line"]) / max(pr["line"], 1.0)
     if pr["cat"] == "FG Made":
         gap /= 3  # kicker volume swings a lot game to game, so a line well below the average is normal
-    pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns"
+    pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns" and (key not in ("nba", "cbb") or abs(form - pr["line"]) >= 2.5)
     w = 0.35 * max(0.0, 1 - gap / 0.5)
     blend = w * pr["prob"] + (1 - w) * market
     pr["edge"] = round(blend - market, 3)
@@ -770,9 +770,19 @@ def rescore_prop(pr):
     # price is worth it: a strong data score the market already agrees with is a Fade, not a Take.
     under = pr.get("side") == "Under"
     l5 = pr.get("l5") or []
-    hit = sum(1 for v in l5 if (v < pr["line"] if under else v > pr["line"])) / len(l5) if l5 else 0.5
+    # Hit rate weighted toward the latest games (l5 is newest first): last game 5x, five games ago 1x.
+    wts = [5, 4, 3, 2, 1][:len(l5)]
+    hit = (sum(w for w, v in zip(wts, l5) if (v < pr["line"] if under else v > pr["line"])) / sum(wts)) if l5 else 0.5
     m = pr.get("matchup")
     m = 5.0 if m is None else (10 - m if under else m)
+    if key in ("nba", "cbb") and l5:
+        # Basketball: how often he has cleared this line lately (newest games count most) and by how much his
+        # last-5 average clears it, with the matchup as a light touch (fit to the Profit Hunt prop sheets).
+        avg = sum(l5) / len(l5)
+        cushion = (pr["line"] - avg if under else avg - pr["line"]) / max(pr["line"], 1.0)
+        cushion = max(-1.0, min(1.0, cushion))
+        pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10)), 1)
+        return
     s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
     pr["score"] = round(max(0.0, min(10.0, 0.6 * s_prob + 0.2 * 10 * hit + 0.2 * m)), 1)
 
@@ -995,6 +1005,8 @@ def injury_notes(g, side):
 # pick log existed: stats come only from earlier games and prices are the closing DraftKings line.
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
+BB_PROP_BAR = 7.5  # basketball props: Take from here up
+BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
 
 
@@ -1670,7 +1682,8 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                     continue
                 hist = [val(g["teams"][tid]["players"][pid]) for g in gl if pid in g["teams"][tid].get("players", {})]
                 mins = [g["teams"][tid]["players"][pid]["min"] for g in gl if pid in g["teams"][tid].get("players", {})]
-                if len(hist) < 3 or sum(mins) / len(mins) < 15:
+                # Props only for players with a real role: 20+ minutes a game over the last 5.
+                if len(hist) < 3 or sum(mins[-5:]) / len(mins[-5:]) < BB_MIN_MPG:
                     continue
                 l5 = hist[-5:]
                 avg5, season = sum(l5) / len(l5), sum(hist) / len(hist)
@@ -1799,10 +1812,11 @@ SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
 SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 VALUE_W = 0.2  # how much the season price model adds to the stats (was 0.35): the stats lead
-BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
+BB_MATCH_W = 3.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
 LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
 DEF_TOTAL_W = 1.5  # two top (or bottom) quarter defenses push a football total this much
+INJ_TOTAL_W = 0.4  # share of a missing player's scoring a basketball total loses
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.1)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -2059,7 +2073,8 @@ def stat_matchup(lg, g, nteams):
         else:
             ia = g.get("injAdj")
             if ia:
-                proj -= ia["away"]["off"] + ia["home"]["off"]
+                # Teammates take a missing scorer's shots, so a total loses only part of his scoring.
+                proj -= INJ_TOTAL_W * (ia["away"]["off"] + ia["home"]["off"])
             sig = (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             wild = False
             notes = [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}",
@@ -2322,7 +2337,7 @@ def analyze_game(lg, g, kind, nteams):
         (why if k["p"] >= 0.5 else against).append(
             f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']})" + ("." if k["p"] >= 0.5 else ", so the market leans the other way."))
     if m.get("trust") is not None and m["trust"] < 0.3:
-        warn.append(f"Early season: the model only counts {round(m['trust'] * 100)}% against the market with this few games played.")
+        tips.append(f"Early season: the price model only counts {round(m['trust'] * 100)}% against the market with this few games played.")
     if kind != "moneyline":
         a_rows, h_rows = trend_records(g, kind)
         for tm_side, rows in (("away", a_rows), ("home", h_rows)):
@@ -2378,7 +2393,7 @@ def analyze_prop(p, g=None, lg=None):
         warn.append("Line is far from his recent numbers: check injury or role news.")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
-    if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < 24:
+    if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < BB_MIN_MPG:
         warn.append(f"Bench role ({p['mpg']:.0f} minutes a game): his minutes swing night to night.")
     if g is not None:
         w = g.get("wx") or weather_of(g)
@@ -2399,6 +2414,8 @@ def analyze_prop(p, g=None, lg=None):
         against.append("The price already reflects what the data shows, so there's no value at this number."
                        if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg in ("nba", "cbb") and p["score"] < BB_PROP_BAR:
+        verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props need a 7.5+ read to be a play
     elif p["score"] >= 7 and warn and p["score"] < PROP_WARN_BAR:
         verdict = "Fade"  # a warning (bench role, injury tag, tough defense) needs a really strong read to still bet
     elif p["score"] >= 7:
@@ -2406,7 +2423,7 @@ def analyze_prop(p, g=None, lg=None):
         if verdict == "Take" and p["score"] >= 9 and won >= 4 and not against and (p.get("edge") or 0) >= 0.05:
             verdict = "Take large"  # strong form, a good matchup and a real edge over the price
     elif p["score"] >= 4:
-        verdict = "Take" if won >= 3 and not warn and p["score"] >= 5 else "Fade"
+        verdict = "Fade"  # props need a 7.0+ read to be a play
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": []}
