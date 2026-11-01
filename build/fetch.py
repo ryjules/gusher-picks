@@ -1681,7 +1681,7 @@ def weather_of(g):
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
 TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
-TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 30)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 45))}  # points per unit of real gap
+TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 35)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 52.5))}  # points per unit of real gap
 CFB_HOME_EDGE = 1.0  # extra strength toward the home team in college
 LETDOWN = 1.0  # strength taken off a team coming off a big upset win
 HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
@@ -1693,6 +1693,7 @@ REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
 POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
 SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
+TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
 TOT_EXTRA = 0.5  # most that price + trends can add to a football total
 SM_TOTAL_UNIT = {"cfb": 0.9, "nfl": 2.2, "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -1720,6 +1721,7 @@ def stat_matchup(lg, g, nteams):
     """
     R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
     tot = wsum = tot_both = wsum_both = max_gap = gap_a = gap_h = 0.0
+    tot_gaps, tot_notes = {}, []
     edges = []  # (net, text, side)
     a_better = h_better = 0
     for r in R.values():
@@ -1745,12 +1747,39 @@ def stat_matchup(lg, g, nteams):
         gap_a, gap_h = max(gap_a, away_mm), max(gap_h, home_mm)
         if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
             dz = lambda x: math.copysign(max(0.0, abs(x) - TOT_DEAD), x)  # only real gaps count, and by how big they are
-            tot_both += wt * (dz(away_mm) + dz(home_mm))
-            wsum_both += wt
+            tot_gaps[unit] = (dz(away_mm), dz(home_mm), ao, hd, ho, ad)
         for mm, team, opp, o_rank, d_rank in ((away_mm, g["away"], g["home"], ao, hd), (home_mm, g["home"], g["away"], ho, ad)):
             if mm > 0.25:
                 edges.append((mm, f"{team['abbr']} {unit} ({ordn(o_rank)}) vs {opp['abbr']} {DEF_NAME[unit]} ({ordn(d_rank)})",
                               "away" if team is g["away"] else "home"))
+    # Totals: each offense scores through the air or on the ground, so yards and TDs are read together as one
+    # route, and the offense is judged mostly by its best route (a run-first team with a bad passing game
+    # still scores). Scoring and third downs count on their own.
+    for i, sd in enumerate(("away", "home")):
+        gv = {u: v[i] for u, v in tot_gaps.items()}
+        routes = {}
+        for name, yu, tu in (("passing", "passing", "passing TDs"), ("rushing", "rushing", "rushing TDs")):
+            if yu in gv and tu in gv:
+                routes[name] = (gv[yu] + gv[tu]) / 2
+        part = 2 * gv.get("scoring", 0.0) + gv.get("third downs", 0.0)
+        wpart = (2 if "scoring" in gv else 0) + (1 if "third downs" in gv else 0)
+        if routes:
+            hi, lo = max(routes.values()), min(routes.values())
+            part += 2 * len(routes) * (TOT_BEST_W * hi + (1 - TOT_BEST_W) * lo)
+            wpart += 2 * len(routes)
+            best = max(routes, key=routes.get)
+            if routes[best] > 0.15:
+                yu, tu = best, best + " TDs"
+                v_y, v_t = tot_gaps[yu], tot_gaps[tu]
+                o_y, d_y = (v_y[2], v_y[3]) if sd == "away" else (v_y[4], v_y[5])
+                o_t, d_t = (v_t[2], v_t[3]) if sd == "away" else (v_t[4], v_t[5])
+                opp = "home" if sd == "away" else "away"
+                tot_notes.append((f"{g[sd]['abbr']} {best} ({ordn(o_y)} in yards, {ordn(o_t)} in TDs) vs {g[opp]['abbr']} "
+                                  f"{'pass' if best == 'passing' else 'run'} defense ({ordn(d_y)}, {ordn(d_t)})", "over"))
+            elif routes[best] < -0.15:
+                tot_notes.append((f"{g[sd]['abbr']} has no clear way to move the ball against this defense", "under"))
+        tot_both += part
+        wsum_both = max(wsum_both, wpart)
     out = {}
     ln = g["lines"]
     if wsum:
@@ -1866,7 +1895,7 @@ def stat_matchup(lg, g, nteams):
                     sig += 0.5; pace_note = [("Both teams play fast (lots of plays)", "over")]
                 elif pace[1][4] >= slow and pace[2][0] >= slow:
                     sig -= 0.5; pace_note = [("Both teams play slow (fewer plays)", "under")]
-            notes = pace_note + [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
+            notes = tot_notes + pace_note + [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
                       "over" if proj > ln["totalNum"] else "under"),
                      (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
                       "over" if m_total > ln["totalNum"] else "under")]
