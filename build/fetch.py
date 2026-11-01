@@ -889,6 +889,7 @@ def injury_notes(g, side):
 # BACKFILL_DAY=YYYY-MM-DD (Eastern) logs model picks for college games on that day that finished before the
 # pick log existed: stats come only from earlier games and prices are the closing DraftKings line.
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
+LG_TOTALS = {}  # league average combined score, filled from completed games
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
 
 
@@ -952,6 +953,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
     with ThreadPoolExecutor(16) as ex:
         games = [g for g in ex.map(load, done) if g]
     record_finals(key, games)
+    LG_TOTALS[key] = sum(sum(t["pts"] for t in g["teams"].values()) for g in games) / max(1, len(games))
     if BACKFILL and key == "cfb":
         # Rebuild the board as it stood before that day's games: stats only from earlier games.
         games = [g for g in games if et_day(g["date"]) < BACKFILL]
@@ -1615,6 +1617,8 @@ def weather_of(g):
 
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
+TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 30)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 45))}  # points per unit of real gap
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
 LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
@@ -1671,7 +1675,8 @@ def stat_matchup(lg, g, nteams):
         tot += wt * (away_mm - home_mm)
         wsum += wt
         if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
-            tot_both += wt * (away_mm + home_mm)
+            dz = lambda x: math.copysign(max(0.0, abs(x) - TOT_DEAD), x)  # only real gaps count, and by how big they are
+            tot_both += wt * (dz(away_mm) + dz(home_mm))
             wsum_both += wt
         for mm, team, opp, o_rank, d_rank in ((away_mm, g["away"], g["home"], ao, hd), (home_mm, g["home"], g["away"], ho, ad)):
             if mm > 0.25:
@@ -1759,13 +1764,18 @@ def stat_matchup(lg, g, nteams):
             ia = g.get("injAdj")
             if ia:  # missing scorers lower the total, missing defenders raise it
                 proj += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
-            both = 12 * tot_both / wsum_both if wsum_both else 0.0
-            sig = 0.45 * (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg] + 0.65 * both
+            both = tot_both / wsum_both if wsum_both else 0.0
+            # Matchup as points on top of an average game in this league, so it is judged against the line too:
+            # "both offenses have the edge" is already priced in when the total is high.
+            m_total = LG_TOTALS.get(lg, 45.0) + TOT_PTS[lg] * both
+            if ia:
+                m_total += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
+            blend_total = 0.5 * proj + 0.5 * m_total
+            sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             notes = [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
-                      "over" if proj > ln["totalNum"] else "under")]
-            if abs(both) >= 1:
-                notes.append((f"Both offenses vs the defenses they face: {'mismatches favor the offenses' if both > 0 else 'the defenses have the edge'}",
-                              "over" if both > 0 else "under"))
+                      "over" if proj > ln["totalNum"] else "under"),
+                     (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
+                      "over" if m_total > ln["totalNum"] else "under")]
         else:
             sig = (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             notes = [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}",
