@@ -1301,7 +1301,7 @@ function renderPlays() {
     : dbState === 'ready' ? `<div class="sumbar">
         <div class="big"><span>Profit</span><b class="${pc(profit)}">${money(profit)}</b><small>${usign(s.units)}${s.n > s.settledN ? ` · ${s.n - s.settledN} pending` : ''}</small></div>
         <div><span>Record</span><b>${rec(s)}</b><small>${s.n} play${s.n === 1 ? '' : 's'}</small></div>
-        <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small>
+        <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked · ${money((s.staked + s.units) * U, false)} returned</small>
           <span class="roi-per">${PERIODS.map(([k, lbl]) => { const [a, b] = periodRange(k, pday);
             const ss = summary(SRC[src].list().filter(p => p.date >= a && p.date <= b && inSport(p)));
             const v = ss.staked ? ss.roi : null;
