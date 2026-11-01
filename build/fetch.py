@@ -740,6 +740,12 @@ def rescore_prop(pr):
     w = 0.35 * max(0.0, 1 - gap / 0.5)
     blend = w * pr["prob"] + (1 - w) * market
     pr["edge"] = round(blend - market, 3)
+    if pr["cat"] == "Touchdowns":
+        # Anytime TD: rank how likely the player is to score (blended chance plus the matchup), like the
+        # Profit Hunt sheets; whether the price is worth it shows as Edge and decides Take vs Fade.
+        likely = max(0.0, min(10.0, (blend - 0.05) / 0.6 * 10))
+        pr["score"] = round(max(0.0, min(10.0, 0.7 * likely + 0.3 * (pr.get("matchup") or 5))), 1)
+        return
     pr["score"] = round(min(10.0, max(0.0, blend - market) * 100 / 1.2), 1)
 
 
@@ -899,8 +905,10 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             "last3": summarize([l[0] for l in lines[-3:]]),
         }
     ranks = {}
+    sranks = {}
     for _, k, hb in OFF + DEF + SIT:
         ranks[k] = rank_map({t: a["last3"].get(k) for t, a in agg.items()}, hb)
+        sranks[k] = rank_map({t: a["season"].get(k) for t, a in agg.items()}, hb)  # full-season ranks
     season_rank = {
         "off": rank_map({t: a["season"].get("pts") for t, a in agg.items()}, True),
         "def": rank_map({t: a["season"].get("o_pts") for t, a in agg.items()}, False),
@@ -996,6 +1004,17 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
                 # Left: season, split, 1st half, last 3, L3 rank. Right mirrors it: L3 rank, last 3, 1st half, split, season.
                 rows.append([name, rnd(a), rnd(h[::-1])])
             sections.append({"title": title, "rows": rows})
+        season_ranks = {name: [sranks[k].get(away["id"]), sranks[k].get(home["id"])] for name, k, _ in OFF + DEF + SIT}
+
+        def wl(tid):  # record going into this game, from completed games only
+            r = [0, 0]
+            for gg in per_team.get(tid, []):
+                me = gg["teams"][tid]; op = next(v for k2, v in gg["teams"].items() if k2 != tid)
+                if me["pts"] != op["pts"]:
+                    r[0 if me["pts"] > op["pts"] else 1] += 1
+            return r
+        ra_, rh_ = rat.get(away["id"]), rat.get(home["id"])
+        power = [round(ra_[0] + ra_[1], 1), round(rh_[0] + rh_[1], 1)] if ra_ and rh_ else None
 
         spread = pc.get("spread")  # home team's line
         total = pc.get("overUnder")
@@ -1092,6 +1111,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             "sections": sections, "confidence": confidence, "model": model,
             "state": status.get("state"), "score": score,
             "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final, "inj": inj,
+            "seasonRanks": season_ranks, "power": power, "wl": [wl(away["id"]), wl(home["id"])],
         })
     enrich(key, slate)
     OUT_DATA[key] = slate
@@ -1508,6 +1528,10 @@ def weather_of(g):
 
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
+REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
+POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
+POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
 SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
 SM_TOTAL_UNIT = {"cfb": 0.65, "nfl": 1.8, "nba": 0.5, "cbb": 0.6}  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -1549,6 +1573,11 @@ def stat_matchup(lg, g, nteams):
         if None in (ao, hd, ho, ad):
             continue
         away_mm, home_mm = (hd - ao) / nteams, (ad - ho) / nteams  # > 0: the offense out-ranks the defense it faces
+        SR = g.get("seasonRanks") or {}
+        if off in SR and dfn in SR and None not in (SR[off][0], SR[dfn][1], SR[off][1], SR[dfn][0]):
+            # Mostly the last 3 games, with the full season mixed in so one hot or cold stretch can't carry the matchup.
+            away_mm = L3_WEIGHT * away_mm + (1 - L3_WEIGHT) * (SR[dfn][1] - SR[off][0]) / nteams
+            home_mm = L3_WEIGHT * home_mm + (1 - L3_WEIGHT) * (SR[dfn][0] - SR[off][1]) / nteams
         tot += wt * (away_mm - home_mm)
         wsum += wt
         if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
@@ -1564,10 +1593,29 @@ def stat_matchup(lg, g, nteams):
         u = tot / wsum
         share = a_better / (a_better + h_better) if a_better + h_better else 0.5
         strength = SIDE_SCALE[lg] * u + 4 * (share - 0.5)  # > 0 favors the away team
+        rec_notes = []
+        if SPORT[lg] == "fb":
+            # Records and opponent-adjusted power (the team-rating model credits who each team has played).
+            (wa, la), (wh, lh) = g.get("wl") or [[0, 0], [0, 0]]
+            if wa + la and wh + lh:
+                d = wa / (wa + la) - wh / (wh + lh)
+                strength += REC_W * d
+                if abs(d) >= 0.25:
+                    better = g["away"] if d > 0 else g["home"]
+                    rec_notes.append((f"Records: {g['away']['abbr']} {wa}-{la} vs {g['home']['abbr']} {wh}-{lh}",
+                                      "away" if better is g["away"] else "home"))
+            pw = g.get("power")
+            if pw:
+                gap = pw[0] - pw[1]  # points per game, adjusted for strength of schedule
+                strength += max(-POW_W, min(POW_W, POW_W * gap / POWER_SCALE[lg]))
+                if abs(gap) >= POWER_SCALE[lg] / 3:
+                    better = g["away"] if gap > 0 else g["home"]
+                    rec_notes.append((f"Adjusted for opponents played, {better['abbr']} rates {abs(gap):.1f} points per game better",
+                                      "away" if gap > 0 else "home"))
         side = "away" if strength > 0 else "home"
         base = min(10.0, abs(strength))
         team = g[side]
-        notes = [(t, sd) for _, t, sd in sorted(edges, reverse=True)[:3]]
+        notes = [(t, sd) for _, t, sd in sorted(edges, reverse=True)[:3]] + rec_notes
         price = pnum(ln.get("homeML" if side == "home" else "awayML"))
         # Laying a big price has little value even when the team should win: shrink the moneyline score.
         ml = base * ((150 / abs(price)) ** ML_FAV_EXP[lg] if price is not None and price <= -150 else 1.0)
@@ -1845,10 +1893,14 @@ def analyze_prop(p, g=None, lg=None):
         q = next((x for x in ((g.get("inj") or {}).get(side) or []) if x.get("id") == p.get("pid")), None)
         if q:
             warn.append(f"{p['player']} is listed {q['status'].lower()}.")
-    if p["score"] >= 7:
+    if p["cat"] == "Touchdowns" and (p.get("edge") or 0) <= 0:
+        # Likely to score, but the price already says so: no value in betting it.
+        against.append("The price already reflects the chance he scores, so there's no value at this number.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif p["score"] >= 7:
         verdict = "Take small" if warn else "Take"
     elif p["score"] >= 4:
-        verdict = "Take" if won >= 3 and not warn else "Fade"
+        verdict = "Take" if won >= 3 and not warn and p["score"] >= 5 else "Fade"
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": []}
