@@ -784,6 +784,10 @@ def rescore_prop(pr, key=None):
         pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10)), 1)
         return
     s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
+    if key == "nfl":
+        # NFL: the recent hit rate (newest games count most) carries more, so a maxed-out projection alone can't make a play.
+        pr["score"] = round(max(0.0, min(10.0, 0.45 * s_prob + 0.35 * 10 * hit + 0.2 * m)), 1)
+        return
     pr["score"] = round(max(0.0, min(10.0, 0.6 * s_prob + 0.2 * 10 * hit + 0.2 * m)), 1)
 
 
@@ -1005,7 +1009,8 @@ def injury_notes(g, side):
 # pick log existed: stats come only from earlier games and prices are the closing DraftKings line.
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
-BB_PROP_BAR = 7.5  # basketball props: Take from here up
+BB_PROP_BAR = 7.5
+NFL_PROP_FLOOR = {"Passing": 150.5, "Rushing": 30.5, "Receiving": 25.5, "Receptions": 2.5, "Rush + Rec": 35.5}  # smaller lines are backups  # basketball props: Take from here up
 BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
 
@@ -2414,8 +2419,11 @@ def analyze_prop(p, g=None, lg=None):
         against.append("The price already reflects what the data shows, so there's no value at this number."
                        if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif lg in ("nba", "cbb") and p["score"] < BB_PROP_BAR:
-        verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props need a 7.5+ read to be a play
+    elif lg in ("nba", "cbb", "nfl") and p["score"] < BB_PROP_BAR:
+        verdict = "Fade" if p["score"] >= 4 else "Pass"  # NBA and NFL props need a 7.5+ read to be a play
+    elif lg == "nfl" and p["line"] < NFL_PROP_FLOOR.get(p["cat"], 0):
+        against.append(f"Backup-sized line ({p['line']:g}): small roles swing too much to bet.")
+        verdict = "Fade"
     elif p["score"] >= 7 and warn and p["score"] < PROP_WARN_BAR:
         verdict = "Fade"  # a warning (bench role, injury tag, tough defense) needs a really strong read to still bet
     elif p["score"] >= 7:
