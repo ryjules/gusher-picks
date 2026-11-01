@@ -663,7 +663,7 @@ function whyScore(g, kind, a) {
   const nm = sd => sd === 'over' ? 'the Over' : sd === 'under' ? 'the Under' : g[sd] ? g[sd].abbr : '';
   const sgn = sd => sd === pk.side ? 1 : -1;
   const stat = pk.stat != null ? pk.stat * sgn(pk.statSide) : 0;
-  const price = pk.valueSide ? 0.35 * pk.value * sgn(pk.valueSide) : 0;
+  const price = pk.valueSide ? 0.2 * pk.value * sgn(pk.valueSide) : 0;
   const tr = pk.trend || 0, cal = pk.cal || 1;
   const raw = (stat + price + tr) * cal, fin = c[0];
   const f = x => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(1);

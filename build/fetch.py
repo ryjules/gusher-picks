@@ -1788,7 +1788,7 @@ SIDE_SCALE = {"cfb": 14, "nfl": float(os.environ.get("GP_SS_NFL", 18)), "nba": 1
 TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
 TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
 TOT_WILD_CAP = 6.0
-TOT_EXTRA = {"cfb": 0.5, "nfl": 2.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
+TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
 PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.75  # most a line move can add
@@ -1798,8 +1798,10 @@ MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
 SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
 SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
+VALUE_W = 0.2  # how much the season price model adds to the stats (was 0.35): the stats lead
+BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
-SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
+SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -2038,6 +2040,22 @@ def stat_matchup(lg, g, nteams):
             wild = False
             notes = [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}",
                       "over" if sig > 0 else "under")]
+            # Both offenses have to show up for an over: each offense's unit gaps against the defense it faces,
+            # with the weaker offense counting extra (one team stuck against a good defense drags the total).
+            wts = {u: w for _, _, w, u in UNIT_PAIRS["bb"]}
+            side_gap = []
+            for i in (0, 1):
+                ws = sum(wts[u] for u in tot_gaps if u in wts)
+                side_gap.append(sum(wts[u] * v[i] for u, v in tot_gaps.items() if u in wts) / ws if ws else 0.0)
+            ga, gh = side_gap
+            sig += BB_MATCH_W * ((ga + gh) / 2 + 0.5 * min(ga, gh))
+            for i, sd in enumerate(("away", "home")):
+                gv = side_gap[i]
+                opp = "home" if sd == "away" else "away"
+                if gv <= -0.1:
+                    notes.append((f"{g[sd]['abbr']} offense has no edge against the {g[opp]['abbr']} defense (scoring, shooting, paint)", "under"))
+                elif gv >= 0.1:
+                    notes.append((f"{g[sd]['abbr']} offense has the edge against the {g[opp]['abbr']} defense (scoring, shooting, paint)", "over"))
         side = "over" if sig > 0 else "under"
         out["total"] = {"score": round(min(10.0, abs(sig)), 1), "side": side, "proj": round(proj, 1), "wild": SPORT[lg] == "fb" and wild,
                         "call": f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}", "notes": notes}
@@ -2133,7 +2151,7 @@ def blend_confidence(lg, g, n):
         if st:
             sig += st["score"] * (1 if st["side"] == pos else -1)
         if vs:
-            sig += 0.35 * v * (1 if vs == pos else -1)
+            sig += VALUE_W * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
         sig += tr
         mv = line_move(lg, g, kind)  # a big move from the open: news or sharp money the stats can't see
