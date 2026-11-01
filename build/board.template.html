@@ -164,6 +164,7 @@ td.rank { font-weight: 700; }
 .lg-h small { color: var(--muted); font: 600 .9rem var(--f-body); text-transform: none; margin-left: 6px; }
 .ptbl td { font-size: .98rem; padding: 10px 8px; text-align: left; }
 .ptbl th { text-align: left; }
+.ptbl { table-layout: auto; }
 .ptbl td.num { font-variant-numeric: tabular-nums; font-weight: 700; }
 .ptbl .mu { color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ptbl .play { font-weight: 700; }
@@ -321,6 +322,9 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
 .rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.lbar { margin-top: 4px; width: 165px; } .ptbl td:has(.lbar) { min-width: 180px; } .lbar span { display: block; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.lbar span i { display: block; height: 100%; background: var(--cyan); border-radius: 3px; transition: width .6s; }
+.lbar.ok span i { background: var(--win); } .lbar.bad span i { background: var(--loss); } .lbar small { display: block; color: var(--muted); font-size: .72rem; margin-top: 2px; white-space: nowrap; }
 .roi-per { display: grid; grid-template-columns: repeat(5, auto); gap: 2px 10px; margin-top: 8px; justify-content: start; }
 .roi-per i { font-style: normal; display: grid; font-size: .72rem; line-height: 1.25; padding: 2px 4px; border-radius: 4px; }
 .roi-per i em { font-style: normal; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: .62rem; }
@@ -1232,7 +1236,7 @@ function renderPlays() {
         const chip = p.verdict === 'Take small' || p.verdict === 'Take large' ? ' ' + vchip(p.verdict) : '';
         return `<tr><td class="mu">${esc(p.time || '')}${daily ? ' ' + esc(LEAGUES[p.league]?.short || '') : ''}</td><td class="mu" title="${esc(p.matchup)}">${esc(p.matchup)}</td><td class="play">${play}</td>
           <td class="num">${esc(priceNum(p.price) > 0 ? '+' + priceNum(p.price) : priceNum(p.price))}</td><td>${esc(p.book)}</td><td class="num">${esc(p.stake)}u <small class="muted">${money((+p.stake || 1) * U, false)}</small></td>
-          <td>${src === 'mine' ? `<span class="res3">${['W', 'L', 'P'].map(r => `<button type="button" class="${r} ${p.result === r ? 'on' : ''}" data-res="${r}" data-id="${esc(p.id)}" aria-label="Mark ${r === 'W' ? 'won' : r === 'L' ? 'lost' : 'push'}">${r}</button>`).join('')}</span>` : `<span class="res3">${p.result ? `<button type="button" class="${p.result === 'V' ? 'P' : p.result} on" disabled>${p.result === 'V' ? 'V' : p.result}</button>` : '<span class="dash">pending</span>'}</span>${chip}`}</td>
+          <td>${src === 'mine' ? `<span class="res3">${['W', 'L', 'P'].map(r => `<button type="button" class="${r} ${p.result === r ? 'on' : ''}" data-res="${r}" data-id="${esc(p.id)}" aria-label="Mark ${r === 'W' ? 'won' : r === 'L' ? 'lost' : 'push'}">${r}</button>`).join('')}</span>` : `<span class="res3">${p.result ? `<button type="button" class="${p.result === 'V' ? 'P' : p.result} on" disabled>${p.result === 'V' ? 'V' : p.result}</button>` : '<span class="dash">pending</span>'}</span>${chip}`}${p.result ? '' : liveBar(p)}</td>
           <td class="num ${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${p.result ? usign(u) : dash}</td>
           <td class="num ${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${p.result ? money(u * U) : dash}</td>
           <td>${src === 'mine' ? `<button type="button" class="del" data-del="${esc(p.id)}">${confirmDel === p.id ? 'Confirm delete' : 'Delete'}</button>` : ''}</td></tr>`;
@@ -1464,6 +1468,10 @@ async function fetchFinal(lg, g) {
   const comp = ((d.header || {}).competitions || [])[0] || {};
   if (!(((comp.status || {}).type || {}).completed)) return false;
   const sc = {}; for (const c of comp.competitors || []) sc[c.homeAway] = +c.score;
+  g.final = { away: sc.away, home: sc.home, players: parseBox(d, lg) };
+  return true;
+}
+function parseBox(d, lg) {
   const n = x => { const v = parseFloat(x); return isFinite(v) ? v : 0; };
   const players = {};
   for (const tm of ((d.boxscore || {}).players || [])) for (const cat of tm.statistics || []) {
@@ -1481,8 +1489,43 @@ async function fetchFinal(lg, g) {
     }
   }
   for (const k of Object.keys(players)) if (!Object.keys(players[k]).length) delete players[k];
-  g.final = { away: sc.away, home: sc.home, players };
-  return true;
+  return players;
+}
+// Live box scores for games in progress that have a pending prop, so prop bars can move during the game.
+async function fetchLive(lg, g) {
+  if (g._liveTry && Date.now() - g._liveTry < 55000) return false;
+  g._liveTry = Date.now();
+  try {
+    const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${SUMMARY[lg]}/summary?event=${g.id}`, { cache: 'no-store' });
+    if (!r.ok) return false;
+    g.live = parseBox(await r.json(), lg);
+    return true;
+  } catch (e) { return false; }
+}
+// How close a pending pick is to hitting, from the live score or box score.
+function liveBar(p) {
+  const gr = p.grade; if (!gr) return '';
+  const g = findGame(gr.league, gr.game); if (!g || g.state !== 'in' || !g.score) return '';
+  const a = +g.score.away, h = +g.score.home; if (!isFinite(a) || !isFinite(h)) return '';
+  let pct, good, text;
+  if (gr.kind === 'total') {
+    const cur = a + h; pct = Math.min(1, cur / gr.line);
+    good = gr.side === 'over' ? cur > gr.line : cur < gr.line;
+    text = `${cur} of ${gr.line} pts`;
+  } else if (gr.kind === 'spread' || gr.kind === 'ml') {
+    const m = gr.side === 'home' ? h - a : a - h, cov = gr.kind === 'spread' ? m + gr.line : m;
+    pct = Math.max(0, Math.min(1, 0.5 + cov / 28)); good = cov > 0;
+    text = gr.kind === 'spread' ? (cov > 0 ? `covering by ${cov}` : cov < 0 ? `short by ${-cov}` : 'on the number') : (m > 0 ? `up ${m}` : m < 0 ? `down ${-m}` : 'tied');
+  } else if (gr.kind === 'prop') {
+    if (!g.live) return `<div class="lbar wait"><small>live stats loading · ${esc(g.score.detail || '')}</small></div>`;
+    const pl = g.live[gr.pid] || {};  // not in the box score yet: hasn't checked in
+    const v = PROPVAL[gr.cat](pl) || 0; pct = Math.min(1, v / gr.line);
+    good = gr.side === 'over' ? v > gr.line : v < gr.line;
+    text = gr.side === 'over' ? (v > gr.line ? `${v} · hit` : `${v} of ${gr.line}, needs ${+(gr.line - v + 0.5).toFixed(1)}`) : (v < gr.line ? `${v} · ${+(gr.line - v).toFixed(1)} of room left` : `${v} · over the line`);
+  } else return '';
+  const under = gr.kind === 'total' || gr.kind === 'prop' ? gr.side === 'under' : false;
+  const cls = good ? 'ok' : under ? 'bad' : 'go';
+  return `<div class="lbar ${cls}" title="${esc(g.score.detail || '')}"><span><i style="width:${Math.round(pct * 100)}%"></i></span><small>${esc(text)} · ${esc(g.score.detail || '')}</small></div>`;
 }
 // Grade what can be graded now: your plays are saved; model picks show their result until the rebuild records it.
 async function gradeLive() {
@@ -1526,6 +1569,11 @@ async function pollScores() {
       }
     }
   }
+  // Live box scores for in-progress games that have a pending prop (yours or the model's).
+  const pend = [...(DATA.modelHistory || []), ...plays].filter(p => !p.result && p.grade?.kind === 'prop');
+  let liveNew = false;
+  for (const p of pend) { const g = findGame(p.grade.league, p.grade.game); if (g && g.state === 'in' && await fetchLive(p.grade.league, g)) liveNew = true; }
+  if ((liveNew || changed) && mode === 'plays' && !draft) renderPlays();
   // Games that ended before this page loaded but after the last rebuild.
   for (const [lg] of Object.entries(SCOREBOARD)) for (const g of DATA[lg] || []) if (g.state === 'post' && !g.final && await fetchFinal(lg, g)) graded = true;
   if (graded) await gradeLive();
