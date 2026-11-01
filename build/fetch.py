@@ -1662,8 +1662,8 @@ def stat_edge(g, side):
         for row in sec["rows"]:
             name, a, b = row[0], row[1], row[2]
             ra, rh = a[4], b[0]
-            if ra is None or rh is None or ra == rh:
-                continue
+            if ra is None or rh is None or ra == rh or name in NEUTRAL_ROWS or name in ROW_W:
+                continue  # pace is style and penalties are noise: neither belongs in this count
             my, op = (ra, rh) if side == "away" else (rh, ra)
             if my < op:
                 mine += 1
@@ -1705,6 +1705,7 @@ PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring pro
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.75  # most a line move can add
 NEUTRAL_ROWS = {"Pace"}
+ROW_W = {"Penalties": 0.25}  # weight in the "better in more stat categories" count
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -1738,10 +1739,11 @@ def stat_matchup(lg, g, nteams):
     for r in R.values():
         if r[0] in NEUTRAL_ROWS:
             continue  # playing fast or slow isn't better or worse
+        w = ROW_W.get(r[0], 1.0)  # penalties swing week to week, so they count for less
         ra, rh = r[1][4], r[2][0]
         if ra is not None and rh is not None:
-            a_better += ra < rh
-            h_better += rh < ra
+            a_better += w * (ra < rh)
+            h_better += w * (rh < ra)
     for off, dfn, wt, unit in UNIT_PAIRS[SPORT[lg]]:
         if off not in R or dfn not in R:
             continue
