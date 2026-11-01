@@ -1694,8 +1694,10 @@ POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap wei
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
 SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
 TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
+TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
+TOT_WILD_CAP = 6.0
 TOT_EXTRA = 0.5  # most that price + trends can add to a football total
-SM_TOTAL_UNIT = {"cfb": 0.9, "nfl": 2.2, "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
+SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 2.2)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -1874,7 +1876,12 @@ def stat_matchup(lg, g, nteams):
         if SPORT[lg] == "fb" and None not in (off[1][0], off[2][4], dfn[1][0], dfn[2][4]):
             # Football: last 3 games alone swing too much (a couple of blowouts), so blend in the full season and
             # weigh how the offenses match up with the defenses they face (both units beating bad defenses = over).
-            season = (off[1][0] + dfn[2][4]) / 2 + (off[2][4] + dfn[1][0]) / 2
+            # Opponent-adjusted: each team scores its average plus how far the defense it faces is from an average
+            # defense, so an elite defense against a weak offense compounds instead of meeting halfway.
+            half = LG_TOTALS.get(lg, 45.0) / 2
+            adj = lambda o, d: max(3.0, o + d - half)
+            recent = adj(off[1][3], dfn[2][1]) + adj(off[2][1], dfn[1][3])
+            season = adj(off[1][0], dfn[2][4]) + adj(off[2][4], dfn[1][0])
             proj = (recent + season) / 2
             ia = g.get("injAdj")
             if ia:  # missing scorers lower the total, missing defenders raise it
@@ -1887,6 +1894,7 @@ def stat_matchup(lg, g, nteams):
                 m_total += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
             blend_total = 0.5 * proj + 0.5 * m_total
             sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
+            wild = abs(blend_total - ln["totalNum"]) >= TOT_WILD[lg]
             pace = R.get("Pace")
             pace_note = []
             if pace and None not in (pace[1][4], pace[2][0]):
@@ -1895,6 +1903,10 @@ def stat_matchup(lg, g, nteams):
                     sig += 0.5; pace_note = [("Both teams play fast (lots of plays)", "over")]
                 elif pace[1][4] >= slow and pace[2][0] >= slow:
                     sig -= 0.5; pace_note = [("Both teams play slow (fewer plays)", "under")]
+            if wild:
+                pace_note = pace_note + [(f"Our number is {abs(blend_total - ln['totalNum']):.0f} points from the market: a gap that big usually "
+                                          "means the line knows something (injuries, weather, a backup QB), so this stays a Lean at most",
+                                          "under" if blend_total > ln["totalNum"] else "over")]
             notes = tot_notes + pace_note + [(f"Scoring projects to {proj:.1f} (last 3 games {recent:.1f}, full season {season:.1f}) against a total of {ln['totalNum']:g}",
                       "over" if proj > ln["totalNum"] else "under"),
                      (f"Offense-vs-defense gaps point to about {m_total:.1f} points (a typical game here is {LG_TOTALS.get(lg, 45.0):.1f})",
@@ -1904,10 +1916,11 @@ def stat_matchup(lg, g, nteams):
             if ia:
                 proj -= ia["away"]["off"] + ia["home"]["off"]
             sig = (proj - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
+            wild = False
             notes = [(f"Recent scoring (each offense vs the other defense) adds up to {proj:.1f} against a total of {ln['totalNum']:g}",
                       "over" if sig > 0 else "under")]
         side = "over" if sig > 0 else "under"
-        out["total"] = {"score": round(min(10.0, abs(sig)), 1), "side": side, "proj": round(proj, 1),
+        out["total"] = {"score": round(min(10.0, abs(sig)), 1), "side": side, "proj": round(proj, 1), "wild": SPORT[lg] == "fb" and wild,
                         "call": f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}", "notes": notes}
     return out
 
@@ -2003,6 +2016,8 @@ def blend_confidence(lg, g, n):
             pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                           "value": v, "valueSide": vs, "trend": 0.0, "tooShort": True}
             continue
+        if kind == "total" and st and st.get("wild") and st["side"] == side:
+            score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind != "moneyline" and vs and vs != side and v >= 1.0:
             score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most, not a Play
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]

@@ -655,7 +655,7 @@ function dataCheck(g) {
   return `<details class="dcheck" ${bad ? 'open' : ''}><summary><span class="ball"></span>Data check <b class="${bad ? 'neg' : 'pos'}">${bad ? `⚠ ${bad} to review` : '✓ all match'}</b><small>ESPN compared with independent sources</small></summary>
     <ul>${c.map(x => `<li class="${x.ok ? 'r-yes' : 'r-warn'}">${esc(x.text)}</li>`).join('')}</ul></details>`;
 }
-// "Why X.X": how each piece moves the score, in the order the model adds them, with a plain-English summary.
+// "Why X.X": a plain-English summary of what drives the score.
 function whyScore(g, kind, a) {
   const pk = (g.pick || {})[kind], c = (g.confidence || {})[kind];
   if (!pk || !c) return '';
@@ -666,14 +666,13 @@ function whyScore(g, kind, a) {
   const tr = pk.trend || 0, cal = pk.cal || 1;
   const raw = (stat + price + tr) * cal, fin = c[0];
   const f = x => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(1);
-  const rows = [[`Stat matchup${pk.statSide && pk.statSide !== pk.side ? ` (leans ${nm(pk.statSide)})` : ''}`, f(stat)],
-    [`Price model ${pk.value.toFixed(1)} × 0.35${pk.valueSide && pk.valueSide !== pk.side ? ` (leans ${nm(pk.valueSide)})` : ''}`, f(price)],
-    ['Betting trends', f(tr)]];
-  if (Math.abs(cal - 1) >= 0.01) rows.push([`Calibration ×${cal.toFixed(2)} (how this sport's ${kind}s have done)`, '']);
   const capped = Math.abs(raw - fin) >= 0.15;
   let cap = '';
+  const wild = kind === 'total' && ((g.matchup || {}).total || {}).wild && fin <= 6;
   if (capped) cap = pk.tooShort ? 'Price too short to bet (−1000 or more), so it is a Pass.'
+    : wild ? 'Capped at a Lean: our number is far from the market, which usually means the line knows something.'
     : raw > 7 && fin < raw && fin >= 6.9 && fin <= 7 ? 'Capped at a Lean: the price model leans the other way.'
+    : kind === 'total' && raw > fin && pk.stat != null && fin <= pk.stat * (pk.cal || 1) + 0.6 ? 'The stats decide football totals: the price and trends can add at most half a point.'
     : raw > 7 ? 'Scores above 7 ease toward 10, so a 10 means nearly everything agrees.'
     : 'Capped (long-shot price).';
   // Plain-English summary from the strongest reasons.
@@ -681,8 +680,7 @@ function whyScore(g, kind, a) {
   const vs = (a.against || [])[0];
   const word = fin >= 7 ? 'a Play' : fin >= 4 ? 'a Lean' : 'a Pass';
   const sum = `${fin.toFixed(1)} on ${esc(nm(pk.side))} makes this ${word}. ${pk.stat >= 6 ? 'The stat matchup does most of the work' : pk.stat >= 3 ? 'The stat matchup leans this way' : 'The stat matchup is close to even'}${Math.abs(price) >= 0.5 ? (price > 0 ? ', and the price model agrees' : ', but the price model disagrees') : ''}${lead ? `: ${esc(lead)}` : ''}.${vs ? ` Holding it back: ${esc(vs.replace(/\.$/, ''))}.` : ''}`;
-  return `<div class="why-box"><p>${sum}</p><table class="why-t">${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}
-    <tr class="tot"><td>Score</td><td>${fin.toFixed(1)}</td></tr></table>${capped ? `<small class="why-cap">${esc(cap)}</small>` : ''}</div>`;
+  return `<div class="why-box"><p>${sum}</p>${capped ? `<small class="why-cap">${esc(cap)}</small>` : ''}</div>`;
 }
 function breakdown(lg, g) {
   if (!g.analysis || !g.confidence) return '';
