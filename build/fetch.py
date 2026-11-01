@@ -1010,7 +1010,8 @@ def injury_notes(g, side):
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
-LOW_PASS_LINE = 215.5  # passing unders below this carry a warning
+LOW_PASS_LINE = 215.5  # QB passing unders below this carry a warning
+LOW_SKILL_LINE = {"Rushing": 40.5, "Receiving": 35.5, "Rush + Rec": 50.5, "Receptions": 3.5}  # unders below these lose 0.5
 NFL_PROP_FLOOR = {"Passing": 150.5, "Rushing": 30.5, "Receiving": 25.5, "Receptions": 2.5, "Rush + Rec": 35.5}  # smaller lines are backups  # basketball props: Take from here up
 BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
@@ -2397,8 +2398,19 @@ def analyze_prop(p, g=None, lg=None):
         why.append(f"Kalshi prices this at {round(p['kalshiP'] * 100)}% ({p['kalshiOdds']}); the model's edge over that is {p['edge'] * 100:.1f} points.")
     if p.get("flag"):
         warn.append("Line is far from his recent numbers: check injury or role news.")
-    if p["cat"] == "Passing" and under and p["line"] < LOW_PASS_LINE:
-        warn.append(f"Low passing line ({p['line']:g}) for a starting QB: one garbage-time drive or a game where his team is chasing points clears it.")
+    if lg in ("nfl", "cfb") and under and p.get("l5"):
+        avg_l5 = sum(p["l5"]) / len(p["l5"])
+        if p["cat"] == "Passing" and p["line"] < LOW_PASS_LINE:
+            # A QB touches the ball every play, so a low passing line is easy to clear (one garbage-time drive, or a
+            # game where his team is chasing points). Only a QB who has really been struggling is an under here.
+            if avg_l5 <= 0.85 * p["line"] and won >= 4:
+                why.append(f"He has been struggling: {avg_l5:.0f} yards a game over his last {len(p['l5'])}, under this line in {won} of them.")
+            else:
+                warn.append(f"Low passing line ({p['line']:g}) for a starting QB: he touches the ball every play, so one garbage-time drive or a game where his team is chasing points clears it.")
+        elif p["line"] < LOW_SKILL_LINE.get(p["cat"], 0):
+            # Position players need the game plan and targets to come their way, so a low line is less of a giveaway.
+            p["score"] = round(max(0.0, p["score"] - 0.5), 1)
+            against.append(f"Low line ({p['line']:g}): one big play beats an under, so the score is trimmed slightly.")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
     if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < BB_MIN_MPG:
