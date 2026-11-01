@@ -232,7 +232,7 @@ td.rank { font-weight: 700; }
 .sec-h h3 { margin: 0; font: 800 1.25rem var(--f-display); color: var(--cyan); text-transform: uppercase; }
 .sec-h small { color: var(--muted); }
 .picklist { display: grid; gap: 6px; }
-.pick { display: grid; grid-template-columns: 54px 52px minmax(0, 1.4fr) minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 12px; align-items: center; background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.pick { display: grid; grid-template-columns: 52px minmax(0, 1.4fr) minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 12px; align-items: center; background: #0c1117; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
 .pick:hover { border-color: #3a4552; }
 .pick .lgc { font: 800 .75rem var(--f-display); letter-spacing: .05em; text-align: center; border: 1px solid var(--line); border-radius: 4px; padding: 3px 0; color: var(--muted); }
 .pick .what { font: 800 1.15rem var(--f-display); }
@@ -272,6 +272,16 @@ td.rank { font-weight: 700; }
 .dcheck li::before { position: absolute; left: 0; font-weight: 800; }
 .warn-t { color: var(--gold); }
 .conf small.cparts { flex-basis: 100%; font: 600 .74rem var(--f-body); color: var(--muted); }
+.jumps { display: flex; gap: 8px; flex-wrap: wrap; }
+.jump { display: grid; text-align: left; font: 800 .95rem var(--f-display); letter-spacing: .05em; text-transform: uppercase; background: #0c1117; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+.jump small { font: 600 .72rem var(--f-body); letter-spacing: 0; text-transform: none; color: var(--muted); }
+.jump:hover { border-color: var(--cyan); }
+.sport { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); scroll-margin-top: 12px; }
+.sport-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sport-h h3 { margin: 0; font: 800 1.5rem var(--f-display); text-transform: uppercase; color: var(--cyan); }
+.sport-h small { color: var(--muted); }
+.sport-h .pbtn { margin-left: auto; padding: 5px 10px; font-size: .85rem; }
+.sub-h { font: 700 .78rem var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 .toast { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); background: var(--teal); color: #fff; font: 700 .95rem var(--f-body); padding: 10px 14px; border-radius: 6px; z-index: 20; }
 </style>
 </head>
@@ -551,25 +561,39 @@ function renderHome() {
   propPicks.sort((a, b) => vrank[a.a.verdict] - vrank[b.a.verdict] || b.p.score - a.p.score);
   const shortWhy = a => `<span class="reason">${[...a.warn.map(t => '⚠ ' + t), ...a.why.slice(0, 2).map(t => '✓ ' + t), ...a.against.slice(0, 1).map(t => '✗ ' + t)].slice(0, 3).map(esc).join('<br>')}</span>`;
   const badge = sc => `<span class="score ${scls(sc)}">${sc.toFixed(1)}</span>`;
-  const games = gamePicks.slice(0, 15).map((x, i) => {
+  const gameRow = (x, i) => {
     const k = kalshiFor(x.g, x.kind);
     const label = { moneyline: 'Moneyline', spread: 'Spread', total: 'Total' }[x.kind];
-    return `<div class="pick" data-gi="${i}" role="button" tabindex="0"><span class="lgc">${esc(LEAGUES[x.lg].short)}</span>${badge(x.score)}
+    return `<div class="pick" data-gi="${i}" role="button" tabindex="0">${badge(x.score)}
       <span class="what">${esc(x.call)}<small>${label}${k && k.odds ? ` · Kalshi ${Math.round(k.p * 100)}% (${esc(k.odds)})` : ''}</small></span>
       <span class="who">${esc(tl(x.g.away))} @ ${esc(tl(x.g.home))}<small>${esc(x.g.date)}</small></span>
       <span class="why">${vchip(x.a.verdict)}</span>
       <button type="button" class="add" data-gadd="${i}">+ Track</button>${shortWhy(x.a)}</div>`;
-  }).join('');
-  const props = propPicks.slice(0, 12).map((x, i) => {
+  };
+  const propRow = (x, i) => {
     const p = x.p, under = p.side === 'Under';
-    const won = p.l5.filter(v => under ? v < p.line : v > p.line).length;
     const pick = p.cat === 'Touchdowns' ? 'Anytime TD' : `${under ? 'Under' : 'Over'} ${p.line} ${p.cat}`;
-    return `<div class="pick" data-pi="${i}" role="button" tabindex="0"><span class="lgc">${esc(LEAGUES[x.lg].short)}</span>${badge(p.score)}
+    return `<div class="pick" data-pi="${i}" role="button" tabindex="0">${badge(p.score)}
       <span class="what">${esc(p.player)}<small>${esc(pick)}${p.kalshiOdds ? ` · Kalshi ${esc(p.kalshiOdds)}` : ''}</small></span>
       <span class="who">${esc(p.team)} ${p.home ? 'vs' : '@'} ${esc(p.oppName)}<small>${esc(x.g.date)}</small></span>
       <span class="why">${vchip(x.a.verdict)}</span>
       <button type="button" class="add" data-padd="${i}">+ Track</button>${shortWhy(x.a)}</div>`;
-  }).join('');
+  };
+  // One section per sport, in board order; indexes point back into the full lists for the click handlers.
+  const sections = Object.entries(LEAGUES).map(([lg, L]) => {
+    const gp = gamePicks.map((x, i) => [x, i]).filter(([x]) => x.lg === lg).slice(0, 8);
+    const pp = propPicks.map((x, i) => [x, i]).filter(([x]) => x.lg === lg).slice(0, 8);
+    const upcoming = (DATA[lg] || []).filter(g => g.state === 'pre').length;
+    const takes = gp.filter(([x]) => x.a.verdict.startsWith('Take')).length + pp.filter(([x]) => x.a.verdict.startsWith('Take')).length;
+    const empty = !upcoming ? (lg === 'cbb' ? 'College basketball tips off November 3.' : 'No upcoming games on the board right now.') : 'No game has a strong edge right now. That\'s normal; most lines are close to fair.';
+    return { lg, html: `<section class="sport" id="sport-${lg}">
+      <div class="sport-h"><h3>${esc(L.name)}</h3><small>${upcoming} upcoming game${upcoming === 1 ? '' : 's'}${takes ? ` · ${takes} Take${takes === 1 ? '' : 's'}` : ''}</small><button type="button" class="pbtn" data-golg="${lg}">Open ${esc(L.short)} board</button></div>
+      <div class="sub-h">Game picks</div>
+      <div class="picklist">${gp.map(([x, i]) => gameRow(x, i)).join('') || `<p class="empty">${esc(empty)}</p>`}</div>
+      ${L.cats ? `<div class="sub-h">Player props</div><div class="picklist">${pp.map(([x, i]) => propRow(x, i)).join('') || '<p class="empty">No props stand out right now.</p>'}</div>` : ''}
+    </section>`, count: gp.length + pp.length, upcoming };
+  });
+  const jump = sections.map(sc => `<button type="button" class="jump" data-jump="${sc.lg}">${esc(LEAGUES[sc.lg].short)}<small>${sc.count} pick${sc.count === 1 ? '' : 's'}</small></button>`).join('');
   const today = todayET(), [wk] = periodRange('week', today), [mo] = periodRange('month', today);
   const plCard = (label, v, per) => `<button type="button" data-goper="${per}"><span>${label}</span><b class="${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${money(v)}</b></button>`;
   const pl = dbState === 'ready' && plays.length
@@ -577,10 +601,9 @@ function renderHome() {
   $('board').innerHTML = `<div class="topv">
     <div class="home-h"><h2>Top Picks</h2><small>Upcoming games in all leagues · updated ${esc(DATA.generated.replace('T', ' ').replace('Z', ' UTC'))}</small></div>
     ${pl}
-    <div class="sec-h"><h3>Game picks</h3><small>Leans (4+) and plays (7+), Take first · tap a pick for the full breakdown</small></div>
-    <div class="picklist">${games || '<p class="empty">No game has a strong edge right now. That\'s normal; most lines are close to fair.</p>'}</div>
-    <div class="sec-h"><h3>Player props</h3><small>Score 5+, lines near the player's form, best first</small></div>
-    <div class="picklist">${props || '<p class="empty">No props stand out right now.</p>'}</div>
+    <div class="jumps" role="navigation" aria-label="Jump to a sport">${jump}</div>
+    <p class="msg">Leans (4+) and plays (7+) for each sport, Take first. Props show scores of 5+ with lines near the player's form. Tap a pick for its full breakdown.</p>
+    ${sections.map(sc => sc.html).join('')}
     <p class="pnote">Tap a pick to open its full matchup board or props sheet. Scores compare my model with the betting market; a high score is a reason to look closer, not a sure thing. Lines move, so check your book's price before you bet.</p>
   </div>`;
   const openGame = x => { league = x.lg; current[x.lg] = x.g.id; setMode('games'); };
@@ -589,6 +612,8 @@ function renderHome() {
   $('board').querySelectorAll('[data-gadd]').forEach(b => b.onclick = () => { const x = gamePicks[+b.dataset.gadd]; league = x.lg; openAdd(fromGame(x.g, x.kind)); });
   $('board').querySelectorAll('[data-padd]').forEach(b => b.onclick = () => { const x = propPicks[+b.dataset.padd]; league = x.lg; openAdd(fromProp(x.p)); });
   $('board').querySelectorAll('[data-goper]').forEach(b => b.onclick = () => { period = b.dataset.goper; pday = todayET(); setMode('plays'); });
+  $('board').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => $('sport-' + b.dataset.jump).scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  $('board').querySelectorAll('[data-golg]').forEach(b => b.onclick = () => { league = b.dataset.golg; setMode('games'); });
 }
 
 /* ---------------- player props ---------------- */
