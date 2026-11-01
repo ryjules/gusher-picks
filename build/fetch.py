@@ -1679,7 +1679,7 @@ def weather_of(g):
 
 
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
-ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.2, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
 TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
 TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 35)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 52.5))}  # points per unit of real gap
 CFB_HOME_EDGE = 1.0  # extra strength toward the home team in college
@@ -1696,8 +1696,11 @@ SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch stren
 TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
 TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
 TOT_WILD_CAP = 6.0
-TOT_EXTRA = 0.5  # most that price + trends can add to a football total
-SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 2.2)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
+TOT_EXTRA = {"cfb": 0.5, "nfl": 2.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
+PROJ_W = {"cfb": 0.5, "nfl": 0.65}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
+MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
+MOVE_W = 0.75  # most a line move can add
+SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -1892,7 +1895,7 @@ def stat_matchup(lg, g, nteams):
             m_total = LG_TOTALS.get(lg, 45.0) + TOT_PTS[lg] * both
             if ia:
                 m_total += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
-            blend_total = 0.5 * proj + 0.5 * m_total
+            blend_total = PROJ_W[lg] * proj + (1 - PROJ_W[lg]) * m_total
             sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
             wild = abs(blend_total - ln["totalNum"]) >= TOT_WILD[lg]
             pace = R.get("Pace")
@@ -1961,6 +1964,35 @@ def trend_nudge(g, kind):
     return max(-0.6, min(0.6, x))
 
 
+def line_move(lg, g, kind):
+    """Signal (+ = away/over) from how far the spread or total moved since it opened; football only."""
+    if SPORT.get(lg) != "fb" or kind == "moneyline":
+        return 0.0
+    ln = g.get("lines") or {}
+    op = ln.get("open") or {}
+    try:
+        if kind == "spread":
+            now, was = ln.get("spreadNum"), float(op.get("homeSpread"))
+            d = (now - was) if now is not None else 0.0  # > 0: the home line got worse, money on the away team
+        else:
+            now, was = ln.get("totalNum"), float(op.get("total"))
+            d = (now - was) if now is not None else 0.0  # > 0: total went up, money on the over
+    except (TypeError, ValueError):
+        return 0.0
+    if abs(d) < MOVE_MIN[lg]:
+        return 0.0
+    return math.copysign(min(MOVE_W, MOVE_W * abs(d) / (2 * MOVE_MIN[lg])), d)
+
+
+def line_move_note(g, kind, mv):
+    ln, op = g["lines"], g["lines"].get("open") or {}
+    if kind == "spread":
+        sd = "away" if mv > 0 else "home"
+        return (f"Line moved from {g['home']['abbr']} {op.get('homeSpread')} to {fsp(ln['spreadNum'])} since it opened: "
+                f"money or news is on {g[sd]['abbr']}", sd)
+    return (f"Total moved from {op.get('total')} to {ln['totalNum']:g} since it opened", "over" if mv > 0 else "under")
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -1988,10 +2020,15 @@ def blend_confidence(lg, g, n):
             sig += 0.35 * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
         sig += tr
-        if kind == "total" and SPORT[lg] == "fb" and st and abs(sig) > st["score"] + TOT_EXTRA:
+        mv = line_move(lg, g, kind)  # a big move from the open: news or sharp money the stats can't see
+        if mv:
+            sig += mv
+            if st:
+                st.setdefault("notes", []).append(line_move_note(g, kind, mv))
+        if kind == "total" and SPORT[lg] == "fb" and st and abs(sig) > st["score"] + TOT_EXTRA[lg]:
             # Football totals: the stats decide. Price and trends can add at most half a point on top, so they
             # can't lift a weak stat read into a Play.
-            sig = math.copysign(st["score"] + TOT_EXTRA, sig)
+            sig = math.copysign(st["score"] + TOT_EXTRA[lg], sig)
         cal = CAL.get((lg, kind), 1.0)  # learned from this league's graded picks of this bet type
         sig *= cal
         side = pos if sig > 0 else ("home" if kind != "total" else "under")
