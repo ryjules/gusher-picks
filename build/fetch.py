@@ -475,7 +475,10 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
     gl = per_team.get(tid, [])
     if not gl:
         return []
-    latest = gl[-1]["teams"][tid].get("players", {})
+    # Anyone who played in the last 3 games (not just the last one), so a player back from a missed game still gets lines.
+    latest = {}
+    for gg in gl[-3:]:
+        latest.update(gg["teams"][tid].get("players", {}))
     n = len(agg)
     rows = []
     for label, val, opp_key, easy_high, min_avg, active in PROP_CATS:
@@ -500,14 +503,17 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
                     v = 0.0
                 if v is not None:
                     hist.append(v)
-            if len(hist) < 3:
+            posted = lines.get((PROP_MARKETS[label], pid))
+            # Three games to model a player, unless the book has posted his line (a new starter or a player
+            # back from injury): then show him, and the small-sample warning keeps him from being a full Take.
+            if len(hist) < (1 if posted and posted[0] is not None else 3):
                 continue
             l5 = hist[-5:]
             avg5, season = sum(l5) / len(l5), sum(hist) / len(hist)
             if season < min_avg:
                 continue
             proj = (0.5 * avg5 + 0.5 * season) * factor
-            line, opn = lines.get((PROP_MARKETS[label], pid)) or (None, None)
+            line, opn = posted or (None, None)
             if label == "Touchdowns" and line is None:
                 line = 0.5  # anytime TD is always 0.5; the price comes from Kalshi when it lists the player
             score, side, prob = prop_score(label, proj, line, hist)
@@ -797,6 +803,75 @@ def record_finals(key, games):
 KEY_POS = {"QB": 3, "RB": 1, "WR": 1, "TE": 1, "OT": 1, "T": 1, "C": 1, "G": 1, "CB": 1, "S": 1, "LB": 1, "DE": 1, "DT": 1, "EDGE": 1}
 
 
+# --- full injury lists -----------------------------------------------------------------------------------
+# A game summary lists at most five injured players per team, so the league-wide injury feed (every team's
+# full report, including game-day inactives) is merged in. build/injury_overrides.json adds players known to
+# be out that the feed hasn't caught up with yet: [{"league": "nfl", "team": "MIN", "name": "Aaron Jones Sr.",
+# "status": "Out", "until": "2026-11-02"}].
+_LEAGUE_INJ = {}
+STATUS_MAP = {"day-to-day": "Questionable"}
+
+
+def league_injuries(sport_path):
+    if sport_path not in _LEAGUE_INJ:
+        data = get(f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/injuries") or {}
+        teams = {}
+        for t in data.get("injuries") or []:
+            rows = []
+            for i in t.get("injuries") or []:
+                ath = dict(i.get("athlete") or {})
+                if not ath.get("id"):
+                    for ln in ath.get("links") or []:
+                        m = re.search(r"/id/(\d+)", ln.get("href") or "")
+                        if m:
+                            ath["id"] = m.group(1)
+                            break
+                st = STATUS_MAP.get((i.get("status") or "").lower(), i.get("status") or "")
+                rows.append({"athlete": ath, "status": st})
+            teams[str(t.get("id"))] = rows
+        _LEAGUE_INJ[sport_path] = teams
+    return _LEAGUE_INJ[sport_path]
+
+
+def load_overrides():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "injury_overrides.json")) as f:
+            rows = json.load(f)
+    except (OSError, ValueError):
+        return []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    return [r for r in rows if (r.get("until") or "9999") >= today]
+
+
+def merge_injuries(summ, sport_path, lg, away, home):
+    """Give the summary every listed player for both teams, plus manual overrides."""
+    feed = league_injuries(sport_path)
+    over = [r for r in load_overrides() if r.get("league") == lg]
+    merged = []
+    for team in (away, home):
+        tid = str(team["id"])
+        have = next((tm for tm in summ.get("injuries") or [] if str((tm.get("team") or {}).get("id")) == tid), None)
+        rows = list((have or {}).get("injuries") or [])
+        seen = {str((r.get("athlete") or {}).get("id")) for r in rows}
+        for r in feed.get(tid, []):
+            aid = str(r["athlete"].get("id"))
+            if aid not in seen:
+                rows.append(r); seen.add(aid)
+        for o in over:
+            if o.get("team") != team.get("abbr"):
+                continue
+            hit = next((r for r in rows if (r.get("athlete") or {}).get("displayName") == o["name"]), None)
+            if hit:
+                hit["status"] = o.get("status", "Out")
+            else:
+                rows.append({"athlete": {"id": o.get("id") or ("name:" + o["name"]), "displayName": o["name"],
+                                         "shortName": o["name"], "position": {"abbreviation": o.get("pos", "")}},
+                             "status": o.get("status", "Out")})
+        merged.append({"team": {"id": team["id"]}, "injuries": rows})
+    summ["injuries"] = merged
+    return summ
+
+
 def injury_report(summ, away, home):
     """{side: [{"id", "name", "pos", "status"}]} for questionable, doubtful and out players (ESPN injury report)."""
     out = {"away": [], "home": []}
@@ -1037,6 +1112,10 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
         summ = get(f"{BASE}/{lg}/summary?event={e['id']}")
         if not summ:
             continue
+        if key == "nfl" and not BACKFILL and (e.get("status") or {}).get("type", {}).get("state") == "pre":
+            ta = {"id": comp["away"]["team"]["id"], "abbr": comp["away"]["team"].get("abbreviation")}
+            th = {"id": comp["home"]["team"]["id"], "abbr": comp["home"]["team"].get("abbreviation")}
+            merge_injuries(summ, "football/nfl", key, ta, th)
         gi = summ.get("gameInfo", {})
         pc = (summ.get("pickcenter") or [{}])[0]
         if BACKFILL and key == "cfb":
@@ -1412,6 +1491,10 @@ def run_basketball(lg, key, start, groups):
         summ = get(f"{BB}/{lg}/summary?event={e['id']}")
         if not summ:
             continue
+        if key == "nba" and not BACKFILL and (e.get("status") or {}).get("type", {}).get("state") == "pre":
+            ta = {"id": comp["away"]["team"]["id"], "abbr": comp["away"]["team"].get("abbreviation")}
+            th = {"id": comp["home"]["team"]["id"], "abbr": comp["home"]["team"].get("abbreviation")}
+            merge_injuries(summ, "basketball/nba", key, ta, th)
         pc = (summ.get("pickcenter") or [{}])[0]
         venue = (summ.get("gameInfo") or {}).get("venue") or c.get("venue") or {}
         addr = venue.get("address") or {}
@@ -1573,7 +1656,9 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
         gl = per_team.get(tid, [])
         if not gl:
             continue
-        latest = gl[-1]["teams"][tid].get("players", {})
+        latest = {}
+        for gg in gl[-3:]:  # anyone from the last 3 games, so a player back from a missed game still gets lines
+            latest.update(gg["teams"][tid].get("players", {}))
         for label, val, market, okeys, min_avg in BB_PROPS:
             allowed = {t: sum((a["season"].get("o_" + k) or 0) for k in okeys) for t, a in agg.items()}
             rk = rank_map(allowed, False)  # 1st allows the least
@@ -1710,6 +1795,9 @@ MOVE_W = 0.75  # most a line move can add
 NEUTRAL_ROWS = {"Pace"}
 ROW_W = {"Penalties": 0.25}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
+SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
+SHORT_ML_CAP = 5.5
+SHORT_ML_LIFT = 0.75
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -2088,6 +2176,21 @@ def blend_confidence(lg, g, n):
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                       "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal}
+    # Heavy favorite (-400 or shorter) with the spread on the same team: the spread is the bet. The moneyline risks
+    # 4+ to win 1, so it stays a Lean, and the spread gets a lift because that's where the data edge gets paid.
+    ml, sp = pick.get("moneyline"), pick.get("spread")
+    if SPORT[lg] == "fb" and ml and sp and ml["side"] == sp["side"] and conf.get("spread", [0])[0] >= 4:
+        price = pnum(g["lines"].get("homeML" if ml["side"] == "home" else "awayML"))
+        if price is not None and price <= SHORT_ML:
+            c_ml, c_sp = conf["moneyline"], conf["spread"]
+            new_ml = min(c_ml[0], SHORT_ML_CAP)
+            new_sp = round(min(10.0, c_sp[0] + SHORT_ML_LIFT), 1)
+            conf["moneyline"] = [new_ml, ("Lean " + ml["call"]) if new_ml >= 4 else "Pass"]
+            conf["spread"] = [new_sp, (("Play " if new_sp >= 7 else "Lean ") + sp["call"])]
+            ml["preferSpread"] = sp["preferSpread"] = True
+            st = (g.get("matchup") or {}).get("spread")
+            if st is not None:
+                st.setdefault("notes", []).append((f"At {fmt_ml(price)} the moneyline risks too much: the spread is the way to play this edge", sp["side"]))
     g["confidence"], g["pick"] = conf, pick
 
 
@@ -2161,7 +2264,9 @@ def analyze_game(lg, g, kind, nteams):
             warn.append(t)
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
             tips.append("Road favorite: worth knowing, but the data drives this pick.")
-        if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
+        if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg] and ((g.get("pick") or {}).get("spread") or {}).get("preferSpread"):
+            tips.append(f"Big spread ({fsp(line_num)}), but at this moneyline price the spread is the better way to play it.")
+        elif kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
             warn.append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
         if kind == "spread" and SPORT[lg] == "fb" and line_num is not None:
             kn = next((x for x in (3, 7, 10) if abs(abs(line_num) - x) <= 0.5), None)
