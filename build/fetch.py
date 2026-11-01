@@ -519,7 +519,7 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
                          "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home",
                          "oppRank": orank, "matchup": round(10 * (orank - 1) / (n - 1), 1) if orank else None,
                          "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
-                         "games": len(hist), "proj": round(proj, 1), "game": game})
+                         "games": len(hist), "proj": round(proj, 1), "game": game, "_hist": hist})
     return rows
 
 
@@ -636,6 +636,7 @@ def enrich(key, slate):
         for g in slate:
             for pr in g.get("props") or []:
                 rescore_prop(pr)
+                pr.pop("_hist", None)
         return
     series = {"GAME": f"{prefix}GAME", "SPREAD": f"{prefix}SPREAD", "TOTAL": f"{prefix}TOTAL", **prop_series}
     by = {}
@@ -704,7 +705,19 @@ def enrich(key, slate):
         # player props: ladder for the player at DraftKings' line
         for pr in g.get("props") or []:
             ms = [m for m in by.get(pr["cat"], {}).get(ev, []) if norm((m.get("title") or "").split(":")[0]) == norm(pr.get("full") or pr["player"])]
-            if not ms or pr.get("line") is None:
+            if not ms:
+                continue
+            if pr.get("line") is None and pr.get("_hist"):
+                # No DraftKings line: use Kalshi's own line, the "X+" rung nearest a coin flip (over X - 0.5).
+                rungs = [(m["floor_strike"], kmid(m)) for m in ms if m.get("floor_strike") is not None and kmid(m) is not None]
+                if rungs:
+                    k_line = min(rungs, key=lambda r: abs(r[1] - 0.5))[0] - 0.5
+                    if k_line > 0:
+                        args = (BB_COUNT, BB_FLOOR) if key in ("nba", "cbb") else ()
+                        pr["score"], pr["side"], pr["prob"] = prop_score(pr["cat"], pr["proj"], k_line, pr["_hist"], *args)
+                        pr["line"], pr["lineSrc"] = k_line, "Kalshi"
+                        pr["hits"] = sum(1 for x in pr["_hist"][-5:] if x > k_line)
+            if pr.get("line") is None:
                 continue
             po = ladder_p(ms, pr["line"])
             if po is None:
@@ -715,6 +728,7 @@ def enrich(key, slate):
     for g in slate:
         for pr in g.get("props") or []:
             rescore_prop(pr)
+            pr.pop("_hist", None)
 
 
 def rescore_prop(pr):
@@ -1450,7 +1464,7 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                              "matchup": round(10 * (orank - 1) / (nteams - 1), 1) if orank and nteams > 1 else None,
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
                              "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
-                             "side": side, "prob": prob})
+                             "side": side, "prob": prob, "_hist": hist})
     return rows
 
 
@@ -1530,6 +1544,7 @@ def weather_of(g):
 
 SM_SPREAD = {"cfb": (0.17, 0.008), "nfl": (0.2, 0.012), "nba": (0.2, 0.01), "cbb": (0.2, 0.006)}
 ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.3, "nba": 0.5, "cbb": 0.5}  # how hard a heavy moneyline price shrinks the score: -375 keeps 76%, -1000 keeps 57%
+SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
 POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
@@ -1594,7 +1609,7 @@ def stat_matchup(lg, g, nteams):
     if wsum:
         u = tot / wsum
         share = a_better / (a_better + h_better) if a_better + h_better else 0.5
-        strength = SIDE_SCALE[lg] * u + 4 * (share - 0.5)  # > 0 favors the away team
+        strength = SIDE_SCALE[lg] * u + SHARE_W * (share - 0.5)  # > 0 favors the away team; share = rows where the away team ranks better
         rec_notes = []
         if SPORT[lg] == "fb":
             # Records and opponent-adjusted power (the team-rating model credits who each team has played).
