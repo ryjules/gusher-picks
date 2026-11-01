@@ -321,6 +321,10 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
 .rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.roi-per { display: grid; grid-template-columns: repeat(5, auto); gap: 2px 10px; margin-top: 8px; justify-content: start; }
+.roi-per i { font-style: normal; display: grid; font-size: .72rem; line-height: 1.25; padding: 2px 4px; border-radius: 4px; }
+.roi-per i em { font-style: normal; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-size: .62rem; }
+.roi-per i b { font: 700 .82rem var(--f-body) !important; } .roi-per i.on { box-shadow: inset 0 0 0 1px var(--cyan); }
 .rc-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 2px; }
 .rc-tabs button { background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; color: var(--ink); cursor: pointer; display: grid; text-align: left; font: 600 .8rem var(--f-body); }
 .rc-tabs button b { font: 800 .8rem var(--f-display); letter-spacing: .05em; } .rc-tabs button small { color: var(--muted); }
@@ -1293,7 +1297,11 @@ function renderPlays() {
     : dbState === 'ready' ? `<div class="sumbar">
         <div class="big"><span>Profit</span><b class="${pc(profit)}">${money(profit)}</b><small>${usign(s.units)}${s.n > s.settledN ? ` · ${s.n - s.settledN} pending` : ''}</small></div>
         <div><span>Record</span><b>${rec(s)}</b><small>${s.n} play${s.n === 1 ? '' : 's'}</small></div>
-        <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small></div>
+        <div><span>ROI</span><b class="${pc(s.roi)}">${(s.roi > 0 ? '+' : '') + (s.roi * 100).toFixed(1)}%</b><small>${money(s.staked * U, false)} risked</small>
+          <span class="roi-per">${PERIODS.map(([k, lbl]) => { const [a, b] = periodRange(k, pday);
+            const ss = summary(SRC[src].list().filter(p => p.date >= a && p.date <= b && inSport(p)));
+            const v = ss.staked ? ss.roi : null;
+            return `<i class="${k === period ? 'on' : ''}"><em>${lbl}</em><b class="${v == null ? '' : pc(v)}">${v == null ? '—' : (v > 0 ? '+' : '') + (v * 100).toFixed(1) + '%'}</b></i>`; }).join('')}</span></div>
         <div><span>Avg odds</span><b>${esc(s.avg)}</b><small>${s.settledN} settled</small></div>
       </div>
       ${s.settledN ? chart(scope, period, from, to, sportSw) : ''}
