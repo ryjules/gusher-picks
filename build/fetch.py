@@ -1051,6 +1051,51 @@ def load_calibration(path):
 
 
 CAL, CAL_TALLY = load_calibration(sys.argv[3]) if len(sys.argv) > 3 else ({}, {})
+
+# The bar a Lean must clear to become a Take, per sport, set from the last three weeks of spread and total picks.
+# The goal is profit: keep bets above break-even (52.4% at -110), take more Leans only when the skipped ones keep
+# winning money, and never by piling on plays past a sensible daily card.
+LEAN_BAR_BASE, LEAN_BAR_MIN, LEAN_BAR_MAX = 6.5, 6.0, 7.5
+DAILY_CAP = {"cfb": 25, "nfl": 10, "nba": 8, "cbb": 15}  # average game plays a day before the bar won't drop
+BREAKEVEN = 0.524
+
+
+def lean_bars(path):
+    try:
+        with open(path) as f:
+            picks = json.load(f).get("picks", [])
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    since = (datetime.now(ET) - timedelta(days=21)).strftime("%Y-%m-%d")
+    out = {}
+    u1 = lambda p: (p["price"] / 100 if p["price"] > 0 else 100 / -p["price"]) if p["result"] == "W" else -1 if p["result"] == "L" else 0
+    for lg in ("cfb", "nfl", "nba", "cbb"):
+        ps = [p for p in picks if p.get("league") == lg and p.get("date", "") >= since and (p.get("grade") or {}).get("kind") in ("spread", "total")]
+        g = [p for p in ps if p.get("result") in ("W", "L")]
+        takes = [p for p in g if p.get("verdict") in ("Take", "Take small", "Take large")]
+        skipped = [p for p in g if p.get("verdict") not in ("Take", "Take small", "Take large") and 4 <= (p.get("score") or 0) < 7]
+        days = len({p["date"] for p in ps}) or 1
+        per_day = sum(1 for p in ps if p.get("verdict") in ("Take", "Take small", "Take large")) / days
+        th = sum(p["result"] == "W" for p in takes) / len(takes) if takes else None
+        sh = sum(p["result"] == "W" for p in skipped) / len(skipped) if skipped else None
+        su = sum(u1(p) for p in skipped)
+        tu = sum(u1(p) * (p.get("stake") or 1) for p in takes)
+        bar, why = LEAN_BAR_BASE, "results are within the normal range, so the bar stays put"
+        if len(takes) >= 15 and th < BREAKEVEN:
+            bar = LEAN_BAR_BASE + (0.5 if th < 0.47 else 0.25)
+            why = f"our bets are hitting {th:.0%}, under the {BREAKEVEN:.1%} break-even, so it's fewer, stronger plays"
+        elif len(skipped) >= 15 and sh >= 0.55 and su / len(skipped) >= 0.05:
+            if per_day < DAILY_CAP[lg]:
+                bar = LEAN_BAR_BASE - 0.25
+                why = f"skipped Leans went {sh:.0%} ({su:+.1f}u) and the card averages {per_day:.0f} plays a day, so a few more Leans make it"
+            else:
+                why = f"skipped Leans are winning ({su:+.1f}u), but the card already averages {per_day:.0f} plays a day, so it holds rather than add volume"
+        out[lg] = {"bar": max(LEAN_BAR_MIN, min(LEAN_BAR_MAX, bar)), "why": why, "takes": [len(takes), th, round(tu, 2)],
+                   "skipped": [len(skipped), sh, round(su, 2)], "perDay": round(per_day, 1)}
+    return out
+
+
+LEAN_BAR = lean_bars(sys.argv[3]) if len(sys.argv) > 3 else {}
 et_day = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d")
 CUR = {}
 OUT_DATA = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")}
@@ -2361,7 +2406,7 @@ def analyze_game(lg, g, kind, nteams):
             (why if sd == side else against).append(txt + ".")
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
-    TAKE_BAR = 6.5
+    TAKE_BAR = (LEAN_BAR.get(lg) or {}).get("bar", LEAN_BAR_BASE)  # set from recent results (see lean_bars)
     if score >= 7:
         verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
@@ -2703,7 +2748,24 @@ def league_recap(lg):
             effect = ("borderline Plays drop to Leans and borderline Leans to Passes" if m < 1
                       else "strong Leans can reach Play")
             changes.append(f"{kind.capitalize()}s x{m:.2f} ({w}-{l}, {u:+.1f}u graded so far): a 7.0 now reads {7 * m:.1f}, so {effect}")
-    return {"day": day, "takes": rec(takes), "all": rec(dayp), "passes": rp, "wrong": wrong, "right": right,
+    plan = []
+    tk = rec(takes)
+    if tk["w"] + tk["l"]:
+        hr = tk["w"] / (tk["w"] + tk["l"])
+        plan.append(f"Bets went {tk['w']}-{tk['l']} ({hr:.0%}, {tk['u']:+.1f}u). Break-even at -110 is {BREAKEVEN:.1%}, so "
+                    + ("that's a winning day." if tk["u"] > 0.25 else "that's a losing day." if tk["u"] < -0.25 else "that's about break-even."))
+    sk = [p for p in dayp if p["verdict"] not in TAKES and p["grade"]["kind"] != "ml"]
+    rs = rec(sk)
+    if rs["w"] + rs["l"]:
+        plan.append(f"Skipped picks would have gone {rs['w']}-{rs['l']} ({rs['u']:+.1f}u at 1 unit): "
+                    + ("money left on the table." if rs["u"] > 0.5 else "sitting them out saved money." if rs["u"] < -0.5 else "about even."))
+    lb = LEAN_BAR.get(lg)
+    if lb:
+        t3, s3 = lb["takes"], lb["skipped"]
+        move = "lowered" if lb["bar"] < LEAN_BAR_BASE else "raised" if lb["bar"] > LEAN_BAR_BASE else "kept"
+        plan.append(f"Lean-to-Take bar {move} {'to' if move != 'kept' else 'at'} {lb['bar']:.2f} for today: over three weeks {lb['why']}.")
+    plan.append("The aim is profit, not volume: more plays only when the extra ones have been winning, and fewer when bets slip under break-even.")
+    return {"day": day, "takes": rec(takes), "all": rec(dayp), "passes": rp, "wrong": wrong, "right": right, "plan": plan,
             "misses": [fmt(p) for p in misses], "hits": [fmt(p) for p in hits], "calibration": changes,
             "note": "" if changes else "No changes yet: calibration needs 12 graded picks per bet type, and it moves slowly."}
 
