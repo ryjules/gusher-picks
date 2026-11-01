@@ -590,6 +590,34 @@ def fair(p):
     return fmt_ml(round(-100 * p / (1 - p)) if p >= 0.5 else round(100 * (1 - p) / p))
 
 
+def backfill_line(key, eid, pc):
+    """For a finished game, ESPN's final line is usually the closing line, but sometimes it is an in-game line
+    (off-market juice such as +140 on a spread). In that case use the opening line, which is always pregame."""
+    def pn(v):
+        try:
+            return float(str(v).replace("+", ""))
+        except (TypeError, ValueError):
+            return None
+    odds = [pn(((pc.get("awayTeamOdds") or {}).get("spreadOdds"))), pn(((pc.get("homeTeamOdds") or {}).get("spreadOdds"))),
+            pn((pc.get("overOdds"))), pn((pc.get("underOdds")))]
+    if all(o is not None and -140 <= o <= 120 and abs(o) >= 100 for o in odds) and pc.get("spread") is not None:
+        return {**pc, "provider": {"name": "DraftKings close"}}
+    it = ((get(f"https://sports.core.api.espn.com/v2/sports/{CORE_PATH[key]}/events/{eid}/competitions/{eid}/odds?lang=en&region=us") or {})
+          .get("items") or [{}])[0]
+    o = lambda *ks: _dig(it, *ks)
+    try:
+        hs = float(str(o("homeTeamOdds", "open", "pointSpread", "american")).replace("PK", "0"))
+        tot = float(o("open", "total", "american"))
+    except (TypeError, ValueError):
+        return {}
+    ml = lambda side: pn(o(side, "open", "moneyLine", "american"))
+    jc = lambda *ks: pn(o(*ks)) or -110
+    return {"provider": {"name": "DraftKings open"}, "spread": hs, "overUnder": tot,
+            "awayTeamOdds": {"moneyLine": ml("awayTeamOdds"), "spreadOdds": jc("awayTeamOdds", "open", "spread", "american")},
+            "homeTeamOdds": {"moneyLine": ml("homeTeamOdds"), "spreadOdds": jc("homeTeamOdds", "open", "spread", "american")},
+            "overOdds": jc("open", "over", "american"), "underOdds": jc("open", "under", "american")}
+
+
 def enrich(key, slate):
     """Attach opening lines (DraftKings via ESPN) and Kalshi fair prices to games and props."""
     for g in slate:
@@ -773,6 +801,10 @@ def injury_notes(g, side):
 
 
 # --- main ----------------------------------------------------------------------
+# BACKFILL_DAY=YYYY-MM-DD (Eastern) logs model picks for college games on that day that finished before the
+# pick log existed: stats come only from earlier games and prices are the closing DraftKings line.
+BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
+et_day = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d")
 CUR = {}
 OUT_DATA = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")}
 for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
@@ -799,6 +831,9 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
     with ThreadPoolExecutor(16) as ex:
         games = [g for g in ex.map(load, done) if g]
     record_finals(key, games)
+    if BACKFILL and key == "cfb":
+        # Rebuild the board as it stood before that day's games: stats only from earlier games.
+        games = [g for g in games if et_day(g["date"]) < BACKFILL]
     print(lg, "parsed", len(games), file=sys.stderr)
 
     # FBS universe: teams with 4+ games in the FBS scoreboard (drops FCS teams that appear only as opponents).
@@ -849,6 +884,8 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             continue
         gi = summ.get("gameInfo", {})
         pc = (summ.get("pickcenter") or [{}])[0]
+        if BACKFILL and key == "cfb":
+            pc = backfill_line(key, e["id"], pc)
         venue = gi.get("venue") or c.get("venue") or {}
         addr = venue.get("address") or {}
         w = gi.get("weather") or {}
@@ -863,6 +900,10 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             weather = "—"
         when = datetime.fromisoformat(e["date"].replace("Z", "+00:00")).astimezone(ET)
         status = e["status"]["type"]
+        if BACKFILL and key == "cfb":
+            if et_day(e["date"]) != BACKFILL or not status.get("completed"):
+                continue
+            status = {"state": "pre"}  # score it as a pregame board (the line is ESPN's closing line)
 
         def team_block(x):
             t = x["team"]; tid = t["id"]
@@ -1832,6 +1873,8 @@ def update_history(path_in, path_out):
                         continue
                     hist[pid] = {"id": pid, **pk, "verdict": a["verdict"], "score": a["score"],
                                  "stake": 0.5 if a["verdict"] == "Take small" else 1, "result": None, "logged": now}
+                    if BACKFILL and lg == "cfb":
+                        hist[pid]["backfilled"] = True
                     added += 1
             for p in g.get("props") or []:
                 a = p.get("analysis")
