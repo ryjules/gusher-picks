@@ -403,7 +403,7 @@ PROP_CATS = [
     ("Rush + Rec", lambda p: (p.get("rushYds", 0) + p.get("recYds", 0)) if ("rushYds" in p or "recYds" in p) else None,
      "o_totY", True, 45, lambda p: p.get("car", 0) >= 4 or p.get("rec", 0) >= 2),
     ("Touchdowns", lambda p: (p.get("rushTD", 0) + p.get("recTD", 0)) if ("rushYds" in p or "recYds" in p) else None,
-     "o_td", True, 0.25, lambda p: p.get("car", 0) >= 3 or p.get("rec", 0) >= 2),
+     "o_td", True, 0.0, lambda p: p.get("car", 0) >= 1 or p.get("rec", 0) >= 1),  # every active rusher / receiver
     ("Sacks", lambda p: p.get("sacks") if "tackles" in p else None, "sacksA", True, 0.3, lambda p: "tackles" in p),
     ("Tackles + Ast", lambda p: p.get("tackles"), "plays", True, 4, lambda p: "tackles" in p),
     ("FG Made", lambda p: p.get("fg"), "o_pts", False, 1.0, lambda p: "fg" in p),
@@ -511,6 +511,8 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
                 continue
             proj = (0.5 * avg5 + 0.5 * season) * factor
             line, opn = lines.get((PROP_MARKETS[label], pid)) or (None, None)
+            if label == "Touchdowns" and line is None:
+                line = 0.5  # anytime TD is always 0.5; the price comes from Kalshi when it lists the player
             score, side, prob = prop_score(label, proj, line, hist)
             rows.append({"pid": pid, "line": line, "open": opn, "score": score, "side": side, "prob": prob,
                          "hits": sum(1 for x in l5 if line is not None and x > line) if line is not None else None,"cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],

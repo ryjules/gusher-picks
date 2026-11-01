@@ -315,6 +315,13 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-lg { font-style: normal; background: var(--cyan); color: #04141a; border-radius: 4px; padding: 1px 7px; margin-right: 8px; font-size: .9rem; }
 .rc-foot { margin: -6px 2px 0; color: var(--muted); font-size: .82rem; }
 .rc-sub { font: 700 .75rem var(--f-display) !important; letter-spacing: .06em; text-transform: uppercase; margin-top: 10px !important; }
+.gbar { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
+.gbar button { font: 800 .95rem var(--f-display); letter-spacing: .04em; text-transform: uppercase; background: #0c1117; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; cursor: pointer; display: inline-flex; gap: 8px; align-items: baseline; }
+.gbar button small { font: 600 .8rem var(--f-body); color: var(--muted); text-transform: none; letter-spacing: 0; }
+.gbar button.on { background: var(--cyan); border-color: var(--cyan); color: #04141a; cursor: default; }
+.gbar button:not(.on):not([disabled]):hover { border-color: var(--gold); color: var(--gold); }
+.gbar button#to-props:not([disabled]) { border-color: var(--gold); }
+.gbar button[disabled] { opacity: .5; cursor: default; }
 .ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
 .srctabs button { display: grid; gap: 1px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 8px 16px; color: var(--muted); cursor: pointer; min-width: 130px; }
@@ -528,7 +535,9 @@ function render(g) {
   const strip = g.strip || [['Date / Time', g.date], ['Location', g.location + (g.neutral ? ' (neutral)' : '')], ['Weather', g.weather], ['Surface', g.surface],
     ['Off Rank', g.offRank], ['Def Rank', g.defRank], ['Overall Rank', g.overallRank]];
   if (!g.model && g.state === 'pre') banner += `<div class="banner post">These teams haven't played a game this season yet, so stats and model picks fill in after their first games.</div>`;
-  $('board').innerHTML = `${banner}<div class="scroll"><div class="inner">
+  const np = LEAGUES[league].cats && g.state === 'pre' ? (g.props || []).filter(p => p.line != null).length : 0;
+  const gbar = LEAGUES[league].cats ? `<div class="gbar"><button type="button" class="on" aria-pressed="true">Matchup board</button><button type="button" id="to-props" ${np ? '' : 'disabled'}>Player props for this game <small>${np ? np + ' props' : g.state === 'pre' ? 'none posted yet' : 'game started'}</small> →</button></div>` : '';
+  $('board').innerHTML = `${gbar}${banner}<div class="scroll"><div class="inner">
     <div class="teams">${teamBlock(L, 'home')}${teamBlock(R, 'away')}</div>
     <div class="strip" style="grid-template-columns:repeat(${strip.length}, minmax(0, 1fr))">${strip.map(([k, v]) => `<div><span>${esc(k)}</span><b>${stripVal(v, L, R)}</b></div>`).join('')}</div>
     <div class="lines">
@@ -548,6 +557,7 @@ function render(g) {
   </div></div>`;
   $('board').querySelectorAll('[data-add]').forEach(b => b.onclick = () => openAdd(fromGame(findGame(league, b.dataset.g), b.dataset.add)));
   document.querySelectorAll('.game-btn').forEach(b => b.setAttribute('aria-current', b.dataset.id === g.id));
+  const tp = $('to-props'); if (tp) tp.onclick = () => { pgame = g.id; setMode('props'); };
 }
 
 function picks(g) {
@@ -780,15 +790,17 @@ function renderProps() {
   }).join('');
   const opts = games.map(g => `<option value="${esc(g.id)}" ${pgame === g.id ? 'selected' : ''}>${esc(g.away.abbr)} @ ${esc(g.home.abbr)} (${esc(g.date.split(' · ')[1].replace(' ET', ''))})</option>`).join('');
   $('board').innerHTML = `<div class="props">
+    ${pgame !== 'all' && findGame(league, pgame) ? `<div class="gbar"><button type="button" id="to-board">← ${esc(findGame(league, pgame).away.abbr)} @ ${esc(findGame(league, pgame).home.abbr)} matchup board</button><button type="button" class="on" aria-pressed="true">Player props for this game</button></div>` : ''}
     <div class="pbar"><h2>${esc(C)}</h2>
       <label class="st" for="gsel">Game <select class="gsel" id="gsel"><option value="all">All games</option>${opts}</select></label></div>
     <div class="cats" role="group" aria-label="Prop type">${LEAGUES[league].cats.map(c => `<button type="button" data-c="${esc(c)}" aria-pressed="${c === C}">${esc(c)}</button>`).join('')}</div>
     <div class="scroll"><table class="ptab" style="min-width:1040px"><thead><tr><th></th><th>Score</th><th>Line</th><th>Player</th><th>Opponent</th><th>Matchup</th><th>Hit Rate</th><th>${esc(STATLBL[C])}/L5</th><th>L5 ${esc(STATLBL[C])}</th><th>Edge</th><th></th></tr></thead>
       <tbody>${body || `<tr><td colspan="11" class="dash">No upcoming players in this category.</td></tr>`}</tbody></table></div>
-    <p class="pnote">Lines are DraftKings (via ESPN); the price in parentheses is Kalshi's fair price at that line, and ▲▼ shows where the line opened. Score (0–10) blends my projection with the market and rates the edge left over: 10 means at least 12 points better than the market. The market is Kalshi's price, or an even-money line at DraftKings' number when Kalshi has none. The further a line sits from a player's recent form, the less weight my projection gets, because that gap usually comes from injury or role news; those rows are flagged. Edge is the leftover difference. Matchup (0–10): higher is easier; opponent rank 1st allows the least. Green chips and averages beat the line in the pick's direction. Players listed Out or Doubtful are left off; players with no posted line are at the bottom.</p>
+    <p class="pnote">Lines are DraftKings (via ESPN); the price in parentheses is Kalshi's fair price at that line, and ▲▼ shows where the line opened. Score (0–10) blends my projection with the market and rates the edge left over: 10 means at least 12 points better than the market. The market is Kalshi's price, or an even-money line at DraftKings' number when Kalshi has none. The further a line sits from a player's recent form, the less weight my projection gets, because that gap usually comes from injury or role news; those rows are flagged. Edge is the leftover difference. Matchup (0–10): higher is easier; opponent rank 1st allows the least. Green chips and averages beat the line in the pick's direction. Players listed Out or Doubtful are left off; players with no posted line are at the bottom. Touchdowns work differently: the score ranks how likely the player is to score (his TD rate, hit rate and the matchup), and Edge says whether the price is worth it; a likely scorer at a short price is a Fade.</p>
   </div>`;
   $('board').querySelectorAll('.cats button').forEach(b => b.onclick = () => { cat[league] = b.dataset.c; renderProps(); });
   $('gsel').onchange = e => { pgame = e.target.value; renderProps(); };
+  const tb = $('to-board'); if (tb) tb.onclick = () => { current[league] = pgame; setMode('games'); };
   $('board').querySelectorAll('[data-p]').forEach(b => b.onclick = () => openAdd(fromProp(rows[+b.dataset.p])));
 }
 
