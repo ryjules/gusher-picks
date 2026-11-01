@@ -96,7 +96,7 @@ td.rank { font-weight: 700; }
 .conf span { font: 700 .9rem var(--f-display); letter-spacing: .06em; color: var(--muted); text-transform: uppercase; }
 .conf b { font: 800 1.9rem var(--f-display); }
 .conf em { font: 800 1.15rem var(--f-display); font-style: normal; text-transform: uppercase; }
-.c-hi { color: var(--win); } .c-md { color: var(--gold); } .c-lo { color: var(--loss); }
+.c-hi { color: var(--win); } .c-md { color: var(--gold); } .c-pass { color: var(--hot); } .c-lo { color: var(--loss); }
 .model { padding: 10px 26px 14px; color: var(--muted); font-size: .9rem; line-height: 1.5; border-top: 1px solid var(--line); }
 .model b { color: var(--ink); }
 .search { font: 600 .95rem var(--f-body); background: var(--board); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; width: 100%; }
@@ -303,6 +303,16 @@ details.grp > summary::-webkit-details-marker { display: none; }
 details.grp > summary::before { content: '▾'; color: var(--muted); font-size: .9rem; transition: transform .15s; display: inline-block; }
 details.grp:not([open]) > summary::before { transform: rotate(-90deg); }
 details.grp > summary:hover { color: var(--cyan); }
+.recap { background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.recap > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.recap > summary::-webkit-details-marker { display: none; }
+.recap > summary span { font: 800 1.15rem var(--f-display); text-transform: uppercase; color: var(--gold); }
+.recap > summary b { font: 800 1.2rem var(--f-display); }
+.rc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 10px; }
+.rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
+.rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
+.rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.rc-sub { font: 700 .75rem var(--f-display) !important; letter-spacing: .06em; text-transform: uppercase; margin-top: 10px !important; }
 .ph { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .srctabs { display: inline-flex; background: #0c1117; border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
 .srctabs button { display: grid; gap: 1px; text-align: left; background: transparent; border: 0; border-radius: 7px; padding: 8px 16px; color: var(--muted); cursor: pointer; min-width: 130px; }
@@ -469,11 +479,11 @@ function modelText(g, L, R) {
 
 function confCell(g, kind, label, c) {
   const [score, call] = c;
-  const cls = score >= 7 ? 'c-hi' : score >= 4 ? 'c-md' : 'c-lo';
+  const cls = score >= 7 ? 'c-hi' : score >= 4 ? 'c-md' : score >= 2 ? 'c-pass' : 'c-lo';  // Pass: orange from 2, red below
   const canAdd = g.state === 'pre' && g.model && (kind !== 'moneyline' || g.model.mlSide) && (kind !== 'spread' || g.model.spreadSide) && (kind !== 'total' || g.model.totalSide);
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
-  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? ' ' + sideName(pk.valueSide) : ''}${pk.trend ? ` · Trends ${pk.trend > 0 ? '+' : ''}${pk.trend.toFixed(1)}` : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}</small>` : '';
+  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? ' ' + sideName(pk.valueSide) : ''}${pk.trend ? ` · Trends ${pk.trend > 0 ? '+' : ''}${pk.trend.toFixed(1)}` : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
   return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 
@@ -990,7 +1000,7 @@ function confTable(list) {
     const u = ps.reduce((a, p) => a + u1(p), 0);
     return `<td><b>${w}-${l}${pu ? '-' + pu : ''}</b> <span class="${u > 0 ? 'pos' : u < 0 ? 'neg' : ''}">${usign(u)}</span>${w + l ? `<small>${Math.round(100 * w / (w + l))}%</small>` : ''}</td>`;
   };
-  const tiers = [['7+ Play', p => p.score >= 7], ['4–7 Lean', p => p.score >= 4 && p.score < 7], ['…Leans we took', p => p.score >= 4 && p.score < 7 && p.verdict !== 'Fade'], ['…Leans we faded', p => p.score >= 4 && p.score < 7 && p.verdict === 'Fade']];
+  const tiers = [['7+ Play', p => p.score >= 7], ['4–7 Lean', p => p.score >= 4 && p.score < 7], ['…Leans we took', p => p.score >= 4 && p.score < 7 && p.verdict !== 'Fade'], ['…Leans we faded', p => p.score >= 4 && p.score < 7 && p.verdict === 'Fade'], ['Under 4 Pass', p => p.score < 4]];
   const kindOf = p => ({ ml: 'ml', spread: 'spread', total: 'total', prop: 'prop' })[p.grade?.kind] || 'other';
   const cols1 = [['All', () => true], ...Object.entries(LEAGUES).map(([k, v]) => [v.short, p => p.league === k])];
   const cols2 = [['Moneyline', p => kindOf(p) === 'ml'], ['Spread', p => kindOf(p) === 'spread'], ['Total', p => kindOf(p) === 'total'], ['Props', p => kindOf(p) === 'prop']];
@@ -998,7 +1008,7 @@ function confTable(list) {
     ${tiers.map(([n, f]) => `<tr class="${n.startsWith('…') ? 'sub' : ''}"><th>${esc(n)}</th>${cols.map(([, cf]) => cell(done.filter(p => f(p) && cf(p)))).join('')}</tr>`).join('')}</tbody></table></div>`;
   return `<div class="ctab"><div class="ch-h"><span>Results by confidence level</span><small>${done.length} graded${pending ? ` · ${pending} pending` : ''}</small></div>
     ${done.length ? table('By sport', cols1) + table('By bet type', cols2) : '<p class="ch-empty">Fills in as picks are graded.</p>'}
-    <p class="ch-empty">Every pick scored 4 or higher, graded at 1 unit at the price when it was logged, including Leans the model faded (those show how the Lean side did: if they lose, fading was right). Use it to see which score ranges, sports and bet types to trust.</p></div>`;
+    <p class="ch-empty">Every game the model scored, graded at 1 unit at the price when it was logged on the side it leaned. Faded Leans and Passes aren't bet: if they lose, sitting them out was right. Use it to see which score ranges, sports and bet types to trust.</p></div>`;
 }
 
 // One small profit graph per sport, under the combined graph; tapping one filters the page to that sport.
@@ -1018,6 +1028,20 @@ function sportCards(list) {
       ${done.length ? `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="${esc(v.short)} profit over time, ${money(prof)}"><line x1="0" x2="${W}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" class="ch-zero" vector-effect="non-scaling-stroke"></line><polyline points="${line}" class="ch-line ${cls || 'pos'}" vector-effect="non-scaling-stroke"></polyline></svg>` : '<em>No graded plays yet</em>'}</button>`;
   }).join('');
   return cards ? `<div class="spcs">${cards}</div>` : '';
+}
+
+// Recap of the model's last graded day: what went wrong, what worked, and what the model is adjusting.
+function recapCard() {
+  const r = DATA.recap;
+  if (!r) return '';
+  const t = r.takes, li = xs => xs.map(x => `<li>${esc(x)}</li>`).join('');
+  return `<details class="recap" open><summary><span>Recap · ${esc(prettyDay(r.day))}</span><b class="${t.u > 0 ? 'pos' : t.u < 0 ? 'neg' : ''}">${t.w}-${t.l}${t.p ? '-' + t.p : ''} · ${t.u > 0 ? '+' : ''}${t.u.toFixed(2)}u</b></summary>
+    <div class="rc-grid">
+      ${r.wrong.length ? `<div><h4 class="neg">What went wrong</h4><ul>${li(r.wrong)}</ul>${r.misses.length ? `<p class="rc-sub">Biggest misses</p><ul>${li(r.misses)}</ul>` : ''}</div>` : ''}
+      ${r.right.length || r.hits.length ? `<div><h4 class="pos">What worked</h4>${r.right.length ? `<ul>${li(r.right)}</ul>` : ''}${r.hits.length ? `<p class="rc-sub">Best hits</p><ul>${li(r.hits)}</ul>` : ''}</div>` : ''}
+      <div><h4>What the model is adjusting</h4>${r.calibration.length ? `<ul>${li(r.calibration)}</ul>` : `<p>${esc(r.note || 'No changes yet.')}</p>`}
+        <p class="rc-sub">Each sport and bet type's confidence is scaled by how its graded picks have done (between ×0.80 and ×1.15), so results feed back into future scores. Not every game gets a pick: Leans need 5+ to become a Take.</p></div>
+    </div></details>`;
 }
 
 function renderPlays() {
@@ -1096,6 +1120,7 @@ function renderPlays() {
     </div>
     ${form}
     ${s.settledN ? '' : sportSw}
+    ${src === 'model' ? recapCard() : ''}
     ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, or half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
     ${empty ? `<div class="empty"><b>No ${esc(sportWord)}plays ${esc(when)}</b>
         <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>

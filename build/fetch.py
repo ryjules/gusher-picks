@@ -804,6 +804,42 @@ def injury_notes(g, side):
 # BACKFILL_DAY=YYYY-MM-DD (Eastern) logs model picks for college games on that day that finished before the
 # pick log existed: stats come only from earlier games and prices are the closing DraftKings line.
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
+KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
+
+
+def load_calibration(path):
+    """Learn a confidence multiplier per (league, bet type) from graded model picks.
+
+    Every logged 4+ pick counts (Takes and faded Leans), graded on the model's side at 1 unit at its logged price. A side that wins
+    units (positive ROI) earns a slightly higher multiplier, one that loses units a lower one. Small
+    samples barely move it (shrunk by n / (n + 30)), it needs 12 graded picks to start, and it stays within
+    0.80-1.15, so one bad night can't swing the model; a pattern over weeks will.
+    """
+    try:
+        with open(path) as f:
+            picks = json.load(f).get("picks", [])
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}, {}
+    tally = {}
+    for p in picks:
+        kind = KIND_OF.get((p.get("grade") or {}).get("kind"))
+        if not kind or p.get("result") not in ("W", "L") or (p.get("score") or 0) < 4:
+            continue
+        t = tally.setdefault((p["league"], kind), [0, 0, 0.0])
+        t[0 if p["result"] == "W" else 1] += 1
+        pr = p.get("price") or -110
+        t[2] += (pr / 100 if pr > 0 else 100 / -pr) if p["result"] == "W" else -1
+    cal = {}
+    for key, (w, l, u) in tally.items():
+        n = w + l
+        if n < 12:
+            continue
+        raw = 1 + 0.8 * (u / n)  # units won per pick (ROI): at -110, +0.1 ROI is about a 57.6% hit rate
+        cal[key] = round(max(0.80, min(1.15, 1 + (raw - 1) * n / (n + 30))), 3)
+    return cal, {f"{k[0]}-{k[1]}": v for k, v in tally.items()}
+
+
+CAL, CAL_TALLY = load_calibration(sys.argv[3]) if len(sys.argv) > 3 else ({}, {})
 et_day = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d")
 CUR = {}
 OUT_DATA = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")}
@@ -1635,6 +1671,8 @@ def blend_confidence(lg, g, n):
             sig += 0.35 * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
         sig += tr
+        cal = CAL.get((lg, kind), 1.0)  # learned from this league's graded picks of this bet type
+        sig *= cal
         side = pos if sig > 0 else ("home" if kind != "total" else "under")
         x = abs(sig)
         # Soft ceiling above 7: stacked signals still read as a strong Play, but 10.0 means nearly everything agrees.
@@ -1661,7 +1699,7 @@ def blend_confidence(lg, g, n):
             score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most, not a Play
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
-                      "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1)}
+                      "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal}
     g["confidence"], g["pick"] = conf, pick
 
 
@@ -1764,7 +1802,8 @@ def analyze_game(lg, g, kind, nteams):
     if score >= 7:
         verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
     elif score >= 4:
-        verdict = "Take" if (not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
+        # Not every game needs a play: a Lean becomes a Take only from 5 up, with nothing against it.
+        verdict = "Take" if (score >= 5 and not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
@@ -1920,7 +1959,8 @@ def update_history(path_in, path_out):
                 # Every 4+ pick is logged so results can be broken out by confidence; the model P&L counts
                 # only Takes. A pick logged as a Fade that later turns into a Take is re-logged at the new price.
                 old = hist.get(pid)
-                if (take or a["score"] >= 4) and (not old or (take and old.get("verdict") not in ("Take", "Take small"))):
+                # Passes (under 4) are logged too, so the results table can show whether passing was right.
+                if not old or (take and old.get("verdict") not in ("Take", "Take small")):
                     try:
                         pk = pick_from_game(lg, g, kind, a)
                     except (KeyError, TypeError):
@@ -1961,6 +2001,68 @@ def update_history(path_in, path_out):
         with open(path_out, "w") as f:
             json.dump({"updated": now, "picks": picks, "pregame": snaps}, f, separators=(",", ":"))
     print("history", len(picks), "picks;", added, "new;", graded, "graded", file=sys.stderr)
+
+
+def build_recap():
+    """Recap of the last day with graded model picks: results, what went wrong, and calibration changes."""
+    hist = OUT_DATA.get("modelHistory") or []
+    graded = [p for p in hist if p.get("result")]
+    if not graded:
+        return
+    day = max(p["date"] for p in graded)
+    passes = [p for p in graded if p["date"] == day and p["score"] < 4 and p["grade"]["kind"] != "prop"]
+    dayp = [p for p in graded if p["date"] == day and p["score"] >= 4]
+    units = lambda p: (0 if p["result"] in ("P", "V") else -1 if p["result"] == "L" else
+                       (p["price"] / 100 if p["price"] > 0 else 100 / -p["price"]))
+    rec = lambda ps: {"w": sum(p["result"] == "W" for p in ps), "l": sum(p["result"] == "L" for p in ps),
+                      "p": sum(p["result"] in ("P", "V") for p in ps), "u": round(sum(units(p) for p in ps), 2)}
+    takes = [p for p in dayp if p["verdict"] in ("Take", "Take small") and p["grade"]["kind"] != "ml"]
+    name = {"ml": "Moneylines", "spread": "Spreads", "total": "Totals", "prop": "Props"}
+    lgname = {"cfb": "CFB", "nfl": "NFL", "nba": "NBA", "cbb": "CBB"}
+    groups = {}
+    for p in dayp:
+        groups.setdefault((p["league"], p["grade"]["kind"]), []).append(p)
+    wrong, right = [], []
+    for (lg, kind), ps in sorted(groups.items()):
+        r = rec(ps)
+        if r["w"] + r["l"] < 3:
+            continue
+        hi = [p for p in ps if p["score"] >= 7]
+        rh = rec(hi)
+        label = f"{lgname[lg]} {name[kind].lower()}"
+        if r["u"] <= -1.5:
+            extra = f"; the 7+ ones went {rh['w']}-{rh['l']}" if len(hi) >= 2 and rh["u"] < 0 else ""
+            wrong.append(f"{label} went {r['w']}-{r['l']} ({r['u']:+.1f}u){extra}.")
+        elif r["u"] >= 1.5:
+            right.append(f"{label} went {r['w']}-{r['l']} ({r['u']:+.1f}u).")
+    hi, lo = [p for p in dayp if p["score"] >= 7], [p for p in dayp if 4 <= p["score"] < 7]
+    rh, rl = rec(hi), rec(lo)
+    if len(hi) >= 4 and len(lo) >= 4 and rh["w"] / max(1, rh["w"] + rh["l"]) < rl["w"] / max(1, rl["w"] + rl["l"]):
+        wrong.append(f"Higher scores did worse: 7+ picks went {rh['w']}-{rh['l']} while 4-7 Leans went {rl['w']}-{rl['l']}.")
+    fades = [p for p in dayp if p["verdict"] == "Fade"]
+    rf = rec(fades)
+    if rf["w"] + rf["l"] >= 3:
+        (right if rf["l"] > rf["w"] else wrong).append(
+            f"Faded Leans went {rf['w']}-{rf['l']} on their own side, so fading them was {'right' if rf['l'] > rf['w'] else 'a mistake'}.")
+    rp = rec(passes)
+    if rp["w"] + rp["l"] >= 5:
+        hit = rp["w"] / (rp["w"] + rp["l"])
+        (right if hit <= 0.55 else wrong).append(
+            f"Passes (under 4) went {rp['w']}-{rp['l']} on their lean side, so {'sitting them out was right' if hit <= 0.55 else 'some of them were worth playing'}.")
+    misses = sorted([p for p in takes if p["result"] == "L"], key=lambda p: -p["score"])[:3]
+    hits = sorted([p for p in takes if p["result"] == "W"], key=lambda p: -p["score"])[:3]
+    changes = []
+    for (lg, kind), m in sorted(CAL.items()):
+        if abs(m - 1) >= 0.02:
+            w, l, u = CAL_TALLY.get(f"{lg}-{kind}", [0, 0, 0.0])
+            changes.append(f"{lgname[lg]} {kind}s scored x{m:.2f} ({w}-{l}, {u:+.1f}u graded so far)")
+    OUT_DATA["recap"] = {
+        "day": day, "takes": rec(takes), "all": rec(dayp), "passes": rec(passes), "wrong": wrong, "right": right,
+        "misses": [f"{p['matchup']} {p['play']} ({p['score']:.1f}, {p['price']:+g})" for p in misses],
+        "hits": [f"{p['matchup']} {p['play']} ({p['score']:.1f}, {p['price']:+g})" for p in hits],
+        "calibration": changes,
+        "note": "Calibration needs 12 graded picks per sport and bet type before it moves, and it moves slowly." if not changes else "",
+    }
 
 
 # --- data check: cross-check ESPN against independent sources -------------------------------
@@ -2331,6 +2433,7 @@ def run_checks():
 run_checks()
 attach_analysis()
 update_history(sys.argv[3] if len(sys.argv) > 3 else None, sys.argv[4] if len(sys.argv) > 4 else None)
+build_recap()
 
 with open(OUT, "w") as f:
     json.dump(OUT_DATA, f, separators=(",", ":"))
