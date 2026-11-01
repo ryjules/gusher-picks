@@ -1694,9 +1694,12 @@ LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
+REC_W_LG = {"nfl": float(os.environ.get("GP_RECW_NFL", 1.5))}
 POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
+POW_W_LG = {"nfl": float(os.environ.get("GP_POWW_NFL", 1.0))}
+SIDE_DEAD = {"nfl": float(os.environ.get("GP_SD_NFL", 0.15))}  # rank gaps (share of the league) too small to matter on sides
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
-SIDE_SCALE = {"cfb": 14, "nfl": 14, "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
+SIDE_SCALE = {"cfb": 14, "nfl": float(os.environ.get("GP_SS_NFL", 18)), "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
 TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
 TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
 TOT_WILD_CAP = 6.0
@@ -1706,6 +1709,7 @@ MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that cou
 MOVE_W = 0.75  # most a line move can add
 NEUTRAL_ROWS = {"Pace"}
 ROW_W = {"Penalties": 0.25}  # weight in the "better in more stat categories" count
+MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.6)), "nba": 0.5, "cbb": 0.6}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -1756,10 +1760,13 @@ def stat_matchup(lg, g, nteams):
             # Mostly the last 3 games, with the full season mixed in so one hot or cold stretch can't carry the matchup.
             away_mm = L3_WEIGHT * away_mm + (1 - L3_WEIGHT) * (SR[dfn][1] - SR[off][0]) / nteams
             home_mm = L3_WEIGHT * home_mm + (1 - L3_WEIGHT) * (SR[dfn][0] - SR[off][1]) / nteams
-        tot += wt * (away_mm - home_mm)
+        sdz = SIDE_DEAD.get(lg, 0.0)
+        sd_ = lambda x: math.copysign(max(0.0, abs(x) - sdz), x)
+        tot += wt * (sd_(away_mm) - sd_(home_mm))
         wsum += wt
         max_gap = max(max_gap, abs(away_mm), abs(home_mm))
-        gap_a, gap_h = max(gap_a, away_mm), max(gap_h, home_mm)
+        if unit in MISMATCH_UNITS:  # TDs and sacks swing too much to call a mismatch 'massive' on their own
+            gap_a, gap_h = max(gap_a, away_mm), max(gap_h, home_mm)
         if unit != "pass protection":  # volume units: both offenses beating both defenses points to the over
             dz = lambda x: math.copysign(max(0.0, abs(x) - TOT_DEAD), x)  # only real gaps count, and by how big they are
             tot_gaps[unit] = (dz(away_mm), dz(home_mm), ao, hd, ho, ad)
@@ -1801,12 +1808,14 @@ def stat_matchup(lg, g, nteams):
         u = tot / wsum
         share = a_better / (a_better + h_better) if a_better + h_better else 0.5
         strength = SIDE_SCALE[lg] * u + SHARE_W * (share - 0.5)  # > 0 favors the away team; share = rows where the away team ranks better
+        parts = {"units": round(SIDE_SCALE[lg] * u, 2), "share": round(SHARE_W * (share - 0.5), 2)}
         rec_notes = []
         ia = g.get("injAdj")
         if ia and lg in LINE_PTS:
             # Injuries move the expected margin; convert those points into matchup strength.
             swing = (ia["home"]["off"] + ia["home"]["def"]) - (ia["away"]["off"] + ia["away"]["def"])  # > 0 helps the away team
             strength += swing / LINE_PTS[lg][0]
+            parts["injuries"] = round(swing / LINE_PTS[lg][0], 2)
             for sd in ("away", "home"):
                 cost = ia[sd]["off"] + ia[sd]["def"]
                 if cost >= 0.5:
@@ -1816,6 +1825,7 @@ def stat_matchup(lg, g, nteams):
             # College road teams struggle ("you have to play a perfect game to win on the road"): lean home.
             strength -= CFB_HOME_EDGE
         if lg == "nfl" and not g.get("neutral"):
+            parts["home"] = -NFL_HOME_EDGE
             strength -= NFL_HOME_EDGE  # home field is worth about a point and a half; the line already includes it
         for sd, sgn in (("away", -1), ("home", 1)):
             if (g.get("letdown") or {}).get(sd):
@@ -1827,7 +1837,9 @@ def stat_matchup(lg, g, nteams):
             (wa, la), (wh, lh) = g.get("wl") or [[0, 0], [0, 0]]
             if wa + la and wh + lh:
                 d = wa / (wa + la) - wh / (wh + lh)
-                strength += REC_W * d
+                rw = REC_W_LG.get(lg, REC_W)
+                strength += rw * d
+                parts["records"] = round(rw * d, 2)
                 if abs(d) >= 0.25:
                     better = g["away"] if d > 0 else g["home"]
                     rec_notes.append((f"Records: {g['away']['abbr']} {wa}-{la} vs {g['home']['abbr']} {wh}-{lh}",
@@ -1835,7 +1847,9 @@ def stat_matchup(lg, g, nteams):
             pw = g.get("power")
             if pw:
                 gap = pw[0] - pw[1]  # points per game, adjusted for strength of schedule
-                strength += max(-POW_W, min(POW_W, POW_W * gap / POWER_SCALE[lg]))
+                pwc = POW_W_LG.get(lg, POW_W)
+                strength += max(-pwc, min(pwc, pwc * gap / POWER_SCALE[lg]))
+                parts["power"] = round(max(-pwc, min(pwc, pwc * gap / POWER_SCALE[lg])), 2)
                 if abs(gap) >= POWER_SCALE[lg] / 3:
                     better = g["away"] if gap > 0 else g["home"]
                     rec_notes.append((f"Adjusted for opponents played, {better['abbr']} rates {abs(gap):.1f} points per game better",
@@ -1853,7 +1867,7 @@ def stat_matchup(lg, g, nteams):
         ml = base * ((150 / abs(price)) ** ML_FAV_EXP[lg] if price is not None and price <= -150 else 1.0)
         if price is not None and price > 100:
             ml *= (100 / price) ** 0.5  # an underdog has to win outright: +150 keeps 82%, +300 keeps 58%
-        out["moneyline"] = {"score": round(ml, 1), "side": side, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
+        out["moneyline"] = {"score": round(ml, 1), "side": side, "parts": parts, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
         if ln.get("spreadNum") is not None:
             line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
             k1, k2 = SM_SPREAD[lg]
