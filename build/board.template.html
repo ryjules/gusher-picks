@@ -610,7 +610,7 @@ function renderHome() {
   const pl = dbState === 'ready' && plays.length
     ? `<div class="pl-strip">${plCard('Today', plSince(today) - plays.filter(p => p.result && p.date > today).reduce((s, p) => s + unitsOf(p), 0) * UNIT(), 'day')}${plCard('This week', plSince(wk), 'week')}${plCard('This month', plSince(mo), 'month')}${plCard('All time', plSince('0000'), 'all')}</div>` : '';
   $('board').innerHTML = `<div class="topv">
-    <div class="home-h"><h2>Top Picks</h2><small>Upcoming games in all leagues · updated ${esc(DATA.generated.replace('T', ' ').replace('Z', ' UTC'))}</small></div>
+    <div class="home-h"><h2>Top Picks</h2><small>Upcoming games in all leagues · updated ${esc(new Date(DATA.generated.replace('Z', ':00Z')).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))} ET</small></div>
     ${pl}
     <div class="jumps" role="navigation" aria-label="Jump to a sport">${jump}</div>
     <p class="msg">Leans (4+) and plays (7+) for each sport, Take first. Props show scores of 5+ with lines near the player's form. Tap a pick for its full breakdown.</p>
