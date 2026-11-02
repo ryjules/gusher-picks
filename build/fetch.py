@@ -1386,6 +1386,8 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             return my_line >= 7
         ra_, rh_ = rat.get(away["id"]), rat.get(home["id"])
         power = [round(ra_[0] + ra_[1], 1), round(rh_[0] + rh_[1], 1)] if ra_ and rh_ else None
+        fnet = {t: v[0] + v[1] for t, v in rat.items()}
+        sos_pair = [sos_val(per_team.get(away["id"], []), away["id"], fnet), sos_val(per_team.get(home["id"], []), home["id"], fnet)]
 
         spread = pc.get("spread")  # home team's line
         total = pc.get("overUnder")
@@ -1491,7 +1493,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             "sections": sections, "confidence": confidence, "model": model,
             "state": status.get("state"), "score": score,
             "fbs": [away["id"] in agg, home["id"] in agg], "props": props, "final": final, "inj": inj,
-            "seasonRanks": season_ranks, "power": power, "wl": [wl(away["id"]), wl(home["id"])], "injAdj": inj_adj,
+            "seasonRanks": season_ranks, "power": power, "sosVal": sos_pair, "wl": [wl(away["id"]), wl(home["id"])], "injAdj": inj_adj,
             "letdown": {"away": letdown(away["id"]), "home": letdown(home["id"])},
         })
     enrich(key, slate)
@@ -1809,6 +1811,7 @@ def run_basketball(lg, key, start, groups):
                       "spreadNum": spread, "totalNum": total},
             "sections": sections, "confidence": confidence, "model": model, "state": status.get("state"),
             "score": score, "final": final, "props": props, "fbs": [True, True], "injAdj": inj_adj, "inj": inj,
+            "sosVal": [sos_val(per_team.get(away["id"], []), away["id"], net), sos_val(per_team.get(home["id"], []), home["id"], net)],
         })
     enrich(key, slate)
     OUT_DATA[key] = slate
@@ -2016,6 +2019,20 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
             "paint scoring": "paint defense"}
 
 
+SOS_W = {"cfb": 1.0, "nfl": 1.0, "nba": 1.5, "cbb": 1.5}  # most strength the schedule can add or take (football's power rating already credits schedule)
+SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
+SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
+
+
+def sos_val(gl, tid, net, n=5):
+    """Average rating (points per game vs average) of a team's last n opponents; unrated opponents count as the weakest."""
+    if not gl or not net:
+        return None
+    floor = min(net.values())
+    opp = [net.get(next((k for k in g["teams"] if k != tid), None), floor) for g in gl[-n:]]
+    return round(sum(opp) / len(opp), 2) if opp else None
+
+
 def stat_matchup(lg, g, nteams):
     """Data-driven confidence for each bet type, from offense-vs-defense unit matchups.
 
@@ -2099,6 +2116,21 @@ def stat_matchup(lg, g, nteams):
         strength = SIDE_SCALE[lg] * u + SHARE_W * (share - 0.5)  # > 0 favors the away team; share = rows where the away team ranks better
         parts = {"units": round(SIDE_SCALE[lg] * u, 2), "share": round(SHARE_W * (share - 0.5), 2)}
         rec_notes = []
+        sv = g.get("sosVal") or [None, None]
+        if None not in sv:
+            # Strength of schedule: stats piled up against weak opponents count for a bit less. It trims or adds to
+            # the stat read but can never be more than SOS_CAP of it, so the data still leads.
+            diff = sv[0] - sv[1]  # > 0: the away team's recent opponents were tougher
+            adj = SOS_W[lg] * max(-1.0, min(1.0, diff / SOS_SCALE[lg]))
+            adj = max(-SOS_CAP * abs(strength), min(SOS_CAP * abs(strength), adj))
+            if abs(adj) >= 0.05:
+                strength += adj
+                parts["schedule"] = round(adj, 2)
+            if abs(adj) >= 0.4:
+                tough, soft = ("away", "home") if diff > 0 else ("home", "away")
+                rec_notes.append((f"Schedule: {g[soft]['abbr']}'s recent opponents were weaker than {g[tough]['abbr']}'s "
+                                  f"({sv[0 if soft == 'away' else 1]:+.1f} vs {sv[0 if tough == 'away' else 1]:+.1f} points per game), "
+                                  f"so {g[soft]['abbr']}'s recent numbers count a bit less", tough))
         ia = g.get("injAdj")
         if ia and lg in LINE_PTS:
             # Injuries move the expected margin; convert those points into matchup strength.
