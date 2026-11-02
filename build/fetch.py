@@ -864,12 +864,15 @@ def rescore_prop(pr, key=None):
             hit_adj = OVER_TAX  # books shade over prices (the public bets overs), so an over needs a bit more
         else:
             hit_adj = 0.0
+        vac_bump = 0.0
+        if pr.get("bbVac"):  # a teammate's shots, boards or assists are up for grabs (JD: Durant out helps Miller's rebounds)
+            vac_bump = min(0.8, 0.2 + 2 * pr["bbVac"]["share"]) * (-1 if under else 1)
         if pr["cat"] == "3PT Made":
             # Threes swing on shooting luck, so the matchup (how well the defense has guarded the arc lately) counts
             # far more and the cushion less (fit to the Profit Hunt 3PT sheet).
-            pr["score"] = round(max(0.0, min(10.0, 1.875 + 2.81 * hit + 2.6 * cushion + 0.4 * m - hit_adj)), 1)
+            pr["score"] = round(max(0.0, min(10.0, 1.875 + 2.81 * hit + 2.6 * cushion + 0.4 * m - hit_adj + vac_bump)), 1)
         else:
-            pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10 - hit_adj)), 1)
+            pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10 - hit_adj + vac_bump)), 1)
         return
     s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
     if key in ("nfl", "cfb"):
@@ -1524,6 +1527,7 @@ BB_PROPS = [  # label, value from a player game, markets, opponent-allowed keys,
     ("Blk+Stl", lambda p: p["stl"] + p["blk"], "Total Steals and Blocks", ["stl", "blk"], 1),
 ]
 BB_COUNT = {"3PT Made", "Blk+Stl"}
+BB_VAC_MIN = 0.10  # share of the team's recent production (this stat) belonging to teammates now out
 BB_FLOOR = {"Points": 4, "Rebounds": 2, "Assists": 1.5, "PRA": 5, "Pts+Reb": 4.5, "Pts+Ast": 4.5, "Reb+Ast": 2.5}
 
 
@@ -1856,7 +1860,18 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
         latest = {}
         for gg in gl[-3:]:  # anyone from the last 3 games, so a player back from a missed game still gets lines
             latest.update(gg["teams"][tid].get("players", {}))
+        # Teammates newly out (they played in the last 3 games): their points, boards and assists go to whoever plays.
+        team_tot, gone_tot, gone_names = {}, {}, {}
+        for gg in gl[-3:]:
+            for q_id, q in (gg["teams"][tid].get("players") or {}).items():
+                for k in ("pts", "reb", "ast", "tpm"):
+                    team_tot[k] = team_tot.get(k, 0) + (q.get(k) or 0)
+                    if q_id in injured:
+                        gone_tot[k] = gone_tot.get(k, 0) + (q.get(k) or 0)
+                        gone_names[q_id] = q.get("name")
         for label, val, market, okeys, min_avg in BB_PROPS:
+            tt = sum(team_tot.get(k, 0) for k in okeys)
+            vac_share = (sum(gone_tot.get(k, 0) for k in okeys) / tt) if tt and label != "Blk+Stl" else 0.0
             allowed = {t: sum((a["season"].get("o_" + k) or 0) for k in okeys) for t, a in agg.items()}
             rk = rank_map(allowed, False)  # 1st allows the least
             if label == "3PT Made":
@@ -1886,7 +1901,9 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                              "matchup": round(10 * (orank - 1) / (nteams - 1), 1) if orank and nteams > 1 else None,
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
                              "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
-                             "side": side, "prob": prob, "_hist": hist})
+                             "side": side, "prob": prob, "_hist": hist,
+                             **({"bbVac": {"share": round(vac_share, 2), "names": [n for n in gone_names.values() if n][:3]}}
+                                if vac_share >= BB_VAC_MIN else {})})
     return rows
 
 
@@ -2673,6 +2690,11 @@ def analyze_prop(p, g=None, lg=None):
             why.append(f"{who} {'is' if len(rt['names']) == 1 else 'are'} back from injury: his recent numbers came while they were out, so his {kind} should shrink.")
         else:
             warn.append(f"{who} {'is' if len(rt['names']) == 1 else 'are'} back from injury: his recent numbers came while they were out, so his {kind} should shrink.")
+    bv = p.get("bbVac")
+    if bv and lg in ("nba", "cbb"):
+        who = " and ".join(bv["names"][:2]) or "Teammates"
+        txt = f"{who} {'is' if len(bv['names']) == 1 else 'are'} out: about {bv['share']:.0%} of the team's recent {p['cat'].lower()} production is up for grabs"
+        (warn if under else why).append(txt + (", which pushes this toward the over." if under else ": more volume for him."))
     if lg in ("nfl", "cfb") and under and p.get("l5"):
         avg_l5 = sum(p["l5"]) / len(p["l5"])
         if p["cat"] == "Passing" and p["line"] < LOW_PASS_LINE:
@@ -2722,6 +2744,12 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nfl", "cfb") and p["cat"] == "Receptions" and p["score"] < REC_PROP_BAR:
         against.append("Catch counts swing on one or two targets, so receptions need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif (pnum(p.get("kalshiOdds")) or 0) <= PROP_MAX_JUICE:
+        against.append(f"Price is too heavy ({p['kalshiOdds']}): laying that much juice eats the edge.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg in ("nba", "cbb") and p["cat"] == "Assists" and p.get("side") == "Over" and (p["line"] <= LOW_AST_LINE or p.get("pos") == "C"):
+        against.append("Assist overs need a real distributor: not a center, and not a 1-2 assist line.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and p.get("kalshiP") is None and p.get("line") is not None and (p.get("edge") or 0) <= 0:
         # The line sits so far from his form that the model gives itself no weight: the book likely knows about a
         # role or minutes change, or the price is heavily juiced (lines like o0.5). Not a bet without an edge.
@@ -2748,6 +2776,8 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": []}
 
 
+PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
+LOW_AST_LINE = 2.5  # assist overs at or below this line are not bets
 PROP_WARN_BAR = 8.5  # a prop with a warning stays a (small) Take only from here up
 
 
