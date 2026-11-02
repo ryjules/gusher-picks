@@ -1899,6 +1899,7 @@ TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
 LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
 LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
+PACE1_UNDER = 0.5  # trim on an under against the #1 pace team
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
 PROP_SMALL_BELOW = 8.0  # props from the 7.5 bar up to this are Small bets
@@ -2036,6 +2037,14 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
 SOS_W = {"cfb": 1.0, "nfl": 1.0, "nba": 1.5, "cbb": 1.5}  # most strength the schedule can add or take (football's power rating already credits schedule)
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
+
+
+def fastest_pace(g):
+    """Teams in this game ranked #1 in recent pace (basketball boards' Team Pace L5 rank)."""
+    r = next((r for sec in g.get("sections") or [] for r in sec["rows"] if r[0] == "Team Pace"), None)
+    if not r:
+        return []
+    return [g[sd]["abbr"] for sd, rk in (("away", r[1][4]), ("home", r[2][0])) if rk == 1]
 
 
 def stat_matchup(lg, g, nteams):
@@ -2438,6 +2447,8 @@ def blend_confidence(lg, g, n):
             if kind == "total" and score > 8:
                 score = 8 + 0.75 * (score - 8)
             score = round(min(10.0, score), 1)
+        if kind == "total" and SPORT[lg] == "bb" and side == "under" and fastest_pace(g):
+            score = round(max(0.0, score - PACE1_UNDER), 1)  # JD: avoid unders against the #1 pace team
         ln = g["lines"]
         if kind == "total":
             call = f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}" if ln.get("totalNum") is not None else None
@@ -2518,6 +2529,8 @@ def analyze_game(lg, g, kind, nteams):
         if SPORT[lg] == "fb" and not w["indoor"] and (w["rain"] >= 40 or w["wind"] >= 15):
             wx = f"{w['rain']}% rain, {w['wind']} mph wind in the forecast"
             (warn.append(f"Weather: {wx} can slow scoring.") if side == "over" else why.append(f"Weather helps the under: {wx}."))
+        if SPORT[lg] == "bb" and side == "under" and fastest_pace(g):
+            warn.append(f"{' and '.join(fastest_pace(g))} {'plays' if len(fastest_pace(g)) == 1 else 'play'} the fastest pace in the league lately: extra possessions are risky for an under.")
         if side == "under" and ln["totalNum"] <= LOW_TOTAL[lg]:
             warn.append(f"Low total ({ln['totalNum']:g}): one big quarter can bust an under.")
     else:
