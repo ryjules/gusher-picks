@@ -2635,6 +2635,11 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nfl", "cfb") and p["cat"] == "Receptions" and p["score"] < REC_PROP_BAR:
         against.append("Catch counts swing on one or two targets, so receptions need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg in ("nba", "cbb") and p.get("kalshiP") is None and p.get("line") is not None and (p.get("edge") or 0) <= 0:
+        # The line sits so far from his form that the model gives itself no weight: the book likely knows about a
+        # role or minutes change, or the price is heavily juiced (lines like o0.5). Not a bet without an edge.
+        against.append("The line is far from his usual numbers, so the model can't claim an edge: likely role news or a heavy price.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and p["cat"] == "Rebounds" and p["score"] < REB_PROP_BAR:
         against.append("Rebound counts swing on missed shots and minutes, so rebounds need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
@@ -2676,6 +2681,18 @@ def one_prop_per_player(g):
             a["against"].append(f"Already playing his {best[p['pid']]['cat']} prop: one bet per player, since his numbers move together.")
 
 
+MAX_3PT_TAKES = 2  # per game: threes rise and fall together on a hot or cold shooting night
+
+
+def cap_threes(g):
+    """3-pointer props in one game move together (pace, shooting luck, a blowout), so only the best two stay Takes."""
+    tk = sorted([p for p in g.get("props") or [] if p["cat"] == "3PT Made" and (p.get("analysis") or {}).get("verdict", "").startswith("Take")],
+                key=lambda p: -p["score"])
+    for p in tk[MAX_3PT_TAKES:]:
+        p["analysis"]["verdict"] = "Fade"
+        p["analysis"]["against"].append("Already two 3-pointer plays in this game: threes rise and fall together on one shooting night.")
+
+
 def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
@@ -2686,6 +2703,7 @@ def attach_analysis():
             for p in g.get("props") or []:
                 p["analysis"] = analyze_prop(p, g, key)
             one_prop_per_player(g)
+            cap_threes(g)
 
 
 # --- model picks history: hypothetical P/L of every green (Take) pick ---------------------
