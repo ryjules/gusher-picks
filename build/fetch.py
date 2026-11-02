@@ -1083,6 +1083,8 @@ BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
+REB_PROP_BAR = 8.0  # basketball rebounds props: Takes went 1-4 over the first two slates
+REB_BIG_LINE = 6.5  # rebound lines from here up are big men
 REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
 LOW_PASS_LINE = 215.5  # QB passing unders below this carry a warning
 LOW_SKILL_LINE = {"Rushing": 40.5, "Receiving": 35.5, "Rush + Rec": 50.5, "Receptions": 3.5}  # unders below these lose 0.5
@@ -2549,6 +2551,16 @@ def analyze_prop(p, g=None, lg=None):
             # Position players need the game plan and targets to come their way, so a low line is less of a giveaway.
             p["score"] = round(max(0.0, p["score"] - 0.5), 1)
             against.append(f"Low line ({p['line']:g}): one big play beats an under, so the score is trimmed slightly.")
+    if lg in ("nfl", "cfb") and under and p["cat"] == "Receptions":
+        # Catch-count unders went 1-4 in the first full slate (only the RB won): a receiver who gets 10+ targets
+        # clears a small catch line even on a quiet day, so these get a small trim.
+        p["score"] = round(max(0.0, p["score"] - 0.5), 1)
+        against.append("Receptions unders lose to one extra target, so the score is trimmed slightly.")
+    if lg in ("nba", "cbb") and under and p["cat"] == "Rebounds" and p["line"] >= REB_BIG_LINE:
+        # Big men's rebound unders went 0-4 on Nov 1 (Queta, Sharpe, Jackson, Kessler): a missed-shot-heavy game
+        # or extra minutes gives a center 3-4 extra boards fast.
+        p["score"] = round(max(0.0, p["score"] - 0.5), 1)
+        against.append("Rebound unders on bigs swing with missed shots and minutes, so the score is trimmed slightly.")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
     if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < BB_MIN_MPG:
@@ -2574,6 +2586,9 @@ def analyze_prop(p, g=None, lg=None):
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nfl", "cfb") and p["cat"] == "Receptions" and p["score"] < REC_PROP_BAR:
         against.append("Catch counts swing on one or two targets, so receptions need an 8.0+ read.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg in ("nba", "cbb") and p["cat"] == "Rebounds" and p["score"] < REB_PROP_BAR:
+        against.append("Rebound counts swing on missed shots and minutes, so rebounds need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb", "nfl", "cfb") and p["score"] < BB_PROP_BAR:
         verdict = "Fade" if p["score"] >= 4 else "Pass"  # NBA and NFL props need a 7.5+ read to be a play
