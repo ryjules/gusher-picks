@@ -2460,6 +2460,7 @@ def blend_confidence(lg, g, n):
         x = abs(sig)
         # Soft ceiling above 7: stacked signals still read as a strong Play, but 10.0 means nearly everything agrees.
         score = round(x if x <= 7 else min(10.0, 7 + 3 * (1 - math.exp(-(x - 7) / 3))), 1)
+        raw_score = score  # before the JD scale shift: the Large-bet check uses this
         if lg in ALIGN_BB:
             # Basketball scale nudged 35% toward JD's Profit Hunt boards (fit on the Nov 2 NBA slate): his reads sit nearer
             # the middle, so low and middle scores lift a little; totals above 8 ease back. Bets (6.3+) on sides are untouched.
@@ -2494,7 +2495,7 @@ def blend_confidence(lg, g, n):
             score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most, not a Play
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
-                      "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal}
+                      "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal, "raw": raw_score}
     # Heavy favorite (-400 or shorter) with the spread on the same team: the spread is the bet. The moneyline risks
     # 4+ to win 1, so it stays a Lean, and the spread gets a lift because that's where the data edge gets paid.
     ml, sp = pick.get("moneyline"), pick.get("spread")
@@ -2640,7 +2641,8 @@ def analyze_game(lg, g, kind, nteams):
         strong = score >= STRONG_READ and len(warn) <= 1
         verdict = "Take small" if ((warn and not strong) or oppose or score < SMALL_BELOW) else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
-        if (verdict == "Take" and kind != "moneyline" and score >= LARGE_BAR and not warn and not against
+        pk_raw = ((g.get("pick") or {}).get(kind) or {}).get("raw", score)  # the unshifted read (basketball scores are eased toward JD's scale)
+        if (verdict == "Take" and kind != "moneyline" and max(score, pk_raw) >= LARGE_BAR and not warn and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
                 and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1) and (pk.get("trend") or 0) >= 0
                 and not market_no):
