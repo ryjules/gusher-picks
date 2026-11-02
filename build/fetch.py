@@ -821,9 +821,20 @@ def rescore_prop(pr, key=None):
         # Basketball: how often he has cleared this line lately (newest games count most) and by how much his
         # last-5 average clears it, with the matchup as a light touch (fit to the Profit Hunt prop sheets).
         avg = sum(l5) / len(l5)
+        # Lines already move after a hot week, so the cushion uses half last-5, half season form.
+        avg = 0.5 * avg + 0.5 * (pr.get("season") if pr.get("season") is not None else avg)
         cushion = (pr["line"] - avg if under else avg - pr["line"]) / max(pr["line"], 1.0)
         cushion = max(-1.0, min(1.0, cushion))
-        pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10)), 1)
+        if not under:
+            hit_adj = OVER_TAX  # books shade over prices (the public bets overs), so an over needs a bit more
+        else:
+            hit_adj = 0.0
+        if pr["cat"] == "3PT Made":
+            # Threes swing on shooting luck, so the matchup (how well the defense has guarded the arc lately) counts
+            # far more and the cushion less (fit to the Profit Hunt 3PT sheet).
+            pr["score"] = round(max(0.0, min(10.0, 1.875 + 2.81 * hit + 2.6 * cushion + 0.4 * m - hit_adj)), 1)
+        else:
+            pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10 - hit_adj)), 1)
         return
     s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
     if key in ("nfl", "cfb"):
@@ -845,6 +856,8 @@ def rescore_prop(pr, key=None):
         if vc:  # a teammate's volume is up for grabs: more touches for this player
             bump = min(1.0, 0.5 + vc["share"])
             sc += -bump if under else bump
+        if not under:
+            sc -= OVER_TAX
         pr["score"] = round(max(0.0, min(10.0, sc)), 1)
         return
     pr["score"] = round(max(0.0, min(10.0, 0.6 * s_prob + 0.2 * 10 * hit + 0.2 * m)), 1)
@@ -1069,6 +1082,7 @@ def injury_notes(g, side):
 BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
+OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
 LOW_PASS_LINE = 215.5  # QB passing unders below this carry a warning
 LOW_SKILL_LINE = {"Rushing": 40.5, "Receiving": 35.5, "Rush + Rec": 50.5, "Receptions": 3.5}  # unders below these lose 0.5
@@ -1790,6 +1804,9 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
         for label, val, market, okeys, min_avg in BB_PROPS:
             allowed = {t: sum((a["season"].get("o_" + k) or 0) for k in okeys) for t, a in agg.items()}
             rk = rank_map(allowed, False)  # 1st allows the least
+            if label == "3PT Made":
+                # Threes: the defense's 3-point percentage allowed over its last 5 games (the board's Opp 3PT% rank).
+                rk = rank_map({t: a["l5"].get("o_p3") for t, a in agg.items() if a["l5"].get("o_p3") is not None}, False)
             orank = rk.get(opp["id"])
             lg_avg = sum(allowed.values()) / max(1, len(allowed))
             factor = min(1.15, max(0.85, allowed.get(opp["id"], lg_avg) / lg_avg)) if lg_avg else 1.0
