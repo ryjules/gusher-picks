@@ -1885,7 +1885,8 @@ run_basketball("mens-college-basketball", "cbb", date(2026, 11, 1), 50)
 # --- pick analysis: Take large / Take / Take small / Fade / Pass with reasons --------------------
 TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
-LARGE_BAR = 8.5  # a Take large needs at least this, with every signal agreeing
+LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
+LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
 def ordn(n):
     if n is None:
         return "—"
@@ -2546,10 +2547,11 @@ def analyze_game(lg, g, kind, nteams):
     is_mkt = lambda t: t.startswith(("Kalshi prices", "Line moved", "Total moved"))
     n_why, n_against = sum(1 for t in why if not is_mkt(t)), sum(1 for t in against if not is_mkt(t))
     if score >= 7:
-        verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
+        # Sizing manages risk without capping plays: any warning (low total, big spread, key injury) makes it a half-unit bet.
+        verdict = "Take small" if warn or oppose else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         if (verdict == "Take" and kind != "moneyline" and score >= LARGE_BAR and not warn and not against
-                and pk.get("statSide") == side and (pk.get("stat") or 0) >= 7
+                and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
                 and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1) and (pk.get("trend") or 0) >= 0
                 and not market_no):
             # Everything agrees: the stats are strong, the price model and trends point the same way, no warnings.

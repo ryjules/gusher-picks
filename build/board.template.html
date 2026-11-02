@@ -869,9 +869,12 @@ function renderHome() {
     const pp = propPicks.map((x, i) => [x, i]).filter(([x]) => x.lg === lg).slice(0, 8);
     const upcoming = (DATA[lg] || []).filter(g => g.state === 'pre').length;
     const takes = gp.filter(([x]) => x.a.verdict.startsWith('Take')).length + pp.filter(([x]) => x.a.verdict.startsWith('Take')).length;
+    // Units at risk across every bet in this sport (not just the ones listed): small 0.5, regular 1, large 2.
+    const SZ = { 'Take small': 0.5, 'Take': 1, 'Take large': 2 };
+    const risk = [...gamePicks.filter(x => x.lg === lg && x.kind !== 'moneyline'), ...propPicks.filter(x => x.lg === lg)].reduce((s, x) => s + (SZ[x.a.verdict] || 0), 0);
     const empty = !upcoming ? (lg === 'cbb' ? 'College basketball tips off November 3.' : 'No upcoming games on the board right now.') : 'No game has a strong edge right now. That\'s normal; most lines are close to fair.';
     return { lg, html: `<section class="sport" id="sport-${lg}">
-      <div class="sport-h"><h3>${esc(L.name)}</h3><small>${upcoming} upcoming game${upcoming === 1 ? '' : 's'}${takes ? ` · ${takes} Take${takes === 1 ? '' : 's'}` : ''}</small><button type="button" class="pbtn" data-golg="${lg}">Open ${esc(L.short)} board</button></div>
+      <div class="sport-h"><h3>${esc(L.name)}</h3><small>${upcoming} upcoming game${upcoming === 1 ? '' : 's'}${takes ? ` · ${takes} Take${takes === 1 ? '' : 's'}` : ''}${risk ? ` · ${+risk.toFixed(1)} units at risk` : ''}</small><button type="button" class="pbtn" data-golg="${lg}">Open ${esc(L.short)} board</button></div>
       <div class="sub-h">Game picks</div>
       <div class="picklist">${gp.map(([x, i]) => gameRow(x, i)).join('') || `<p class="empty">${esc(empty)}</p>`}</div>
       ${L.cats ? `<div class="sub-h">Player props</div><div class="picklist">${pp.map(([x, i]) => propRow(x, i)).join('') || '<p class="empty">No props stand out right now.</p>'}</div>` : ''}
