@@ -1979,6 +1979,8 @@ NFL_HOME_EDGE = 2.0  # about 1.2 points at the NFL points scale
 LETDOWN = 1.0  # strength taken off a team coming off a big upset win
 HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
+ALIGN_W = 0.35  # how far toward JD's scale (a slight shift)
+ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", "cbb")}  # JD ~ a + b * ours, Nov 2 NBA boards
 # NBA strength-to-points was 1.0: on the Nov 2 slate the market's lines ran 1.27x and the opponent-adjusted model 1.19x
 # the data's margins, so the data was understating real gaps (e.g. MEM-NO read 6.4 points; lines and model ~8-9).
 LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.25, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
@@ -2427,6 +2429,14 @@ def blend_confidence(lg, g, n):
         x = abs(sig)
         # Soft ceiling above 7: stacked signals still read as a strong Play, but 10.0 means nearly everything agrees.
         score = round(x if x <= 7 else min(10.0, 7 + 3 * (1 - math.exp(-(x - 7) / 3))), 1)
+        if lg in ALIGN_BB:
+            # Basketball scale nudged 35% toward JD's Profit Hunt boards (fit on the Nov 2 NBA slate): his reads sit nearer
+            # the middle, so low and middle scores lift a little; totals above 8 ease back. Bets (6.3+) on sides are untouched.
+            a, b = ALIGN_BB[lg]["total" if kind == "total" else "side"]
+            score += ALIGN_W * max(0.0, a + b * score - score)
+            if kind == "total" and score > 8:
+                score = 8 + 0.75 * (score - 8)
+            score = round(min(10.0, score), 1)
         ln = g["lines"]
         if kind == "total":
             call = f"{'Over' if side == 'over' else 'Under'} {ln['totalNum']:g}" if ln.get("totalNum") is not None else None
