@@ -681,7 +681,8 @@ function analyze(lg, g, kind) { return (g.analysis || {})[kind] || null; }
 function analyzeProp(p) { return p.analysis || null; }
 const VCLS = { 'Take large': 'v-large', 'Take': 'v-take', 'Take small': 'v-small', 'Fade': 'v-fade', 'Pass': 'v-pass' };
 const VTIP = { 'Take large': 'Everything agrees: strong stats, the price model and trends on the same side, no warnings. 2 units.', 'Take': 'The numbers line up and nothing raises a red flag.', 'Take small': 'Strong edge, but with warnings: use a smaller stake.', 'Fade': 'Skip it: the warnings or the market outweigh the edge.', 'Pass': 'No real edge.' };
-const vchip = v => `<span class="vchip ${VCLS[v]}" title="${esc(VTIP[v])}">${esc(v)}</span>`;
+const VLABEL = { 'Take small': 'Small bet', 'Take large': 'Large bet' };  // display names; the stored verdicts stay the same
+const vchip = v => `<span class="vchip ${VCLS[v]}" title="${esc(VTIP[v])}">${esc(VLABEL[v] || v)}</span>`;
 function reasonList(a) {
   return [...a.why.map(t => `<li class="r-yes">${esc(t)}</li>`), ...a.against.map(t => `<li class="r-no">${esc(t)}</li>`),
     ...a.warn.map(t => `<li class="r-warn">${esc(t)}</li>`), ...a.tips.map(t => `<li class="r-tip">${esc(t)}</li>`)].join('');
@@ -1358,7 +1359,7 @@ function renderPlays() {
     ${form}
     ${s.settledN ? '' : sportSw}
     ${src === 'model' ? recapCard() : ''}
-    ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, 2 for Take large, half for Take small) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
+    ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, 2 for a Large bet, half for a Small bet) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
     ${empty ? `<div class="empty"><b>No ${esc(sportWord)}plays ${esc(when)}</b>
         <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>
         <div class="row">${src === 'mine' ? '<button type="button" class="pbtn primary" id="p-add2">+ Add play</button>' : ''}<button type="button" class="pbtn" id="p-home">Browse Top Picks</button>${period !== 'all' ? '<button type="button" class="pbtn" id="p-all">See all time</button>' : ''}</div></div>`
