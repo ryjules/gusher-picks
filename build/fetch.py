@@ -529,6 +529,30 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
     return rows
 
 
+def load_returning():
+    """build/returning.json: players back from IR or a long absence. Their teammates' recent numbers were built
+    while they were out, so that volume is about to shrink (the reverse of a vacated role)."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "returning.json")) as f:
+            rows = json.load(f)
+    except (OSError, ValueError):
+        return []
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    return [r for r in rows if (r.get("until") or "9999") >= today]
+
+
+def mark_returning(props, lg):
+    rows = [r for r in load_returning() if r.get("league") == lg]
+    if not rows:
+        return
+    qbs = {p["pid"] for p in props if p["cat"] == "Passing"}  # a QB's rushing doesn't share a backfield's carries
+    for r in rows:
+        cats = ("Rushing", "Rush + Rec") if r.get("kind", "carries") == "carries" else ("Receiving", "Receptions")
+        for p in props:
+            if p["team"] == r["team"] and p["cat"] in cats and p["pid"] not in qbs and (p.get("full") or p["player"]) not in r["names"]:
+                p["returning"] = {"names": r["names"], "kind": r.get("kind", "carries")}
+
+
 VAC_KIND = {"Rushing": "carries", "Rush + Rec": "carries", "Receiving": "catches", "Receptions": "catches"}
 VAC_MIN = 0.15  # a teammate's share of carries or catches that counts as real volume
 
@@ -856,6 +880,8 @@ def rescore_prop(pr, key=None):
         if vc:  # a teammate's volume is up for grabs: more touches for this player
             bump = min(1.0, 0.5 + vc["share"])
             sc += -bump if under else bump
+        if pr.get("returning"):  # teammates back from injury take part of the volume his recent games were built on
+            sc += 1.0 if under else -1.0
         if not under:
             sc -= OVER_TAX
         pr["score"] = round(max(0.0, min(10.0, sc)), 1)
@@ -1424,6 +1450,7 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             lines = prop_lines(lg, e["id"])
             props = (build_props(e["id"], home["id"], away, home, per_team, agg, injured, lines)
                      + build_props(e["id"], away["id"], home, away, per_team, agg, injured, lines))
+            mark_returning(props, key)
         score = None
         if status.get("state") in ("in", "post"):
             score = {"away": comp["away"].get("score"), "home": comp["home"].get("score"),
@@ -2538,6 +2565,14 @@ def analyze_prop(p, g=None, lg=None):
             warn.append(f"{who} {'is' if len(vc['names']) == 1 else 'are'} out: about {vc['share']:.0%} of the team's recent {kind} go to the players left, which pushes this toward the over.")
         else:
             why.append(f"{who} {'is' if len(vc['names']) == 1 else 'are'} out, freeing about {vc['share']:.0%} of the team's recent {kind}: more volume for him.")
+    rt = p.get("returning")
+    if rt and lg in ("nfl", "cfb"):
+        who = " and ".join(rt["names"][:2])
+        kind = rt["kind"]
+        if under:
+            why.append(f"{who} {'is' if len(rt['names']) == 1 else 'are'} back from injury: his recent numbers came while they were out, so his {kind} should shrink.")
+        else:
+            warn.append(f"{who} {'is' if len(rt['names']) == 1 else 'are'} back from injury: his recent numbers came while they were out, so his {kind} should shrink.")
     if lg in ("nfl", "cfb") and under and p.get("l5"):
         avg_l5 = sum(p["l5"]) / len(p["l5"])
         if p["cat"] == "Passing" and p["line"] < LOW_PASS_LINE:
