@@ -2001,11 +2001,11 @@ NFL_HOME_EDGE = 2.0  # about 1.2 points at the NFL points scale
 LETDOWN = 1.0  # strength taken off a team coming off a big upset win
 HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
+BB_HOME_PTS = {"nba": 2.5, "cbb": 3.0}  # home-court points in the basketball stat matchup
 ALIGN_W = 0.35  # how far toward JD's scale (a slight shift)
 ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", "cbb")}  # JD ~ a + b * ours, Nov 2 NBA boards
-# NBA strength-to-points was 1.0: on the Nov 2 slate the market's lines ran 1.27x and the opponent-adjusted model 1.19x
-# the data's margins, so the data was understating real gaps (e.g. MEM-NO read 6.4 points; lines and model ~8-9).
-LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.25, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
+# NBA: tried 1.25 on Nov 2, but the gap to the lines was a missing home-court edge, not scale (lines = 3.4 + 1.05 x data).
+LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
@@ -2180,6 +2180,10 @@ def stat_matchup(lg, g, nteams):
         if lg == "cfb" and not g.get("neutral"):
             # College road teams struggle ("you have to play a perfect game to win on the road"): lean home.
             strength -= CFB_HOME_EDGE
+        if lg in BB_HOME_PTS and not g.get("neutral"):
+            # Home court: the lines include it (about 3 points on the Nov 2 NBA slate), the stat comparison didn't.
+            parts["home"] = round(-BB_HOME_PTS[lg] / LINE_PTS[lg][0], 2)
+            strength -= BB_HOME_PTS[lg] / LINE_PTS[lg][0]
         if lg == "nfl" and not g.get("neutral"):
             parts["home"] = -NFL_HOME_EDGE
             strength -= NFL_HOME_EDGE  # home field is worth about a point and a half; the line already includes it
