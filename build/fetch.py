@@ -1524,7 +1524,7 @@ BB_PROPS = [  # label, value from a player game, markets, opponent-allowed keys,
     ("Pts+Ast", lambda p: p["pts"] + p["ast"], "Total Points and Assists", ["pts", "ast"], 10),
     ("Reb+Ast", lambda p: p["reb"] + p["ast"], "Total Assists and Rebounds", ["reb", "ast"], 5),
     ("3PT Made", lambda p: p["tpm"], "Total 3-Point Field Goals", ["tpm"], 0.8),
-    ("Blk+Stl", lambda p: p["stl"] + p["blk"], "Total Steals and Blocks", ["stl", "blk"], 1),
+    # Steals + blocks left off: not something we bet.
 ]
 BB_COUNT = {"3PT Made", "Blk+Stl"}
 BB_VAC_MIN = 0.10  # share of the team's recent production (this stat) belonging to teammates now out
