@@ -330,6 +330,7 @@ details.grp > summary:hover { color: var(--cyan); }
 .leg-lg { font: 700 .8rem var(--f-display); color: var(--muted); } .leg-auto { grid-column: 2 / -1; color: var(--muted); font-size: .72rem; margin-top: -4px; }
 .lr { font-style: normal; font-weight: 800; margin-right: 3px; } .lr.W { color: var(--win); } .lr.L { color: var(--loss); } .lr.P { color: var(--muted); }
 @media (max-width: 640px) { .leg { grid-template-columns: 1fr 1fr; } }
+.ptab td.pos { font: 700 .85rem var(--f-display); color: var(--muted); letter-spacing: .04em; }
 .ou { font: 800 1.05em var(--f-display); margin-right: 3px; display: inline-block !important; background: none; }
 .ou.o { color: var(--win); } .ou.u { color: var(--loss); }
 .lbar { margin-top: 4px; width: 165px; } .ptbl td:has(.lbar) { min-width: 180px; } .lbar span { display: block; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
@@ -895,6 +896,7 @@ function moveTag(open, cur) {
 }
 function renderProps() {
   const C = cat[league];
+  const showPos = LEAGUES[league].sport === 'bb';  // basketball props show each player's position
   const games = (DATA[league] || []).filter(g => g.state !== 'post');  // upcoming and live games (live ones show a progress bar)
   const q = $('q').value.trim().toLowerCase();
   // Rank every prop in the category first, so # stays the same when filtering by game or player.
@@ -908,7 +910,7 @@ function renderProps() {
     const g = findGame(league, p.game);
     if (p.line == null) {
       return `<tr class="nl"><td class="rk">${p.rank}</td><td><span class="score lo">—</span></td><td class="ln">${dash}</td>
-        <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small></td><td class="op">${esc(g.away.abbr)} @ ${esc(g.home.abbr)}</td>
+        <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small></td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}<td class="op">${esc(g.away.abbr)} @ ${esc(g.home.abbr)}</td>
         <td>${dash}</td><td>${dash}</td><td>${p.avg5.toFixed(1)}</td><td><div class="chips">${p.l5.map(v => `<span class="chip5">${v.toFixed(0)}</span>`).join('')}</div></td>
         <td class="sm">proj ${p.proj.toFixed(1)}</td><td></td></tr>`;
     }
@@ -923,7 +925,7 @@ function renderProps() {
     const pa = analyzeProp(p);
     return `<tr><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${vchip(pa.verdict)}</div>` : ''}</td>
       <td class="ln">${lineTxt}${moveTag(p.open, p.line)}${p.lineSrc === 'Kalshi' ? '<small class="ksrc">Kalshi line</small>' : ''}${p.line != null ? liveBar({ grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: under ? 'under' : 'over', line: p.line } }) : ''}</td>
-      <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small>${p.check && !p.check.ok ? `<small class="flag" title="${esc(p.check.text)}">⚠ game log differs from nflverse</small>` : ''}${p.flag ? '<small class="flag" title="The line is far from this player\'s recent numbers and the market agrees, which usually means injury or role news.">⚠ line far from form, check news</small>' : ''}</td>
+      <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small>${p.check && !p.check.ok ? `<small class="flag" title="${esc(p.check.text)}">⚠ game log differs from nflverse</small>` : ''}${p.flag ? '<small class="flag" title="The line is far from this player\'s recent numbers and the market agrees, which usually means injury or role news.">⚠ line far from form, check news</small>' : ''}</td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}
       <td class="op">${p.home ? 'vs' : '@'} ${esc(p.oppName)} <small>(${ord(p.oppRank)})</small></td>
       <td class="rank ${mcls(p.matchup)}">${p.matchup != null ? p.matchup.toFixed(1) : dash}</td>
       <td class="rank ${hr >= 0.6 ? 'g' : hr >= 0.4 ? 'y' : 'rd'}">${won}/${p.l5.length}</td>
@@ -938,7 +940,7 @@ function renderProps() {
     <div class="pbar"><h2>${esc(C)}</h2>
       <label class="st" for="gsel">Game <select class="gsel" id="gsel"><option value="all">All games</option>${opts}</select></label></div>
     <div class="cats" role="group" aria-label="Prop type">${LEAGUES[league].cats.map(c => `<button type="button" data-c="${esc(c)}" aria-pressed="${c === C}">${esc(c)}</button>`).join('')}</div>
-    <div class="scroll"><table class="ptab" style="min-width:1040px"><thead><tr><th></th><th>Score</th><th>Line</th><th>Player</th><th>Opponent</th><th>Matchup</th><th>Hit Rate</th><th>${esc(STATLBL[C])}/L5</th><th>L5 ${esc(STATLBL[C])}</th><th>Edge</th><th></th></tr></thead>
+    <div class="scroll"><table class="ptab" style="min-width:1040px"><thead><tr><th></th><th>Score</th><th>Line</th><th>Player</th>${showPos ? '<th>Pos</th>' : ''}<th>Opponent</th><th>Matchup</th><th>Hit Rate</th><th>${esc(STATLBL[C])}/L5</th><th>L5 ${esc(STATLBL[C])}</th><th>Edge</th><th></th></tr></thead>
       <tbody>${body || `<tr><td colspan="11" class="dash">No upcoming players in this category.</td></tr>`}</tbody></table></div>
     <p class="pnote">Lines are DraftKings (via ESPN); the price in parentheses is Kalshi's fair price at that line, and ▲▼ shows where the line opened. Score (0–10) blends my projection with the market and rates the edge left over: 10 means at least 12 points better than the market. The market is Kalshi's price, or an even-money line at DraftKings' number when Kalshi has none. The further a line sits from a player's recent form, the less weight my projection gets, because that gap usually comes from injury or role news; those rows are flagged. Edge is the leftover difference. Matchup (0–10): higher is easier; opponent rank 1st allows the least. Green chips and averages beat the line in the pick's direction. Players listed Out or Doubtful are left off; players with no posted line are at the bottom. When DraftKings has no line but Kalshi lists the player, the line is Kalshi's (the rung nearest even money), marked Kalshi line. Touchdowns work differently: the score ranks how likely the player is to score (his TD rate, hit rate and the matchup), and Edge says whether the price is worth it; a likely scorer at a short price is a Fade.</p>
   </div>`;

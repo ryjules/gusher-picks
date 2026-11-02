@@ -479,6 +479,7 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
     latest = {}
     for gg in gl[-3:]:
         latest.update(gg["teams"][tid].get("players", {}))
+    vac = vacated(gl, tid, injured)
     n = len(agg)
     rows = []
     for label, val, opp_key, easy_high, min_avg, active in PROP_CATS:
@@ -523,8 +524,33 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
                          "oppRank": orank, "matchup": round(10 * (orank - 1) / (n - 1), 1) if orank else None,
                          "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
                          "games": len(hist), "proj": round(proj, 1), "game": game, "_hist": hist,
-                         **(carry_load(gl, tid, pid) if label in ("Rushing", "Rush + Rec") else {})})
+                         **(carry_load(gl, tid, pid) if label in ("Rushing", "Rush + Rec") else {}),
+                         **({"vacated": vac[VAC_KIND[label]]} if VAC_KIND.get(label) and vac.get(VAC_KIND[label]) and pid not in vac[VAC_KIND[label]]["ids"] else {})})
     return rows
+
+
+VAC_KIND = {"Rushing": "carries", "Rush + Rec": "carries", "Receiving": "catches", "Receptions": "catches"}
+VAC_MIN = 0.15  # a teammate's share of carries or catches that counts as real volume
+
+
+def vacated(gl, tid, injured):
+    """Share of the team's carries and catches (last 3 games) belonging to players now out or doubtful.
+    That volume goes to whoever is left, so it helps their overs and hurts their unders."""
+    out = {}
+    for kind, stat in (("carries", "car"), ("catches", "rec")):
+        tot, mine, names = 0.0, {}, {}
+        for gg in gl[-3:]:
+            for pid, q in (gg["teams"][tid].get("players") or {}).items():
+                v = q.get(stat) or 0
+                tot += v
+                mine[pid] = mine.get(pid, 0) + v
+                names[pid] = q.get("name")
+        if not tot:
+            continue
+        gone = [(pid, mine[pid] / tot) for pid in mine if pid in injured and mine[pid] / tot >= VAC_MIN]
+        if gone:
+            out[kind] = {"share": round(sum(sh for _, sh in gone), 2), "names": [names[p] for p, _ in gone], "ids": [p for p, _ in gone]}
+    return out
 
 
 def carry_load(gl, tid, pid):
@@ -815,6 +841,10 @@ def rescore_prop(pr, key=None):
                 trend = pr["_car5"]  # rush + rec: only a light-volume back (under 10 carries) gets trimmed on overs
                 if trend < 10:
                     sc += 0.3 if under else -0.3
+        vc = pr.get("vacated")
+        if vc:  # a teammate's volume is up for grabs: more touches for this player
+            bump = min(1.0, 0.5 + vc["share"])
+            sc += -bump if under else bump
         pr["score"] = round(max(0.0, min(10.0, sc)), 1)
         return
     pr["score"] = round(max(0.0, min(10.0, 0.6 * s_prob + 0.2 * 10 * hit + 0.2 * m)), 1)
@@ -1480,7 +1510,8 @@ def parse_bb(d):
                 r.setdefault("players", {})[ath["id"]] = {
                     "name": ath.get("shortName") or ath.get("displayName"), "full": ath.get("displayName"),
                     "min": num(v.get("MIN")), "pts": num(v.get("PTS")), "reb": num(v.get("REB")), "ast": num(v.get("AST")),
-                    "stl": num(v.get("STL")), "blk": num(v.get("BLK")), "tpm": mk(v.get("3PT"))[0]}
+                    "stl": num(v.get("STL")), "blk": num(v.get("BLK")), "tpm": mk(v.get("3PT"))[0],
+                    "pos": ((ath.get("position") or {}).get("abbreviation") or "")}
     if any("fga" not in r for r in teams.values()):
         return None
     return {"id": comp["id"], "date": comp["date"], "neutral": comp.get("neutralSite", False), "teams": teams, "line": game_lines(d)}
@@ -1778,7 +1809,7 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                 line, opn = lines.get((market, pid)) or (None, None)
                 score, side, prob = prop_score(label, proj, line, hist, BB_COUNT, BB_FLOOR)
                 rows.append({"pid": pid, "open": opn, "cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
-                             "mpg": round(sum(mins[-5:]) / len(mins[-5:]), 1),
+                             "mpg": round(sum(mins[-5:]) / len(mins[-5:]), 1), "pos": p.get("pos") or "",
                              "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home", "oppRank": orank,
                              "matchup": round(10 * (orank - 1) / (nteams - 1), 1) if orank and nteams > 1 else None,
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
@@ -2480,6 +2511,14 @@ def analyze_prop(p, g=None, lg=None):
         why.append(f"Kalshi prices this at {round(p['kalshiP'] * 100)}% ({p['kalshiOdds']}); the model's edge over that is {p['edge'] * 100:.1f} points.")
     if p.get("flag"):
         warn.append("Line is far from his recent numbers: check injury or role news.")
+    vc = p.get("vacated")
+    if vc and lg in ("nfl", "cfb"):
+        who = " and ".join(vc["names"][:2])
+        kind = "carries" if p["cat"] in ("Rushing", "Rush + Rec") else "targets"
+        if under:
+            warn.append(f"{who} {'is' if len(vc['names']) == 1 else 'are'} out: about {vc['share']:.0%} of the team's recent {kind} go to the players left, which pushes this toward the over.")
+        else:
+            why.append(f"{who} {'is' if len(vc['names']) == 1 else 'are'} out, freeing about {vc['share']:.0%} of the team's recent {kind}: more volume for him.")
     if lg in ("nfl", "cfb") and under and p.get("l5"):
         avg_l5 = sum(p["l5"]) / len(p["l5"])
         if p["cat"] == "Passing" and p["line"] < LOW_PASS_LINE:
