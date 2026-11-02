@@ -1899,6 +1899,9 @@ TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
 LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
 LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
+INJ_SIDE_W = {"nba": 0.5, "cbb": 0.5}  # injuries in the basketball stat matchup (the price model counts them too)
+DOG_ML_MAX = 200  # underdog prices where the moneyline follows the spread read
+DOG_ML_GAP = 1.0  # ...to within this much
 PACE1_UNDER = 0.5  # trim on an under against the #1 pace team
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
@@ -2149,8 +2152,9 @@ def stat_matchup(lg, g, nteams):
         if ia and lg in LINE_PTS:
             # Injuries move the expected margin; convert those points into matchup strength.
             swing = (ia["home"]["off"] + ia["home"]["def"]) - (ia["away"]["off"] + ia["away"]["def"])  # > 0 helps the away team
-            strength += swing / LINE_PTS[lg][0]
-            parts["injuries"] = round(swing / LINE_PTS[lg][0], 2)
+            iw = INJ_SIDE_W.get(lg, 1.0)  # basketball: the price model already subtracts injured players' points
+            strength += iw * swing / LINE_PTS[lg][0]
+            parts["injuries"] = round(iw * swing / LINE_PTS[lg][0], 2)
             for sd in ("away", "home"):
                 cost = ia[sd]["off"] + ia[sd]["def"]
                 if cost >= 0.5:
@@ -2445,7 +2449,7 @@ def blend_confidence(lg, g, n):
             a, b = ALIGN_BB[lg]["total" if kind == "total" else "side"]
             score += ALIGN_W * max(0.0, a + b * score - score)
             if kind == "total" and score > 8:
-                score = 8 + 0.75 * (score - 8)
+                score = 8 + 0.6 * (score - 8)
             score = round(min(10.0, score), 1)
         if kind == "total" and SPORT[lg] == "bb" and side == "under" and fastest_pace(g):
             score = round(max(0.0, score - PACE1_UNDER), 1)  # JD: avoid unders against the #1 pace team
@@ -2489,6 +2493,13 @@ def blend_confidence(lg, g, n):
             st = (g.get("matchup") or {}).get("spread")
             if st is not None:
                 st.setdefault("notes", []).append((f"At {fmt_ml(price)} the moneyline risks too much: the spread is the way to play this edge", sp["side"]))
+    # Basketball small underdog the data has winning outright: the moneyline is at least close to the spread read
+    # (JD's boards rate it that way, e.g. WSH +120 6.8 vs WSH +2.5 6.3).
+    if SPORT[lg] == "bb" and ml and sp and ml["side"] == sp["side"]:
+        price = pnum(g["lines"].get("homeML" if ml["side"] == "home" else "awayML"))
+        if price is not None and 100 <= price <= DOG_ML_MAX and conf["spread"][0] - conf["moneyline"][0] > DOG_ML_GAP:
+            new_ml = round(conf["spread"][0] - DOG_ML_GAP, 1)
+            conf["moneyline"] = [new_ml, (("Play " if new_ml >= 7 else "Lean ") + ml["call"]) if new_ml >= 4 else "Pass"]
     g["confidence"], g["pick"] = conf, pick
 
 
