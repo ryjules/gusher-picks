@@ -522,8 +522,22 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
                          "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home",
                          "oppRank": orank, "matchup": round(10 * (orank - 1) / (n - 1), 1) if orank else None,
                          "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
-                         "games": len(hist), "proj": round(proj, 1), "game": game, "_hist": hist})
+                         "games": len(hist), "proj": round(proj, 1), "game": game, "_hist": hist,
+                         **(carry_load(gl, tid, pid) if label in ("Rushing", "Rush + Rec") else {})})
     return rows
+
+
+def carry_load(gl, tid, pid):
+    """Carries per game over the last 5 and yards per carry on the season (used in scoring, not shown)."""
+    car, yds = [], []
+    for g in gl:
+        q = g["teams"][tid].get("players", {}).get(pid)
+        if q and "car" in q:
+            car.append(q.get("car") or 0)
+            yds.append(q.get("rushYds") or 0)
+    if not car or sum(car) < 10:
+        return {}
+    return {"_car5": sum(car[-5:]) / len(car[-5:]), "_ypc": sum(yds) / max(1, sum(car))}
 
 
 # --- market data: opening lines (DraftKings via ESPN) and Kalshi prices ------------
@@ -639,7 +653,8 @@ def enrich(key, slate):
         for g in slate:
             for pr in g.get("props") or []:
                 rescore_prop(pr, key)
-                pr.pop("_hist", None)
+                for k in ("_hist", "_car5", "_ypc"):
+                    pr.pop(k, None)
         return
     series = {"GAME": f"{prefix}GAME", "SPREAD": f"{prefix}SPREAD", "TOTAL": f"{prefix}TOTAL", **prop_series}
     by = {}
@@ -731,7 +746,8 @@ def enrich(key, slate):
     for g in slate:
         for pr in g.get("props") or []:
             rescore_prop(pr, key)
-            pr.pop("_hist", None)
+            for k in ("_hist", "_car5", "_ypc"):
+                pr.pop(k, None)
 
 
 def rescore_prop(pr, key=None):
@@ -786,7 +802,20 @@ def rescore_prop(pr, key=None):
     s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
     if key in ("nfl", "cfb"):
         # Football: the recent hit rate (newest games count most) carries more, so a maxed-out projection alone can't make a play.
-        pr["score"] = round(max(0.0, min(10.0, 0.45 * s_prob + 0.35 * 10 * hit + 0.2 * m)), 1)
+        sc = 0.45 * s_prob + 0.35 * 10 * hit + 0.2 * m
+        if pr["cat"] in ("Rushing", "Rush + Rec") and pr.get("_car5") and pr.get("_ypc", 0) > 0:
+            # Workload: more carries means more yards. Compare his recent carries with what this line needs at his
+            # yards per carry (for rush + rec, the rushing share only matters roughly, so the nudge is smaller).
+            need = pr["line"] / pr["_ypc"] if pr["cat"] == "Rushing" else None
+            if need:
+                ratio = pr["_car5"] / max(need, 1.0)
+                nudge = 0.4 if ratio >= 1.15 else -0.5 if ratio <= 0.9 else 0.0
+                sc += -nudge if under else nudge
+            else:
+                trend = pr["_car5"]  # rush + rec: only a light-volume back (under 10 carries) gets trimmed on overs
+                if trend < 10:
+                    sc += 0.3 if under else -0.3
+        pr["score"] = round(max(0.0, min(10.0, sc)), 1)
         return
     pr["score"] = round(max(0.0, min(10.0, 0.6 * s_prob + 0.2 * 10 * hit + 0.2 * m)), 1)
 
