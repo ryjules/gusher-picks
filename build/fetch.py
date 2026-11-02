@@ -546,10 +546,11 @@ def mark_returning(props, lg):
     if not rows:
         return
     qbs = {p["pid"] for p in props if p["cat"] == "Passing"}  # a QB's rushing doesn't share a backfield's carries
+    backs = {p["pid"] for p in props if p["cat"] == "Rushing" and p.get("line") is not None}
     for r in rows:
         cats = ("Rushing", "Rush + Rec") if r.get("kind", "carries") == "carries" else ("Receiving", "Receptions")
         for p in props:
-            if p["team"] == r["team"] and p["cat"] in cats and p["pid"] not in qbs and (p.get("full") or p["player"]) not in r["names"]:
+            if p["team"] == r["team"] and p["cat"] in cats and p["pid"] not in qbs and (cats[0] != "Rushing" or p["pid"] in backs) and (p.get("full") or p["player"]) not in r["names"]:
                 p["returning"] = {"names": r["names"], "kind": r.get("kind", "carries")}
 
 
@@ -1652,13 +1653,25 @@ def run_basketball(lg, key, start, groups):
     sigma, unit = (12.0, 0.45) if key == "nba" else (11.0, 0.6)
 
     cur = get(f"{BB}/{lg}/scoreboard?{q.lstrip('&')}")
+    if key == "cbb" and not BACKFILL:
+        # ESPN's default college day lags (it kept showing yesterday's late games on opening day), so ask for
+        # today's ET date: every Division I game goes on the board, scored or not.
+        today = get(f"{BB}/{lg}/scoreboard?dates={datetime.now(ET).strftime('%Y%m%d')}&{q.lstrip('&')}")
+        if (today or {}).get("events"):
+            seen = {e["id"] for e in today["events"]}
+            today["events"] += [e for e in (cur or {}).get("events", []) if e["id"] not in seen
+                                and ((e.get("status") or {}).get("type") or {}).get("state") != "post"]
+            cur = today
+    evs = (cur or {}).get("events", [])
+    with ThreadPoolExecutor(16) as ex:  # fetch summaries in parallel: big college slates have 150+ games
+        summaries = dict(zip([e["id"] for e in evs], ex.map(lambda e: get(f"{BB}/{lg}/summary?event={e['id']}"), evs)))
     slate = []
     for e in sorted((cur or {}).get("events", []), key=lambda e: e["date"]):
         c = e["competitions"][0]
         comp = {x["homeAway"]: x for x in c["competitors"]}
         if "home" not in comp or "away" not in comp or (e.get("season") or {}).get("type", 2) not in (2, 3):
             continue  # skip exhibitions and preseason
-        summ = get(f"{BB}/{lg}/summary?event={e['id']}")
+        summ = summaries.get(e["id"])
         if not summ:
             continue
         if key == "nba" and not BACKFILL and (e.get("status") or {}).get("type", {}).get("state") == "pre":
