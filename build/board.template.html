@@ -1008,7 +1008,15 @@ function gradeOf(p) {
     return rs.every(r => r === 'P' || r === 'V') ? 'P' : 'W';
   }
   const gr = p.grade; if (!gr) return null;
-  const g = findGame(gr.league, gr.game); if (!g || !g.final) return null;
+  const g = findGame(gr.league, gr.game); if (!g) return null;
+  // A prop that's already decided mid-game (an over that cleared, an under that got passed) grades right away:
+  // the stats only count up, so the result can't change after that.
+  if (!g.final && gr.kind === 'prop' && g.state === 'in' && g.live && g.live[gr.pid]) {
+    const v = PROPVAL[gr.cat](g.live[gr.pid]) || 0;
+    if (v > gr.line) return gr.side === 'over' ? 'W' : 'L';
+    return null;
+  }
+  if (!g.final) return null;
   const f = g.final, cmp = x => x > 0 ? 'W' : x < 0 ? 'L' : 'P';
   if (gr.kind === 'ml') return cmp(gr.side === 'home' ? f.home - f.away : f.away - f.home);
   if (gr.kind === 'spread') return cmp((gr.side === 'home' ? f.home - f.away : f.away - f.home) + gr.line);
@@ -1683,6 +1691,7 @@ async function pollScores() {
   let liveNew = false;
   for (const p of pend) { const g = findGame(p.grade.league, p.grade.game); if (g && g.state === 'in' && await fetchLive(p.grade.league, g)) liveNew = true; }
   if (mode === 'props') for (const g of (DATA[league] || []).filter(g => g.state === 'in' && (pgame === 'all' || g.id === pgame))) if (await fetchLive(league, g)) liveNew = true;
+  if (liveNew && [...(DATA.modelHistory || []), ...plays].some(p => !p.result && p.grade?.kind === 'prop' && gradeOf(p))) graded = true;  // a prop decided mid-game
   if ((liveNew || changed) && mode === 'props') renderProps();
   if ((liveNew || changed) && mode === 'plays' && !draft) renderPlays();
   // Games that ended before this page loaded but after the last rebuild.
