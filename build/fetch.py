@@ -1899,6 +1899,7 @@ TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
 LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
 LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
+STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
 PROP_SMALL_BELOW = 8.0  # props from the 7.5 bar up to this are Small bets
 def ordn(n):
@@ -2594,7 +2595,9 @@ def analyze_game(lg, g, kind, nteams):
     n_why, n_against = sum(1 for t in why if not is_mkt(t)), sum(1 for t in against if not is_mkt(t))
     if score >= 7:
         # Sizing manages risk without capping plays: any warning (low total, big spread, key injury) makes it a half-unit bet.
-        verdict = "Take small" if warn or oppose or score < SMALL_BELOW else "Take"
+        # When the data lines up strongly (8.5+), one warning (like a low total) is noted but doesn't halve the stake.
+        strong = score >= STRONG_READ and len(warn) <= 1
+        verdict = "Take small" if ((warn and not strong) or oppose or score < SMALL_BELOW) else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         if (verdict == "Take" and kind != "moneyline" and score >= LARGE_BAR and not warn and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
