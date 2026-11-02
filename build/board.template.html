@@ -582,10 +582,13 @@ function stHtml(g) {
 function render(g) {
   current[league] = g.id;
   const L = g.away, R = g.home, c = g.confidence, ln = g.lines, op = ln.open || {}, k = g.kalshi || {};
-  const banner = bannerHtml(g);
+  let banner = bannerHtml(g);
   const strip = g.strip || [['Date / Time', g.date], ['Location', g.location + (g.neutral ? ' (neutral)' : '')], ['Weather', g.weather], ['Surface', g.surface],
     ['Off Rank', g.offRank], ['Def Rank', g.defRank], ['Overall Rank', g.overallRank]];
-  if (!g.model && g.state === 'pre') banner += `<div class="banner post">These teams haven't played a game this season yet, so stats and model picks fill in after their first games.</div>`;
+  if (!g.model && g.state === 'pre') {
+    const played = (g.sections || []).some(s => s.rows.some(r => r[1] && r[1][0] != null || r[2] && r[2][4] != null));
+    banner += `<div class="banner post">${played ? 'Early season: stats are in, but confidence scores and picks wait until both teams have played 3 games.' : 'These teams haven\'t played a game this season yet, so stats and model picks fill in after their first games.'}</div>`;
+  }
   const np = LEAGUES[league].cats && g.state === 'pre' ? (g.props || []).filter(p => p.line != null).length : 0;
   const gbar = LEAGUES[league].cats ? `<div class="gbar"><button type="button" class="on" aria-pressed="true">Matchup board</button><button type="button" id="to-props" ${np ? '' : 'disabled'}>Player props for this game <small>${np ? np + ' props' : g.state === 'pre' ? 'none posted yet' : 'game started'}</small> →</button></div>` : '';
   $('board').innerHTML = `${gbar}${banner}<div class="scroll"><div class="inner">

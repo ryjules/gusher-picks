@@ -1043,6 +1043,7 @@ REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
 LOW_PASS_LINE = 215.5  # QB passing unders below this carry a warning
 LOW_SKILL_LINE = {"Rushing": 40.5, "Receiving": 35.5, "Rush + Rec": 50.5, "Receptions": 3.5}  # unders below these lose 0.5
 NFL_PROP_FLOOR = {"Passing": 150.5, "Rushing": 30.5, "Receiving": 25.5, "Receptions": 2.5, "Rush + Rec": 35.5}  # smaller lines are backups  # basketball props: Take from here up
+CBB_MIN_GAMES = 3  # college teams need this many games before the model scores their games
 BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
 
@@ -1558,7 +1559,8 @@ def run_basketball(lg, key, start, groups):
     for g in games:
         for t in g["teams"]:
             counts[t] = counts.get(t, 0) + 1
-    teams_in = {t for t, c in counts.items() if c >= (3 if key == "cbb" else 1)}
+    # Stats show after a team's first game; college picks wait for 3 games each (see CBB_MIN_GAMES below).
+    teams_in = {t for t, c in counts.items() if c >= 1}
     per_team = {t: [g for g in games if t in g["teams"]] for t in teams_in}
     agg = {t: {"season": bb_window(gl, t), "home": bb_window([g for g in gl if g["teams"][t]["ha"] == "home" and not g["neutral"]], t),
                "away": bb_window([g for g in gl if g["teams"][t]["ha"] == "away" and not g["neutral"]], t),
@@ -1646,7 +1648,8 @@ def run_basketball(lg, key, start, groups):
                    if inj and key == "nba" else None)
         model, confidence = None, None
         ra, rh = rat.get(away["id"]), rat.get(home["id"])
-        if ra and rh:
+        enough = key != "cbb" or min(counts.get(away["id"], 0), counts.get(home["id"], 0)) >= CBB_MIN_GAMES
+        if ra and rh and enough:
             adj = 0 if c.get("neutralSite") else hfa / 2
             pa, ph = mu - adj + ra[0] - rh[1], mu + adj + rh[0] - ra[1]
             if inj_adj:  # missing rotation players cost their team points
