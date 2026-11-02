@@ -417,6 +417,8 @@ details.grp > summary:hover { color: var(--cyan); }
 .jump { display: grid; text-align: left; font: 800 .95rem var(--f-display); letter-spacing: .05em; text-transform: uppercase; background: #0c1117; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
 .jump small { font: 600 .72rem var(--f-body); letter-spacing: 0; text-transform: none; color: var(--muted); }
 .jump:hover { border-color: var(--cyan); }
+.jump[aria-pressed="true"] { background: var(--cyan); color: #06121a; border-color: var(--cyan); }
+.jump[aria-pressed="true"] small { color: #06121a; }
 .sport { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); scroll-margin-top: 12px; }
 .sport-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .sport-h h3 { margin: 0; font: 800 1.5rem var(--f-display); text-transform: uppercase; color: var(--cyan); }
@@ -832,6 +834,7 @@ function plSince(from) {
   const ps = plays.filter(p => p.result && p.date >= from);
   return ps.reduce((s, p) => s + unitsOf(p), 0) * UNIT();
 }
+let homeLg = null;  // the sport tab open on Top Picks
 function renderHome() {
   const gamePicks = [], propPicks = [];
   for (const lg of Object.keys(LEAGUES)) for (const g of DATA[lg] || []) {
@@ -889,7 +892,13 @@ function renderHome() {
       ${L.cats ? `<div class="sub-h">Player props</div><div class="picklist">${pp.map(([x, i]) => propRow(x, i)).join('') || '<p class="empty">No props stand out right now.</p>'}</div>` : ''}
     </section>`, count: gp.length + pp.length, upcoming };
   });
-  const jump = sections.map(sc => `<button type="button" class="jump" data-jump="${sc.lg}">${esc(LEAGUES[sc.lg].short)}<small>${sc.count} pick${sc.count === 1 ? '' : 's'}</small></button>`).join('');
+  // Sport tabs: show one sport at a time. Default to a sport with picks and a game today.
+  if (!homeLg || !sections.some(sc => sc.lg === homeLg)) {
+    const td = todayET();
+    homeLg = (sections.find(sc => sc.count && (DATA[sc.lg] || []).some(g => g.state === 'pre' && gameDay(g) === td))
+      || sections.find(sc => sc.count) || sections[0] || {}).lg;
+  }
+  const jump = sections.map(sc => `<button type="button" class="jump" data-jump="${sc.lg}" aria-pressed="${sc.lg === homeLg}">${esc(LEAGUES[sc.lg].short)}<small>${sc.count} pick${sc.count === 1 ? '' : 's'}</small></button>`).join('');
   const today = todayET(), [wk] = periodRange('week', today), [mo] = periodRange('month', today);
   const plCard = (label, v, per) => `<button type="button" data-goper="${per}"><span>${label}</span><b class="${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${money(v)}</b></button>`;
   const pl = dbState === 'ready' && plays.length
@@ -898,8 +907,8 @@ function renderHome() {
     <div class="home-h"><h2>Top Picks</h2><small>Upcoming games in all leagues · updated ${esc(new Date(DATA.generated.replace('Z', ':00Z')).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))} ET</small></div>
     ${pl}
     <div class="jumps" role="navigation" aria-label="Jump to a sport">${jump}</div>
-    <p class="msg">Leans (4+) and plays (7+) for each sport, Take first. Props show scores of 5+ with lines near the player's form. Tap a pick for its full breakdown.</p>
-    ${sections.map(sc => sc.html).join('')}
+    <p class="msg">Pick a sport above. Leans (4+) and plays (7+), Take first. Props show scores of 5+ with lines near the player's form. Tap a pick for its full breakdown.</p>
+    ${sections.filter(sc => sc.lg === homeLg).map(sc => sc.html).join('')}
     <p class="pnote">Tap a pick to open its full matchup board or props sheet. Scores compare my model with the betting market; a high score is a reason to look closer, not a sure thing. Lines move, so check your book's price before you bet.</p>
   </div>`;
   const openGame = x => { league = x.lg; current[x.lg] = x.g.id; setMode('games'); };
@@ -908,7 +917,7 @@ function renderHome() {
   $('board').querySelectorAll('[data-gadd]').forEach(b => b.onclick = () => { const x = gamePicks[+b.dataset.gadd]; league = x.lg; openAdd(fromGame(x.g, x.kind)); });
   $('board').querySelectorAll('[data-padd]').forEach(b => b.onclick = () => { const x = propPicks[+b.dataset.padd]; league = x.lg; openAdd(fromProp(x.p)); });
   $('board').querySelectorAll('[data-goper]').forEach(b => b.onclick = () => { period = b.dataset.goper; pday = todayET(); setMode('plays'); });
-  $('board').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => $('sport-' + b.dataset.jump).scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  $('board').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => { homeLg = b.dataset.jump; renderHome(); });
   $('board').querySelectorAll('[data-golg]').forEach(b => b.onclick = () => { league = b.dataset.golg; setMode('games'); });
 }
 
