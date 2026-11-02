@@ -2495,8 +2495,8 @@ def blend_confidence(lg, g, n):
             continue
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
-        if kind != "moneyline" and vs and vs != side and v >= 1.0:
-            score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most, not a Play
+        if kind != "moneyline" and vs and vs != side and v >= 1.0 and not (st and st["side"] == side and st["score"] >= 9):
+            score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most (unless the stats are 9+)
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                       "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal, "raw": raw_score}
