@@ -1897,8 +1897,9 @@ VALUE_W = 0.2  # how much the season price model adds to the stats (was 0.35): t
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
 LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
-DEF_TOTAL_W = 1.5  # two top (or bottom) quarter defenses push a football total this much
+DEF_TOTAL_W = 1.0  # two top (or bottom) quarter defenses push a football total this much
 INJ_TOTAL_W = 0.6  # share of a missing player's scoring a basketball total loses
+CTX_CAP = 1.0  # most that defenses + pace together can move a football total
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.1)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
@@ -2127,6 +2128,7 @@ def stat_matchup(lg, g, nteams):
             wild = abs(blend_total - ln["totalNum"]) >= TOT_WILD[lg]
             dfr = R.get("PPG/A")
             def_note = []
+            sig_before_ctx = sig  # defenses and pace are game context: together they can move the total at most CTX_CAP
             if dfr and None not in (dfr[1][4], dfr[2][0]):
                 if max(dfr[1][4], dfr[2][0]) <= nteams * 0.25:
                     sig -= DEF_TOTAL_W
@@ -2144,6 +2146,8 @@ def stat_matchup(lg, g, nteams):
                 if abs(nudge) >= PACE_W / 2:
                     pace_note = [(f"Pace: {g['away']['abbr']} ranks {ordn(pace[1][4])} and {g['home']['abbr']} {ordn(pace[2][0])} in plays per game",
                                   "over" if nudge > 0 else "under")]
+            # The scoring projection already reflects good defenses and slow offenses, so the context nudges can't stack.
+            sig = sig_before_ctx + max(-CTX_CAP, min(CTX_CAP, sig - sig_before_ctx))
             if wild:
                 pace_note = pace_note + [(f"Our number is {abs(blend_total - ln['totalNum']):.0f} points from the market: a gap that big usually "
                                           "means the line knows something (injuries, weather, a backup QB), so this stays a Lean at most",
