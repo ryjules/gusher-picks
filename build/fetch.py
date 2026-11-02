@@ -2697,12 +2697,21 @@ MAX_3PT_TAKES = 2  # per game: threes rise and fall together on a hot or cold sh
 
 
 def cap_threes(g):
-    """3-pointer props in one game move together (pace, shooting luck, a blowout), so only the best two stay Takes."""
+    """3-pointer props in one game move together (pace, shooting luck, a blowout): only the best two stay Takes, and at most one per team."""
     tk = sorted([p for p in g.get("props") or [] if p["cat"] == "3PT Made" and (p.get("analysis") or {}).get("verdict", "").startswith("Take")],
                 key=lambda p: -p["score"])
-    for p in tk[MAX_3PT_TAKES:]:
-        p["analysis"]["verdict"] = "Fade"
-        p["analysis"]["against"].append("Already two 3-pointer plays in this game: threes rise and fall together on one shooting night.")
+    kept, teams = 0, set()
+    for p in tk:
+        if p["team"] in teams:
+            # Two shooters on one team ride the same shooting night, pace and perimeter defense: one bet, not two.
+            p["analysis"]["verdict"] = "Fade"
+            p["analysis"]["against"].append(f"Already a 3-pointer play on {p['team']}: teammates' threes rise and fall together.")
+        elif kept >= MAX_3PT_TAKES:
+            p["analysis"]["verdict"] = "Fade"
+            p["analysis"]["against"].append("Already two 3-pointer plays in this game: threes rise and fall together on one shooting night.")
+        else:
+            kept += 1
+            teams.add(p["team"])
 
 
 def attach_analysis():

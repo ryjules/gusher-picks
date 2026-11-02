@@ -693,6 +693,7 @@ const VLABEL = { 'Take small': 'Small bet', 'Take large': 'Large bet' };  // dis
 function propWhyNot(p, pa) {
   const t = [...(pa.against || []), ...(pa.warn || [])].join(' ');
   if (/Already playing his (.+?) prop/.test(t)) return `His ${t.match(/Already playing his (.+?) prop/)[1]} prop is the bet`;
+  if (/Already a 3-pointer play on/.test(t)) return 'Teammate has the 3PT bet';
   if (/Already two 3-pointer/.test(t)) return 'Two 3PT bets already in this game';
   if (/price already reflects/.test(t)) return 'Price already reflects it';
   if (/can.t claim an edge/.test(t)) return 'Line far from his usual numbers';
