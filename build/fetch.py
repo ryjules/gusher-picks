@@ -829,7 +829,8 @@ def rescore_prop(pr, key=None):
     if pr["cat"] == "Touchdowns":
         # Anytime TD: rank how likely the player is to score (blended chance plus the matchup), like the
         # Profit Hunt sheets; whether the price is worth it shows as Edge and decides Take vs Fade.
-        likely = max(0.0, min(10.0, (blend - 0.05) / 0.6 * 10))
+        # The score leans on his own scoring data (75%); Kalshi's price only nudges it (it was 65%+ of the read).
+        likely = max(0.0, min(10.0, ((0.75 * pr["prob"] + 0.25 * market) - 0.05) / 0.6 * 10))
         pr["score"] = round(max(0.0, min(10.0, 0.7 * likely + 0.3 * (pr.get("matchup") or 5))), 1)
         return
     # Score = how strongly the player's data backs the pick (like the Profit Hunt sheets): the model's chance
@@ -1979,7 +1980,7 @@ TOT_WILD_CAP = 6.0
 TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
 PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
-MOVE_W = 0.3  # most a line move can add (was 0.75: the data drives picks, the market is a light touch)
+MOVE_W = 0.25  # most a line move can add to a confidence score (was 0.75: the data drives picks, the market is a light touch)
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
