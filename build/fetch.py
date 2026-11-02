@@ -2825,7 +2825,11 @@ def update_history(path_in, path_out):
                 # Passes (under 4) are logged too, so the results table can show whether passing was right.
                 if old and not old.get("result") and old.get("verdict") in TAKES and not take:
                     old["verdict"], old["score"], old["stake"] = a["verdict"], a["score"], 1  # dropped before kickoff
-                if not old or (take and old.get("verdict") not in TAKES):
+                # Until tip-off a bet follows the board: a size change (regular <-> large/small) or a new line or side
+                # re-logs it, so the P&L and Top Picks match what the game page shows.
+                follow = (take and old and not old.get("result") and old.get("verdict") in TAKES
+                          and (old.get("verdict") != a["verdict"] or (kind != "moneyline" and old.get("play") != (g.get("pick") or {}).get(kind, {}).get("call"))))
+                if not old or (take and old.get("verdict") not in TAKES) or follow:
                     try:
                         pk = pick_from_game(lg, g, kind, a)
                     except (KeyError, TypeError):
@@ -2855,6 +2859,9 @@ def update_history(path_in, path_out):
                     continue  # (a rebuilt day has no live prop prices, so its props are not logged)
                 pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
                 if pid in hist:
+                    o = hist[pid]
+                    if not o.get("result") and o.get("verdict") in TAKES and o.get("verdict") != a["verdict"]:
+                        o["verdict"], o["score"], o["stake"] = a["verdict"], p["score"], STAKE.get(a["verdict"], 1)
                     continue
                 text = f"{p['player']} anytime TD" if p["cat"] == "Touchdowns" else f"{p['player']} {'u' if p['side'] == 'Under' else 'o'}{p['line']:g} {p['cat']}"
                 hist[pid] = {"id": pid, "date": game_day(g), "time": g["date"].split(" · ")[1].replace(" ET", ""), "league": lg,
