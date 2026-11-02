@@ -1979,13 +1979,15 @@ TOT_WILD_CAP = 6.0
 TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
 PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
-MOVE_W = 0.75  # most a line move can add
+MOVE_W = 0.3  # most a line move can add (was 0.75: the data drives picks, the market is a light touch)
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
 SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
 SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
+KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
+PROP_EDGE_MIN = -0.01  # props: Fade only when Kalshi prices the side above the model (was +0.02)
 VALUE_W = 0.2  # how much the season price model adds to the stats (was 0.35): the stats lead
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
@@ -2513,8 +2515,12 @@ def analyze_game(lg, g, kind, nteams):
         if kt:
             tips.append(f"Near the key total {kt}: shop for {kt} or buy the half-point so a {kt} pushes.")
     if k and k.get("p") is not None:
-        (why if k["p"] >= 0.5 else against).append(
-            f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']})" + ("." if k["p"] >= 0.5 else ", so the market leans the other way."))
+        if k["p"] >= 0.5:
+            why.append(f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']}).")
+        elif k["p"] >= KALSHI_AGAINST:
+            tips.append(f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']}): about even.")
+        else:
+            against.append(f"Kalshi prices this side at {round(k['p'] * 100)}% ({k['odds']}), so the market leans the other way.")
     if m.get("trust") is not None and m["trust"] < 0.3:
         tips.append(f"Early season: the price model only counts {round(m['trust'] * 100)}% against the market with this few games played.")
     if kind != "moneyline":
@@ -2533,18 +2539,23 @@ def analyze_game(lg, g, kind, nteams):
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
     TAKE_BAR = (LEAN_BAR.get(lg) or {}).get("bar", LEAN_BAR_BASE)  # set from recent results (see lean_bars)
+    # Market signals (Kalshi, line moves) are shown but count lightly: only a clear Kalshi lean the other way
+    # (under 45%) holds a pick back, and they don't count in the reasons-for vs reasons-against tally.
+    market_no = bool(k and k.get("p") is not None and k["p"] < KALSHI_AGAINST)
+    is_mkt = lambda t: t.startswith(("Kalshi prices", "Line moved", "Total moved"))
+    n_why, n_against = sum(1 for t in why if not is_mkt(t)), sum(1 for t in against if not is_mkt(t))
     if score >= 7:
         verdict = "Take small" if len(warn) >= 2 or oppose else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         if (verdict == "Take" and kind != "moneyline" and score >= LARGE_BAR and not warn and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= 7
                 and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1) and (pk.get("trend") or 0) >= 0
-                and (not k or k.get("p", 1) >= 0.5)):
+                and not market_no):
             # Everything agrees: the stats are strong, the price model and trends point the same way, no warnings.
             verdict = "Take large"
     elif score >= 4:
         # Not every game needs a play: a Lean becomes a Take only from 6.5 up (raised from 5 after a 42-play college Saturday), with nothing against it.
-        verdict = "Take" if (score >= TAKE_BAR and not warn and not oppose and (not k or k.get("p", 1) >= 0.5) and len(against) <= len(why)) else "Fade"
+        verdict = "Take" if (score >= TAKE_BAR and not warn and not oppose and not market_no and n_against <= n_why) else "Fade"
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
@@ -2627,7 +2638,7 @@ def analyze_prop(p, g=None, lg=None):
         q = next((x for x in ((g.get("inj") or {}).get(side) or []) if x.get("id") == p.get("pid")), None)
         if q:
             warn.append(f"{p['player']} is listed {q['status'].lower()}.")
-    if (p.get("edge") or 0) < 0.02 and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
+    if (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else PROP_EDGE_MIN) and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
         # The data likes it, but the price already says so: no value in betting it.
         against.append("The price already reflects what the data shows, so there's no value at this number."
                        if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
