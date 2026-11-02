@@ -949,7 +949,7 @@ function renderProps() {
 }
 
 /* ---------------- plays tracker ---------------- */
-let src = 'mine';
+let src = 'model';  // Model picks first; My plays is the second tab
 const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => /^Take/.test(p.verdict || '') && p.grade?.kind !== 'ml') } };
 let psport = 'all';
 const closedGroups = new Set();
@@ -1032,6 +1032,7 @@ async function gradeAll(quiet) {
   if (!quiet) toast(todo.length ? `Graded ${todo.length} play${todo.length > 1 ? 's' : ''}` : 'Nothing new to grade yet. Grades fill in after the daily refresh.');
 }
 function openAdd(prefill) {
+  src = 'mine';  // adding a play always happens on My plays
   if (draft && draft.type === 'parlay' && prefill) {  // building a parlay: + Track adds a leg instead of starting over
     syncDraft();
     draft.legs.push({ league: prefill.league, matchup: prefill.matchup, play: prefill.play, price: prefill.price, grade: prefill.grade || null, date: prefill.date, time: prefill.time });
@@ -1348,7 +1349,7 @@ function renderPlays() {
   const sportWord = psport === 'all' ? '' : LEAGUES[psport].short + ' ';
   $('board').innerHTML = `<div class="plays">
     <div class="ph">
-      <div class="srctabs" role="tablist" aria-label="Whose plays">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to && inSport(p))), v = ss.units * U;
+      <div class="srctabs" role="tablist" aria-label="Whose plays">${[["model", SRC.model], ["mine", SRC.mine]].map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to && inSport(p))), v = ss.units * U;
         return `<button type="button" role="tab" data-src="${key}" aria-selected="${src === key}"><span>${key === 'mine' ? 'My plays' : 'Model picks'}</span><b class="${pc(v)}">${ss.n ? money(v) : '—'}</b></button>`; }).join('')}</div>
       <span class="spacer"></span>
       ${src === 'mine' ? `<button type="button" class="pbtn" id="p-grade" title="Grade finished plays now">Grade</button><button type="button" class="pbtn primary" id="p-add">+ Add play</button><button type="button" class="pbtn parlay" id="p-parlay">+ Add parlay</button>` : ''}
