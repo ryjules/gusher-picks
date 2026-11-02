@@ -1887,6 +1887,8 @@ TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
 LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
 LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
+SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
+PROP_SMALL_BELOW = 8.0  # props from the 7.5 bar up to this are Small bets
 def ordn(n):
     if n is None:
         return "—"
@@ -2548,7 +2550,7 @@ def analyze_game(lg, g, kind, nteams):
     n_why, n_against = sum(1 for t in why if not is_mkt(t)), sum(1 for t in against if not is_mkt(t))
     if score >= 7:
         # Sizing manages risk without capping plays: any warning (low total, big spread, key injury) makes it a half-unit bet.
-        verdict = "Take small" if warn or oppose else "Take"
+        verdict = "Take small" if warn or oppose or score < SMALL_BELOW else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         if (verdict == "Take" and kind != "moneyline" and score >= LARGE_BAR and not warn and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
@@ -2558,7 +2560,7 @@ def analyze_game(lg, g, kind, nteams):
             verdict = "Take large"
     elif score >= 4:
         # Not every game needs a play: a Lean becomes a Take only from 6.5 up (raised from 5 after a 42-play college Saturday), with nothing against it.
-        verdict = "Take" if (score >= TAKE_BAR and not warn and not oppose and not market_no and n_against <= n_why) else "Fade"
+        verdict = "Take small" if (score >= TAKE_BAR and not warn and not oppose and not market_no and n_against <= n_why) else "Fade"  # a Lean that clears the bar: half a unit
     else:
         verdict = "Pass"
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
@@ -2665,7 +2667,7 @@ def analyze_prop(p, g=None, lg=None):
     elif p["score"] >= 7 and warn and p["score"] < PROP_WARN_BAR:
         verdict = "Fade"  # a warning (bench role, injury tag, tough defense) needs a really strong read to still bet
     elif p["score"] >= 7:
-        verdict = "Take small" if warn else "Take"
+        verdict = "Take small" if warn or p["score"] < PROP_SMALL_BELOW else "Take"  # just over the bar: half a unit
         if verdict == "Take" and p["score"] >= 9 and won >= 4 and not against and (p.get("edge") or 0) >= 0.05:
             verdict = "Take large"  # strong form, a good matchup and a real edge over the price
     elif p["score"] >= 4:

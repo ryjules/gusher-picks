@@ -999,7 +999,7 @@ function fromGame(g, kind, lg = league) {
   const league = lg;
   const pk = (g.pick || {})[kind];
   const m = pk ? { mlSide: pk.call, spreadSide: pk.call, totalSide: pk.call } : g.model;
-  const ln = g.lines, base = { date: gameDay(g), time: gameTime(g), league: league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, book: 'DK', stake: (analyze(league, g, kind) || {}).verdict === 'Take large' ? 2 : 1 };
+  const ln = g.lines, base = { date: gameDay(g), time: gameTime(g), league: league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, book: 'DK', stake: ({ 'Take large': 2, 'Take small': 0.5 })[(analyze(league, g, kind) || {}).verdict] || 1 };
   if (kind === 'moneyline') {
     const side = m.mlSide.startsWith(g.home.abbr + ' ') ? 'home' : 'away';
     return { ...base, play: `${g[side].abbr} ML`, price: priceNum(side === 'home' ? ln.homeML : ln.awayML), grade: { league, game: g.id, kind: 'ml', side } };
@@ -1016,7 +1016,7 @@ function fromProp(p, lg = league) {
   const league = lg;
   const g = findGame(league, p.game);
   const text = p.cat === 'Touchdowns' ? `${p.player} anytime TD` : `${p.player} ${p.side === 'Under' ? 'u' : 'o'}${p.line} ${p.cat}`;
-  return { date: gameDay(g), time: gameTime(g), league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, play: text, price: p.kalshiOdds ? priceNum(p.kalshiOdds) : -110, book: 'DK', stake: (p.analysis || {}).verdict === 'Take large' ? 2 : 1,
+  return { date: gameDay(g), time: gameTime(g), league, matchup: `${g.away.abbr} @ ${g.home.abbr}`, play: text, price: p.kalshiOdds ? priceNum(p.kalshiOdds) : -110, book: 'DK', stake: ({ 'Take large': 2, 'Take small': 0.5 })[(p.analysis || {}).verdict] || 1,
     grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: p.side === 'Under' ? 'under' : 'over', line: p.line } };
 }
 function gradeOf(p) {
