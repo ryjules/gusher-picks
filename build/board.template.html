@@ -322,9 +322,11 @@ details.grp > summary:hover { color: var(--cyan); }
 .rc-grid h4 { margin: 0 0 6px; font: 800 .85rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .rc-grid ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .92rem; }
 .rc-grid p { margin: 6px 0 0; color: var(--muted); font-size: .88rem; }
+.pbtn.parlay { border-color: var(--cyan); color: var(--cyan); }
 .ptype { grid-column: 1 / -1; display: inline-flex; gap: 4px; } .ptype button { background: transparent; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 6px 14px; font: 700 .85rem var(--f-display); letter-spacing: .05em; cursor: pointer; }
 .ptype button[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); }
-.legs { display: grid; gap: 6px; grid-column: 1 / -1; } .leg { display: grid; grid-template-columns: 70px 1fr 1.4fr 90px 34px; gap: 6px; align-items: center; }
+.legs { display: grid; gap: 6px; } .legs-h { font: 700 .75rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.leg { display: grid; grid-template-columns: 90px minmax(120px, 1fr) minmax(160px, 1.6fr) 110px 34px; gap: 6px; align-items: center; } .legs > .pbtn { justify-self: start; }
 .leg-lg { font: 700 .8rem var(--f-display); color: var(--muted); } .leg-auto { grid-column: 2 / -1; color: var(--muted); font-size: .72rem; margin-top: -4px; }
 .lr { font-style: normal; font-weight: 800; margin-right: 3px; } .lr.W { color: var(--win); } .lr.L { color: var(--loss); } .lr.P { color: var(--muted); }
 @media (max-width: 640px) { .leg { grid-template-columns: 1fr 1fr; } }
@@ -1310,13 +1312,14 @@ function renderPlays() {
       <button type="button" class="del" data-legdel="${i}" aria-label="Remove leg ${i + 1}">✕</button>${l.grade ? '<small class="leg-auto">grades itself</small>' : ''}</div>`;
   const isParlay = f && f.type === 'parlay';
   const typeSw = f ? `<div class="ptype" role="group" aria-label="Play type"><button type="button" data-ptype="single" aria-pressed="${!isParlay}">Single</button><button type="button" data-ptype="parlay" aria-pressed="${!!isParlay}">Parlay</button></div>` : '';
+  const pOdds = f && isParlay ? (f.priceManual ? f.price : parlayPrice(f.legs)) : null;
   const form = isParlay ? `<form class="form" id="addf">${typeSw}
+      <div class="legs" style="grid-column:1/-1"><span class="legs-h">Legs</span>${f.legs.map(legRow).join('') || '<p class="msg">No legs yet. Tap + Add leg, or tap + Track on any pick on the board while this form is open.</p>'}
+        <button type="button" class="pbtn" id="f-legadd">+ Add leg</button></div>
       <label for="f-date">Date<input id="f-date" type="date" value="${esc(f.date)}" required></label>
       <label for="f-book">Book<input id="f-book" value="${esc(f.book)}"></label>
       <label for="f-stake">Stake (units)<input id="f-stake" type="number" step="0.25" min="0.25" value="${esc(f.stake)}"></label>
-      <div class="legs wide">${f.legs.map(legRow).join('') || '<p class="msg">No legs yet. Add one below, or tap + Track on any pick on the board while this form is open.</p>'}
-        <button type="button" class="pbtn" id="f-legadd">+ Add leg</button></div>
-      <label for="f-price">Parlay odds<input id="f-price" value="${esc((f.priceManual ? f.price : parlayPrice(f.legs)) > 0 ? '+' + (f.priceManual ? f.price : parlayPrice(f.legs)) : (f.priceManual ? f.price : parlayPrice(f.legs)) ?? '')}" inputmode="numeric" placeholder="from the legs" required></label>
+      <label for="f-price">Parlay odds<input id="f-price" value="${esc(pOdds == null ? '' : pOdds > 0 ? '+' + pOdds : pOdds)}" inputmode="numeric" placeholder="from the legs" required></label>
       <div class="actions"><button class="save" type="submit">Save parlay</button><button class="pbtn" type="button" id="f-cancel">Cancel</button></div>
       <p class="msg" id="f-msg" style="grid-column:1/-1"><span id="f-risk"></span>Odds fill in from the legs; type your book's price to override. Tracked legs grade themselves; a parlay with a hand-entered leg is graded with the W / L / P buttons. A losing leg loses the parlay, and a pushed leg drops out.</p>
     </form>` : f ? `<form class="form" id="addf">${typeSw}
@@ -1345,7 +1348,7 @@ function renderPlays() {
       <div class="srctabs" role="tablist" aria-label="Whose plays">${Object.entries(SRC).map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to && inSport(p))), v = ss.units * U;
         return `<button type="button" role="tab" data-src="${key}" aria-selected="${src === key}"><span>${key === 'mine' ? 'My plays' : 'Model picks'}</span><b class="${pc(v)}">${ss.n ? money(v) : '—'}</b></button>`; }).join('')}</div>
       <span class="spacer"></span>
-      ${src === 'mine' ? `<button type="button" class="pbtn" id="p-grade" title="Grade finished plays now">Grade</button><button type="button" class="pbtn primary" id="p-add">+ Add play</button>` : ''}
+      ${src === 'mine' ? `<button type="button" class="pbtn" id="p-grade" title="Grade finished plays now">Grade</button><button type="button" class="pbtn primary" id="p-add">+ Add play</button><button type="button" class="pbtn parlay" id="p-parlay">+ Add parlay</button>` : ''}
     </div>
     <div class="ptool">
       <div class="seg" role="group" aria-label="Period">${PERIODS.map(([k, v]) => `<button type="button" data-per="${k}" aria-pressed="${period === k}">${v}</button>`).join('')}</div>
@@ -1362,7 +1365,7 @@ function renderPlays() {
     ${src === 'model' ? `<details class="how"><summary>How the model picks P&amp;L works</summary><p>What you'd have made betting every green TAKE pick on spreads, totals and props (moneylines aren't counted). Each refresh logs that day's Take picks at the price shown then (1 unit, 2 for a Large bet, half for a Small bet) and grades them from final scores and box scores. Props are priced at Kalshi's fair odds, or -110 without one. A player who doesn't play is a void.</p></details>` : ''}
     ${empty ? `<div class="empty"><b>No ${esc(sportWord)}plays ${esc(when)}</b>
         <p>${src === 'mine' ? 'Tap + Track on any pick on the board, or add a play yourself. Tracked plays grade themselves once the game is final.' : 'The model logs its Take picks each refresh; they show here once they are on the board for this period.'}</p>
-        <div class="row">${src === 'mine' ? '<button type="button" class="pbtn primary" id="p-add2">+ Add play</button>' : ''}<button type="button" class="pbtn" id="p-home">Browse Top Picks</button>${period !== 'all' ? '<button type="button" class="pbtn" id="p-all">See all time</button>' : ''}</div></div>`
+        <div class="row">${src === 'mine' ? '<button type="button" class="pbtn primary" id="p-add2">+ Add play</button><button type="button" class="pbtn parlay" id="p-parlay2">+ Add parlay</button>' : ''}<button type="button" class="pbtn" id="p-home">Browse Top Picks</button>${period !== 'all' ? '<button type="button" class="pbtn" id="p-all">See all time</button>' : ''}</div></div>`
     : dbState === 'ready' ? `<div class="sumbar">
         <div class="big"><span>Profit</span><b class="${pc(profit)}">${money(profit)}</b><small>${usign(s.units)}${s.n > s.settledN ? ` · ${s.n - s.settledN} pending` : ''}</small></div>
         <div><span>Record</span><b>${rec(s)}</b><small>${s.n} play${s.n === 1 ? '' : 's'}</small></div>
@@ -1404,6 +1407,8 @@ function renderPlays() {
   on('p-grade', () => gradeAll(false));
   const addPlay = () => { draft = { date: pday, time: '', league: league, matchup: '', play: '', price: -110, book: 'DK', stake: 1 }; renderPlays(); };
   on('p-add', addPlay); on('p-add2', addPlay);
+  const addParlay = () => { draft = { type: 'parlay', date: pday, book: 'DK', stake: 1, legs: [], price: null, priceManual: false }; renderPlays(); };
+  on('p-parlay', addParlay); on('p-parlay2', addParlay);
   $('board').querySelectorAll('[data-ptype]').forEach(b => b.onclick = () => {
     if (b.dataset.ptype === 'parlay' && draft.type !== 'parlay') {
       const first = draft.play ? [{ league: draft.league, matchup: draft.matchup, play: draft.play, price: draft.price, grade: draft.grade || null, date: draft.date, time: draft.time }] : [];
