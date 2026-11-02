@@ -276,6 +276,7 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .pick .why { color: var(--muted); font-size: .85rem; min-width: 0; }
 @media (max-width: 760px) { .pick { grid-template-columns: 52px minmax(0, 1fr) auto; } .pick .lgc, .pick .why { display: none; } .pick .who { grid-column: 2 / -1; grid-row: 2; } }
 .pick .add { white-space: nowrap; }
+.whynot { display: block; margin-top: 3px; max-width: 92px; font-size: .68rem; line-height: 1.2; color: var(--muted, #9aa3ad); }
 .vchip { display: inline-block; font: 800 .78rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
 .v-take { background: #173524; color: var(--win); border: 1px solid var(--win); }
 .v-large { background: var(--win); color: #0b1a12; border: 1px solid var(--win); }
@@ -688,6 +689,20 @@ function analyzeProp(p) { return p.analysis || null; }
 const VCLS = { 'Take large': 'v-large', 'Take': 'v-take', 'Take small': 'v-small', 'Fade': 'v-fade', 'Pass': 'v-pass' };
 const VTIP = { 'Take large': 'Everything agrees: strong stats, the price model and trends on the same side, no warnings. 2 units.', 'Take': 'The numbers line up and nothing raises a red flag.', 'Take small': 'Strong edge, but with warnings: use a smaller stake.', 'Fade': 'Skip it: the warnings or the market outweigh the edge.', 'Pass': 'No real edge.' };
 const VLABEL = { 'Take small': 'Small bet', 'Take large': 'Large bet' };  // display names; the stored verdicts stay the same
+// Props: a strong score that still isn't a bet gets a short reason under the chip.
+function propWhyNot(p, pa) {
+  const t = [...(pa.against || []), ...(pa.warn || [])].join(' ');
+  if (/Already playing his (.+?) prop/.test(t)) return `His ${t.match(/Already playing his (.+?) prop/)[1]} prop is the bet`;
+  if (/Already two 3-pointer/.test(t)) return 'Two 3PT bets already in this game';
+  if (/price already reflects/.test(t)) return 'Price already reflects it';
+  if (/can.t claim an edge/.test(t)) return 'Line far from his usual numbers';
+  if (/receptions need an 8\.0/.test(t)) return 'Receptions need 8.0+';
+  if (/rebounds need an 8\.0/.test(t)) return 'Rebounds need 8.0+';
+  if (/Backup-sized line/.test(t)) return 'Line too small to bet';
+  if (p.score < 7.5) return 'Props need 7.5+ to bet';
+  if ((pa.warn || []).length) return 'Warning: needs 8.5+ (hover for why)';
+  return 'Hover for why';
+}
 const vchip = v => `<span class="vchip ${VCLS[v]}" title="${esc(VTIP[v])}">${esc(VLABEL[v] || v)}</span>`;
 function reasonList(a) {
   return [...a.why.map(t => `<li class="r-yes">${esc(t)}</li>`), ...a.against.map(t => `<li class="r-no">${esc(t)}</li>`),
@@ -923,7 +938,7 @@ function renderProps() {
     const avgCls = beat(p.avg5) ? 'g' : '';
     const edge = p.edge != null ? `<span class="${p.edge > 0 ? 'g' : 'rd'}">${p.edge > 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</span>` : '';
     const pa = analyzeProp(p);
-    return `<tr><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${vchip(pa.verdict)}</div>` : ''}</td>
+    return `<tr><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${pa.verdict === 'Fade' ? '<span class="vchip v-fade">No bet</span>' : vchip(pa.verdict)}</div>${pa.verdict === 'Fade' ? `<small class="whynot">${esc(propWhyNot(p, pa))}</small>` : ''}` : ''}</td>
       <td class="ln">${lineTxt}${moveTag(p.open, p.line)}${p.lineSrc === 'Kalshi' ? '<small class="ksrc">Kalshi line</small>' : ''}${p.line != null ? liveBar({ grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: under ? 'under' : 'over', line: p.line } }) : ''}</td>
       <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small>${p.check && !p.check.ok ? `<small class="flag" title="${esc(p.check.text)}">⚠ game log differs from nflverse</small>` : ''}${p.flag ? '<small class="flag" title="The line is far from this player\'s recent numbers and the market agrees, which usually means injury or role news.">⚠ line far from form, check news</small>' : ''}</td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}
       <td class="op">${p.home ? 'vs' : '@'} ${esc(p.oppName)} <small>(${ord(p.oppRank)})</small></td>
