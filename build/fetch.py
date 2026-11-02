@@ -360,6 +360,15 @@ def trust(n, key):
     return n / (n + TRUST_K.get(key, 6))
 
 
+def sos_val(gl, tid, net, n=5):
+    """Average rating (points per game vs average) of a team's last n opponents; unrated opponents count as the weakest."""
+    if not gl or not net:
+        return None
+    floor = min(net.values())
+    opp = [net.get(next((k for k in g["teams"] if k != tid), None), floor) for g in gl[-n:]]
+    return round(sum(opp) / len(opp), 2) if opp else None
+
+
 def american(ml):
     return None if ml in (None, 0) else (1 + ml / 100 if ml > 0 else 1 + 100 / -ml)
 
@@ -2022,15 +2031,6 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
 SOS_W = {"cfb": 1.0, "nfl": 1.0, "nba": 1.5, "cbb": 1.5}  # most strength the schedule can add or take (football's power rating already credits schedule)
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
-
-
-def sos_val(gl, tid, net, n=5):
-    """Average rating (points per game vs average) of a team's last n opponents; unrated opponents count as the weakest."""
-    if not gl or not net:
-        return None
-    floor = min(net.values())
-    opp = [net.get(next((k for k in g["teams"] if k != tid), None), floor) for g in gl[-n:]]
-    return round(sum(opp) / len(opp), 2) if opp else None
 
 
 def stat_matchup(lg, g, nteams):
