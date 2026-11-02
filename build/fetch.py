@@ -1653,9 +1653,9 @@ def run_basketball(lg, key, start, groups):
     sigma, unit = (12.0, 0.45) if key == "nba" else (11.0, 0.6)
 
     cur = get(f"{BB}/{lg}/scoreboard?{q.lstrip('&')}")
-    if key == "cbb" and not BACKFILL:
-        # ESPN's default college day lags (it kept showing yesterday's late games on opening day), so ask for
-        # today's ET date: every Division I game goes on the board, scored or not.
+    if not (BACKFILL and key == "nba"):
+        # ESPN's default basketball day lags into the morning (on Nov 2 it still showed Sunday's games at 10 AM),
+        # so ask for today's ET date: every game on today's slate goes on the board, scored or not.
         today = get(f"{BB}/{lg}/scoreboard?dates={datetime.now(ET).strftime('%Y%m%d')}&{q.lstrip('&')}")
         if (today or {}).get("events"):
             seen = {e["id"] for e in today["events"]}
