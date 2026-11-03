@@ -525,13 +525,25 @@ function modelText(g, L, R) {
   const m = g.model;
   if (!m) return '';
   const fav = m.home >= m.away ? R : L, by = Math.abs(m.home - m.away);
-  const bits = [];
-  if (m.spreadSide) bits.push(`against the spread it likes <b>${esc(m.spreadSide)}</b> by ${m.spreadEdge} pts`);
-  if (m.totalSide) bits.push(`on the total it leans <b>${esc(m.totalSide)}</b> by ${m.totalEdge} pts`);
-  if (m.mlSide) bits.push(`its best moneyline is <b>${esc(m.mlSide)}</b> (${m.mlEV >= 0 ? '+' : ''}${(m.mlEV * 100).toFixed(1)}% expected value)`);
-  return `<div class="model"><b>Model projection:</b> ${esc(L.name)} ${m.away}, ${esc(R.name)} ${m.home}
-    (${esc(fav.name)} by ${by.toFixed(1)}, total ${(m.away + m.home).toFixed(1)}; ${esc(R.name)} wins ${(m.pHome * 100).toFixed(0)}% of the time).
-    ${bits.length ? 'Weighted against the market' + (m.trust != null ? ` (model counts ${Math.round(m.trust * 100)}% with this many games played)` : '') + ', ' + bits.join('; ') + '.' : ''}</div>`;
+  // The picks come from the stat matchup; the price model is a second opinion. Say plainly whether they agree.
+  const pk = g.pick || {}, lines = [];
+  const size = v => v === 'Take large' ? 'it stays a large bet' : v === 'Take' ? 'it is still a full bet' : v === 'Take small' ? 'it is a small bet instead of a full one' : 'it stays a Lean, not a bet';
+  const says = {
+    spread: `${esc(fav.name)} by ${by.toFixed(1)}`,
+    total: `${(m.away + m.home).toFixed(1)} total points`,
+    moneyline: `${esc(R.name)} winning ${(m.pHome * 100).toFixed(0)}% of the time`,
+  };
+  const lean = { spread: m.spreadSide, total: m.totalSide, moneyline: m.mlSide };
+  for (const [kind, nm] of [['spread', 'Spread'], ['total', 'Total'], ['moneyline', 'Moneyline']]) {
+    const p = pk[kind], c = (g.confidence || {})[kind];
+    if (!p || !c || c[0] < 4 || !p.valueSide) continue;  // only explain picks that are Leans or bets
+    const v = (analyze(league, g, kind) || {}).verdict;
+    if (p.valueSide === p.side) lines.push(`<b>${nm}:</b> the price model agrees with ${esc(p.call)} (it projects ${says[kind]}).`);
+    else if ((p.value || 0) >= 0.5) lines.push(`<b>${nm}:</b> the stats and the price model disagree. The stats favor ${esc(p.call)}; the price model projects ${says[kind]}, which leans ${esc(lean[kind] || 'the other way')}. The stats lead, so ${size(v)}.`);
+  }
+  return `<div class="model"><b>Price model (second opinion):</b> ${esc(L.name)} ${m.away}, ${esc(R.name)} ${m.home}
+    (${esc(fav.name)} by ${by.toFixed(1)}, total ${(m.away + m.home).toFixed(1)}; ${esc(R.name)} wins ${(m.pHome * 100).toFixed(0)}% of the time), from team ratings fit to every score this season${m.trust != null ? `, counted ${Math.round(m.trust * 100)}% against the line with this many games played` : ''}.
+    ${lines.length ? '<br>' + lines.join('<br>') : ''}</div>`;
 }
 
 function confCell(g, kind, label, c) {
@@ -540,7 +552,7 @@ function confCell(g, kind, label, c) {
   const canAdd = g.state === 'pre' && g.model && (kind !== 'moneyline' || g.model.mlSide) && (kind !== 'spread' || g.model.spreadSide) && (kind !== 'total' || g.model.totalSide);
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
-  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? ' ' + sideName(pk.valueSide) : ''}${pk.trend ? ` · Trends ${pk.trend > 0 ? '+' : ''}${pk.trend.toFixed(1)}` : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
+  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? (pk.valueSide === pk.side ? ' agrees' : ' disagrees') : ''}${pk.trend ? ` · Trends ${pk.trend > 0 ? '+' : ''}${pk.trend.toFixed(1)}` : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
   return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 
