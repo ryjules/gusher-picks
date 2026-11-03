@@ -1676,7 +1676,12 @@ def run_basketball(lg, key, start, groups):
     if not (BACKFILL and key == "nba"):
         # ESPN's default basketball day lags into the morning (on Nov 2 it still showed Sunday's games at 10 AM),
         # so ask for today's ET date: every game on today's slate goes on the board, scored or not.
-        today = get(f"{BB}/{lg}/scoreboard?dates={datetime.now(ET).strftime('%Y%m%d')}&{q.lstrip('&')}")
+        today = None
+        for ahead in range(4):  # an off day (Nov 3, Election Day) shows the next slate instead of yesterday's games
+            day_ = (datetime.now(ET) + timedelta(days=ahead)).strftime('%Y%m%d')
+            today = get(f"{BB}/{lg}/scoreboard?dates={day_}&{q.lstrip('&')}")
+            if (today or {}).get("events"):
+                break
         if (today or {}).get("events"):
             seen = {e["id"] for e in today["events"]}
             today["events"] += [e for e in (cur or {}).get("events", []) if e["id"] not in seen
