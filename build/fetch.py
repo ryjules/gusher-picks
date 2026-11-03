@@ -3519,9 +3519,14 @@ def check_odds():
         for lg in ODDS_SPORT:
             summary_add(lg, "The Odds API", 0, 0, "no API key in this session")
         return
+    # Credits are limited: call only to fill games missing lines, plus the morning cross-check of DraftKings.
+    morning = datetime.now(ET).hour in (8, 9, 10)
     for lg, sport in ODDS_SPORT.items():
         slate = [g for g in OUT_DATA.get(lg) or [] if g.get("state") == "pre"]
-        if not slate:
+        missing = any(g["lines"].get("spreadNum") is None for g in slate)
+        if not slate or not (missing or morning):
+            if slate:
+                summary_add(lg, "The Odds API", 0, 0, "skipped to save API credits (no missing lines; cross-check runs in the morning)")
             continue
         evs = fetch_json(f"https://api.the-odds-api.com/v4/sports/{sport}/odds?regions=us&markets=h2h,spreads,totals&oddsFormat=american&apiKey={key}") or []
         compared = 0
@@ -3554,7 +3559,7 @@ def check_odds():
             g["best"] = {f"{k[0]}:{k[1]}": {"price": fmt_ml(v[0]), "book": v[1], "point": v[2]} for k, v in best.items()}
             compared += 1
         summary_add(lg, "The Odds API", compared, 0, "lines compared across US books")
-    sc = fetch_json(f"https://api.the-odds-api.com/v4/sports/basketball_nba/scores?daysFrom=3&apiKey={key}") or []
+    sc = (fetch_json(f"https://api.the-odds-api.com/v4/sports/basketball_nba/scores?daysFrom=3&apiKey={key}") or []) if morning else []
     verified = problems = 0
     for e in sc:
         if not e.get("completed") or not e.get("scores"):
