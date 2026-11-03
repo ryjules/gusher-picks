@@ -1282,6 +1282,31 @@ def prop_tuning(path, base=8.0):
 
 
 PROP_TUNE = prop_tuning(sys.argv[3]) if len(sys.argv) > 3 else {}
+
+
+def price_agreement(path):
+    """Last 3 weeks of graded spreads and totals (4+), split by whether the price model agreed with the stat side.
+    If disagreement keeps going the stats' way, the price model's weight should come down (reviewed by hand)."""
+    try:
+        with open(path) as f:
+            saved = json.load(f)
+    except (OSError, ValueError, TypeError):
+        return {}
+    snaps, since, out = saved.get("pregame") or {}, (datetime.now(ET) - timedelta(days=21)).strftime("%Y-%m-%d"), {}
+    for p in saved.get("picks", []):
+        k = (p.get("grade") or {}).get("kind")
+        if k not in ("spread", "total") or p.get("result") not in ("W", "L") or (p.get("score") or 0) < 4 or p.get("date", "") < since:
+            continue
+        pk = ((snaps.get(f"{p['league']}-{p['grade']['game']}") or {}).get("pick") or {}).get(k) or {}
+        if not pk.get("valueSide"):
+            continue
+        rel = "agrees" if pk["valueSide"] == pk.get("side") else "disagrees" if (pk.get("value") or 0) >= 1 else None
+        if rel:
+            out.setdefault(p["league"], {}).setdefault(rel, [0, 0])[p["result"] == "L"] += 1
+    return out
+
+
+PRICE_AGREE = price_agreement(sys.argv[3]) if len(sys.argv) > 3 else {}
 et_day = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d")
 CUR = {}
 OUT_DATA = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")}
@@ -2612,8 +2637,8 @@ def blend_confidence(lg, g, n):
                     if st is not None:
                         st.setdefault("notes", []).append((f"The total moved {op_t:g} to {g['lines']['totalNum']:g} on injury news ({inj_pts:.1f} points of players out): "
                                                            "the market has already priced it, so this stays a Lean", "under" if side == "over" else "over"))
-        if kind != "moneyline" and vs and vs != side and v >= 1.0 and not (st and st["side"] == side and st["score"] >= 9):
-            score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most (unless the stats are 9+)
+        # (Removed Nov 3: the 6.9 cap when the price model disagreed. Graded picks went 9-3 on the stat side when it
+        # disagreed by 1+ and 34-32 when it agreed, and the 4 capped picks all won. The price model still counts 20%.)
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                       "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal, "raw": raw_score}
@@ -2626,8 +2651,6 @@ def blend_confidence(lg, g, n):
             c_ml, c_sp = conf["moneyline"], conf["spread"]
             new_ml = min(c_ml[0], SHORT_ML_CAP)
             new_sp = round(min(10.0, c_sp[0] + SHORT_ML_LIFT), 1)
-            if sp.get("valueSide") and sp["valueSide"] != sp["side"] and (sp.get("value") or 0) >= 1.0 and not ((sp.get("stat") or 0) >= 9):
-                new_sp = min(new_sp, max(c_sp[0], 6.9))  # the price model leans the other way: the lift can't make it a Play
             conf["moneyline"] = [new_ml, ("Lean " + ml["call"]) if new_ml >= 4 else "Pass"]
             conf["spread"] = [new_sp, (("Play " if new_sp >= 7 else "Lean ") + sp["call"])]
             ml["preferSpread"] = sp["preferSpread"] = True
@@ -3226,6 +3249,12 @@ def league_recap(lg):
         t3, s3 = lb["takes"], lb["skipped"]
         move = "lowered" if lb["bar"] < LEAN_BAR_BASE else "raised" if lb["bar"] > LEAN_BAR_BASE else "kept"
         plan.append(f"Lean-to-Take bar {move} {'to' if move != 'kept' else 'at'} {lb['bar']:.2f} for today: over three weeks {lb['why']}.")
+    pa = PRICE_AGREE.get(lg)
+    if pa:
+        fmt_ = lambda r: f"{r[0]}-{r[1]}" + (f" ({r[0] / (r[0] + r[1]):.0%})" if sum(r) else "")
+        plan.append(f"Price model check (3 weeks): when it agreed with the stats, picks went {fmt_(pa.get('agrees', [0, 0]))}; "
+                    f"when it disagreed by a point or more, the stat side went {fmt_(pa.get('disagrees', [0, 0]))}. It counts 20% of the score, "
+                    "and its weight comes down if disagreement keeps going our way.")
     pt = PROP_TUNE.get(lg)
     if pt:
         n_, h_, u_ = pt["bets"]
