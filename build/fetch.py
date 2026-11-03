@@ -3448,6 +3448,69 @@ def check_cbbd():
 
 
 ODDS_SPORT = {"nfl": "americanfootball_nfl", "nba": "basketball_nba", "cbb": "basketball_ncaab"}
+FILL_BOOKS = ["draftkings", "fanduel", "betmgm", "williamhill_us", "betrivers", "espnbet", "fanatics", "bovada"]
+
+
+def fill_lines(lg, g, e, h):
+    """ESPN has no DraftKings line yet (books post at different times): take the game's lines from the first US book
+    The Odds API lists, in FILL_BOOKS order, and score the game from them. The book is named on the board."""
+    books = {bk.get("key"): bk for bk in e.get("bookmakers") or []}
+    bk = next((books[k] for k in FILL_BOOKS if k in books), None) or next(iter(books.values()), None)
+    if not bk:
+        return
+    ln = g["lines"]
+    for mk in bk.get("markets") or []:
+        for oc in mk.get("outcomes") or []:
+            home = norm_team(oc.get("name")) == h
+            if mk["key"] == "spreads" and oc.get("point") is not None and ln.get("spreadNum") is None:
+                if home:
+                    ln["spreadNum"] = oc["point"]; ln["homeSpread"] = fmt_spread(oc["point"]); ln["awaySpread"] = fmt_spread(-oc["point"])
+                ln["homeSpreadOdds" if home else "awaySpreadOdds"] = fmt_ml(oc.get("price"))
+            elif mk["key"] == "totals" and oc.get("point") is not None and (ln.get("totalNum") is None or ln.get("filled")):
+                ln["totalNum"] = oc["point"]; ln["total"] = f"{oc['point']:g}"
+                ln["overOdds" if oc.get("name") == "Over" else "underOdds"] = fmt_ml(oc.get("price"))
+            elif mk["key"] == "h2h" and (ln.get("homeML") in (None, "—") or ln.get("filled")):
+                ln["homeML" if home else "awayML"] = fmt_ml(oc.get("price"))
+    ln["book"] = bk.get("title")
+    ln["filled"] = True
+    if SPORT.get(lg) == "bb":
+        value_conf_bb(lg, g)
+
+
+def value_conf_bb(lg, g):
+    """Price-model confidence for a basketball game whose lines arrived after its slate was built (same math as the
+    basketball slate: edge against the line, weighted by how much the model is trusted this early)."""
+    m, ln = g.get("model"), g["lines"]
+    if not m:
+        return
+    unit = 0.45 if lg == "nba" else 0.6
+    w, pa, ph = m.get("trust", 0.2), m["away"], m["home"]
+    margin = ph - pa
+    cs = g.get("confidence") or {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
+    spread, total = ln.get("spreadNum"), ln.get("totalNum")
+    if spread is not None:
+        edge = w * (margin + spread)
+        sc = conf(abs(edge) / unit)
+        side = f"{g['home']['abbr']} {fmt_spread(spread)}" if edge > 0 else f"{g['away']['abbr']} {fmt_spread(-spread)}"
+        cs["spread"] = [sc, label(sc, side)]; m.update(spreadEdge=round(abs(edge), 1), spreadSide=side)
+    if total is not None:
+        edge = w * (pa + ph - total)
+        sc = conf(abs(edge) / (unit * 1.5))
+        side = ("Over " if edge > 0 else "Under ") + f"{total:g}"
+        cs["total"] = [sc, label(sc, side)]; m.update(totalEdge=round(abs(edge), 1), totalSide=side)
+    aml, hml = pnum(ln.get("awayML")), pnum(ln.get("homeML"))
+    da, dh = american(aml), american(hml)
+    if da and dh:
+        pm = (1 / dh) / (1 / dh + 1 / da)
+        pb = w * m["pHome"] + (1 - w) * pm
+        ev_h, ev_a = pb * dh - 1, (1 - pb) * da - 1
+        best, ml, ev = (g["home"], hml, ev_h) if ev_h >= ev_a else (g["away"], aml, ev_a)
+        sc = conf(max(0, ev) * 100 / 5)
+        if (ml or 0) > 500:
+            sc = min(sc, 5.0)
+        cs["moneyline"] = [sc, label(sc, f"{best['abbr']} {fmt_ml(ml)}")]
+        m.update(mlEV=round(ev, 3), mlSide=f"{best['abbr']} {fmt_ml(ml)}")
+    g["confidence"] = cs
 
 
 def check_odds():
@@ -3460,13 +3523,15 @@ def check_odds():
         slate = [g for g in OUT_DATA.get(lg) or [] if g.get("state") == "pre"]
         if not slate:
             continue
-        evs = fetch_json(f"https://api.the-odds-api.com/v4/sports/{sport}/odds?regions=us&markets=spreads,totals&oddsFormat=american&apiKey={key}") or []
+        evs = fetch_json(f"https://api.the-odds-api.com/v4/sports/{sport}/odds?regions=us&markets=h2h,spreads,totals&oddsFormat=american&apiKey={key}") or []
         compared = 0
         for e in evs:
             h, a = norm_team(e.get("home_team")), norm_team(e.get("away_team"))
             g = next((g for g in slate if norm_team(g["home"].get("full")) == h and norm_team(g["away"].get("full")) == a), None)
             if not g:
                 continue
+            if g["lines"].get("spreadNum") is None or g["lines"].get("totalNum") is None:
+                fill_lines(lg, g, e, h)
             sps, tts, best = [], [], {}
             for bk in e.get("bookmakers") or []:
                 for mk in bk.get("markets") or []:
