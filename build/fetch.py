@@ -725,7 +725,10 @@ def enrich(key, slate):
             by.setdefault(name, {}).setdefault(suf, []).append(m)
 
     def names(t):
-        return {norm(x) for x in [t.get("loc"), t.get("name"), t.get("full"), t.get("abbr")] if x}
+        out = {norm(x) for x in [t.get("loc"), t.get("name"), t.get("full"), t.get("abbr")] if x}
+        if t.get("loc") in ("LA", "Los Angeles") and t.get("name"):
+            out.add(norm("Los Angeles " + t["name"][0]))  # Kalshi: "Los Angeles C" / "Los Angeles L"
+        return out
 
     def same(label, t):
         n = norm(label)
