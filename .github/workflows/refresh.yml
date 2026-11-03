@@ -2,10 +2,13 @@ name: Refresh picks
 
 on:
   schedule:
-    # GitHub cron is UTC: 13:40 and 21:40 are 8:40 AM and 4:40 PM Eastern Standard Time
-    # (9:40 AM and 5:40 PM during daylight time, March to November).
+    # GitHub cron is UTC (Eastern Standard Time is UTC-5; GitHub often starts runs 20-50 minutes late):
+    # 8:40 AM, 12:40 PM, 4:40 PM, 6:40 PM (late injuries before tip-off) and 1:10 AM (grades late games) ET.
     - cron: "40 13 * * *"
+    - cron: "40 17 * * *"
     - cron: "40 21 * * *"
+    - cron: "40 23 * * *"
+    - cron: "10 6 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -44,4 +47,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs
           git diff --cached --quiet || git commit -m "Refresh picks $(date -u +%Y-%m-%dT%H:%MZ)"
+          # A change pushed while this run was building would reject the push: rebase onto it (keeping this
+          # run's fresh build of docs/) and try again rather than losing the rebuild.
+          for i in 1 2 3; do
+            git push && exit 0
+            sleep $((i * 5))
+            git pull --rebase -X theirs origin main || { git rebase --abort; git pull --no-rebase -X ours origin main; }
+          done
           git push
