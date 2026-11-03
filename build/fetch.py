@@ -1213,6 +1213,58 @@ def lean_bars(path):
 
 
 LEAN_BAR = lean_bars(sys.argv[3]) if len(sys.argv) > 3 else {}
+
+
+def prop_tuning(path, base=8.0):
+    """Every rebuild re-tunes basketball props from the last 3 weeks of graded results: the bar to bet, whether stakes
+    stay at half a unit, and a small nudge for prop types (stat + over/under) that have been clearly winning or losing.
+    Moves are modest and need a real sample, so one bad night can't swing the board."""
+    try:
+        with open(path) as f:
+            picks = json.load(f).get("picks", [])
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+    since = (datetime.now(ET) - timedelta(days=21)).strftime("%Y-%m-%d")
+    out = {}
+    for lg in ("nba", "cbb"):
+        g = [p for p in picks if p.get("league") == lg and p.get("date", "") >= since and (p.get("grade") or {}).get("kind") == "prop"
+             and p.get("result") in ("W", "L")]
+        bets = [p for p in g if p.get("verdict") in ("Take", "Take small", "Take large")]
+        u1 = lambda p: ((p["price"] / 100 if p["price"] > 0 else 100 / -p["price"]) if p["result"] == "W" else -1) * (p.get("stake") or 1)
+        n, hit = len(bets), (sum(p["result"] == "W" for p in bets) / len(bets) if bets else None)
+        units = round(sum(u1(p) for p in bets), 2)
+        bar, why = base, "not enough graded prop bets yet to move the bar"
+        if n >= 15 and hit < 0.45:
+            bar, why = base + 0.5, f"prop bets are hitting {hit:.0%}, well under break-even, so only the strongest reads play"
+        elif n >= 15 and hit < 0.50:
+            bar, why = base + 0.3, f"prop bets are hitting {hit:.0%}, under break-even, so the bar goes up a little"
+        elif n >= 40 and hit >= 0.60 and units > 0:
+            bar, why = base - 0.5, f"prop bets are hitting {hit:.0%} ({units:+.1f}u), so a few more reads make it"
+        elif n >= 25 and hit >= 0.57 and units > 0:
+            bar, why = base - 0.25, f"prop bets are hitting {hit:.0%} ({units:+.1f}u), so the bar eases a little"
+        elif n >= 15:
+            why = f"prop bets are hitting {hit:.0%}, inside the normal range, so the bar holds"
+        half = not (n >= 30 and hit is not None and hit >= 0.55 and units > 0)
+        groups = {}
+        tally = {}
+        for p in g:
+            k = f"{p['grade'].get('cat')}|{p['grade'].get('side')}"
+            tally.setdefault(k, [0, 0])[p["result"] == "L"] += 1
+        for k, (w, l) in tally.items():
+            if w + l >= 6:
+                hr = w / (w + l)
+                if hr <= 0.35:
+                    groups[k] = -0.5
+                elif hr <= 0.42:
+                    groups[k] = -0.25
+                elif hr >= 0.65:
+                    groups[k] = 0.3
+        out[lg] = {"bar": round(bar, 2), "why": why, "half": half, "bets": [n, hit, units], "groups": groups,
+                   "tally": {k: v for k, v in tally.items() if k in groups}}
+    return out
+
+
+PROP_TUNE = prop_tuning(sys.argv[3]) if len(sys.argv) > 3 else {}
 et_day = lambda iso: datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(ET).strftime("%Y-%m-%d")
 CUR = {}
 OUT_DATA = {"generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")}
@@ -2780,6 +2832,14 @@ def analyze_prop(p, g=None, lg=None):
         # or extra minutes gives a center 3-4 extra boards fast.
         p["score"] = round(max(0.0, p["score"] - 0.5), 1)
         against.append("Rebound unders on bigs swing with missed shots and minutes, so the score is trimmed slightly.")
+    pt = PROP_TUNE.get(lg) if lg in ("nba", "cbb") else None
+    if pt and p.get("side") in ("Over", "Under"):
+        nudge = pt["groups"].get(f"{p['cat']}|{p['side'].lower()}")
+        if nudge:
+            w_, l_ = pt["tally"][f"{p['cat']}|{p['side'].lower()}"]
+            p["score"] = round(max(0.0, min(10.0, p["score"] + nudge)), 1)
+            (why if nudge > 0 else against).append(
+                f"{p['cat']} {p['side'].lower()}s have gone {w_}-{l_} lately, so the read is nudged {nudge:+.2g} (re-tuned every morning).")
     if p["games"] < 4:
         warn.append(f"Small sample: only {p['games']} games this season.")
     if lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < BB_MIN_MPG:
@@ -2825,7 +2885,7 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nba", "cbb") and p["cat"] == "Rebounds" and p["score"] < REB_PROP_BAR:
         against.append("Rebound counts swing on missed shots and minutes, so rebounds need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif lg in ("nba", "cbb") and p["score"] < NBA_PROP_BAR:
+    elif lg in ("nba", "cbb") and p["score"] < (PROP_TUNE.get(lg) or {}).get("bar", NBA_PROP_BAR):
         verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props: 8.0+ while the model proves itself
     elif lg in ("nba", "cbb", "nfl", "cfb") and p["score"] < BB_PROP_BAR:
         verdict = "Fade" if p["score"] >= 4 else "Pass"  # NBA and NFL props need a 7.5+ read to be a play
@@ -2843,8 +2903,9 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
-    if lg in ("nba", "cbb") and verdict in ("Take", "Take large"):
-        # NBA props hit 48% over the first 87 graded (Oct 31-Nov 2): half-unit stakes until they show an edge.
+    if lg in ("nba", "cbb") and verdict in ("Take", "Take large") and (PROP_TUNE.get(lg) or {}).get("half", True):
+        # NBA props hit 48% over the first 87 graded (Oct 31-Nov 2): half-unit stakes until they show an edge
+        # (30+ graded bets at 55%+ and in profit, checked every morning).
         verdict = "Take small"
         tips_.append("Basketball props are half-unit bets until the model shows an edge over a bigger sample.")
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
@@ -3144,6 +3205,14 @@ def league_recap(lg):
         t3, s3 = lb["takes"], lb["skipped"]
         move = "lowered" if lb["bar"] < LEAN_BAR_BASE else "raised" if lb["bar"] > LEAN_BAR_BASE else "kept"
         plan.append(f"Lean-to-Take bar {move} {'to' if move != 'kept' else 'at'} {lb['bar']:.2f} for today: over three weeks {lb['why']}.")
+    pt = PROP_TUNE.get(lg)
+    if pt:
+        n_, h_, u_ = pt["bets"]
+        rec_txt = f"{n_} graded prop bets over three weeks" + (f" ({h_:.0%}, {u_:+.1f}u)" if n_ else "")
+        nud = [f"{k.replace('|', ' ')}s {v:+.2g} ({pt['tally'][k][0]}-{pt['tally'][k][1]})" for k, v in sorted(pt["groups"].items())]
+        plan.append(f"Player props for today: bet from {pt['bar']:.2f} up ({pt['why']}); "
+                    + ("stakes stay at half a unit until props prove an edge (30+ bets at 55%+). " if pt["half"] else "props are back to full stakes. ")
+                    + f"Based on {rec_txt}." + (" Prop types nudged: " + "; ".join(nud) + "." if nud else ""))
     plan.append("The aim is profit, not volume: more plays only when the extra ones have been winning, and fewer when bets slip under break-even.")
     return {"day": day, "takes": rec(takes), "all": rec(dayp), "passes": rp, "wrong": wrong, "right": right, "plan": plan,
             "misses": [fmt(p) for p in misses], "hits": [fmt(p) for p in hits], "calibration": changes,
