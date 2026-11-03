@@ -5,6 +5,7 @@ Usage: python3 -I fetch.py <cache_dir> <out_json>
 import json, math, os, re, sys, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from statistics import NormalDist
 from zoneinfo import ZoneInfo
 import numpy as np
 
@@ -761,6 +762,19 @@ def enrich(key, slate):
         if len(ml) == 2 and sum(ml.values()) > 0:
             tot = sum(ml.values())
             k["ml"] = {sd: {"p": round(p / tot, 3), "odds": fair(p / tot)} for sd, p in ml.items()}
+            if key in ("nba", "cbb") and g["lines"].get("spreadNum") is None and 0.02 < k["ml"]["home"]["p"] < 0.98:
+                # No sportsbook line yet: Kalshi's winner market posts first. Its win chance implies a spread
+                # (margin ~ normal with a 12-point spread in the NBA, 11 in college), and its prices stand in for the
+                # moneyline until a book posts. Totals wait for a book.
+                sig = 12.0 if key == "nba" else 11.0
+                mu = sig * NormalDist().inv_cdf(k["ml"]["home"]["p"])  # home's expected margin
+                hs = -round(mu * 2) / 2
+                if hs == 0:
+                    hs = -0.5 if mu > 0 else 0.5
+                ln = g["lines"]
+                ln.update({"spreadNum": hs, "homeSpread": fmt_spread(hs), "awaySpread": fmt_spread(-hs),
+                           "homeML": k["ml"]["home"]["odds"], "awayML": k["ml"]["away"]["odds"],
+                           "homeSpreadOdds": "-110", "awaySpreadOdds": "-110", "book": "Kalshi (implied)", "filled": True})
         ladders = {}
         for m in by.get("SPREAD", {}).get(ev, []):
             sd = side_of((m.get("title") or "").split(" wins by")[0])
@@ -2958,6 +2972,8 @@ def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
         for g in OUT_DATA.get(key) or []:
+            if g["lines"].get("filled") and SPORT[key] == "bb":
+                value_conf_bb(key, g)  # lines arrived after the slate was built (Kalshi or another book)
             blend_confidence(key, g, n)
             a = {kind: analyze_game(key, g, kind, n) for kind in ("moneyline", "spread", "total")}
             g["analysis"] = {k2: v for k2, v in a.items() if v}
@@ -3473,8 +3489,6 @@ def fill_lines(lg, g, e, h):
                 ln["homeML" if home else "awayML"] = fmt_ml(oc.get("price"))
     ln["book"] = bk.get("title")
     ln["filled"] = True
-    if SPORT.get(lg) == "bb":
-        value_conf_bb(lg, g)
 
 
 def value_conf_bb(lg, g):
