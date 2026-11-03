@@ -536,9 +536,10 @@ function modelText(g, L, R) {
   const lean = { spread: m.spreadSide, total: m.totalSide, moneyline: m.mlSide };
   for (const [kind, nm] of [['spread', 'Spread'], ['total', 'Total'], ['moneyline', 'Moneyline']]) {
     const p = pk[kind], c = (g.confidence || {})[kind];
-    if (!p || !c || c[0] < 4 || !p.valueSide) continue;  // only explain picks that are Leans or bets
+    if (!p || !c || c[0] < 4) continue;  // only explain picks that are Leans or bets
     const v = (analyze(league, g, kind) || {}).verdict;
-    if (p.valueSide === p.side) lines.push(`<b>${nm}:</b> the price model agrees with ${esc(p.call)} (it projects ${says[kind]}).`);
+    if (!p.valueSide || (p.value || 0) < 0.5) lines.push(`<b>${nm}:</b> the price model is close to the line here (it projects ${says[kind]}), so the stats decide ${esc(p.call)}.`);
+    else if (p.valueSide === p.side) lines.push(`<b>${nm}:</b> the price model agrees with ${esc(p.call)} (it projects ${says[kind]}).`);
     else if ((p.value || 0) >= 0.5) lines.push(`<b>${nm}:</b> the stats and the price model disagree. The stats favor ${esc(p.call)}; the price model projects ${says[kind]}, which leans ${esc(lean[kind] || 'the other way')}. The stats lead, so ${size(v)}.`);
   }
   return `<div class="model"><b>Price model (second opinion):</b> ${esc(L.name)} ${m.away}, ${esc(R.name)} ${m.home}
