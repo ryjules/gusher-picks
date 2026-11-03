@@ -5,10 +5,11 @@ The site exists in two places that must stay identical:
 1. **GitHub Pages** (this repo): https://ryjules.github.io/gusher-picks/
    - `build/fetch.py`, `build/inject.py`, `build/board.template.html`: the pipeline and page template
    - `docs/index.html`: the built page; `docs/data/modelpicks.json`: model pick history
-   - `.github/workflows/refresh.yml` rebuilds at 8:40 AM and 4:40 PM ET
+   - `.github/workflows/refresh.yml` rebuilds at 8:40 AM, 12:40 PM, 4:40 PM, 6:40 PM and 1:10 AM ET (GitHub often starts runs 20-50 minutes late)
 2. **claude.ai artifact**: https://claude.ai/artifact/LYteKqEiXFDBZQATguf3C3
-   (slug `9e518492-d32d-4915-85ba-65c092cdd158`). Two scheduled tasks refresh it, and they
-   download the pipeline from this repo's `main` branch, so the repo is the single source of code.
+   (slug `9e518492-d32d-4915-85ba-65c092cdd158`). Scheduled tasks refresh it at 8:40 AM and 4:40 PM ET
+   (building from this repo's `main`), and sync GitHub's latest build to it at 1:45 PM, 7:45 PM and 2:15 AM ET, so the
+   repo is the single source of code.
 
 ## Rule for every change
 
