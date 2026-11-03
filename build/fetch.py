@@ -2799,6 +2799,12 @@ def analyze_game(lg, g, kind, nteams):
         verdict = "Take small" if (score >= TAKE_BAR and not warn and not oppose and not market_no and n_against <= n_why) else "Fade"  # a Lean that clears the bar: half a unit
     else:
         verdict = "Pass"
+    if lg == "cbb" and verdict in ("Take", "Take large"):
+        # College basketball starts at half stakes until its bets show an edge (30+ graded at 55%+ and in profit).
+        n_, h_, u_ = (LEAN_BAR.get("cbb") or {}).get("takes", [0, None, 0])
+        if not (n_ >= 30 and h_ is not None and h_ >= 0.55 and u_ > 0):
+            verdict = "Take small"
+            tips.append("College basketball bets are half a unit until they build a winning record (30+ bets at 55%+).")
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips, "score": score,
             "call": re.sub(r"^(Play|Lean) ", "", call), "side": side}
 

@@ -278,6 +278,8 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .pick .add { white-space: nowrap; }
 .mostc { border: 1px solid var(--line); border-left: 3px solid #f2c94c; border-radius: 8px; padding: 8px 10px 4px; margin: 8px 0 14px; background: var(--row); }
 .mostc-h { font: 800 .85rem var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: #f2c94c; margin-bottom: 2px; }
+.bankv .bank-in { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+.bankv .bank-in input { width: 120px; margin-left: 6px; }
 .whynot { display: block; margin-top: 3px; max-width: 92px; font-size: .68rem; line-height: 1.2; color: var(--muted, #9aa3ad); }
 .vchip { display: inline-block; font: 800 .78rem var(--f-display); letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
 .v-take { background: #173524; color: var(--win); border: 1px solid var(--win); }
@@ -1005,6 +1007,7 @@ let src = 'model';  // Model picks first; My plays is the second tab
 const SRC = { mine: { col: 'plays', name: 'My plays', list: () => plays }, model: { col: null, name: 'Model picks (hypothetical)', list: () => (DATA.modelHistory || []).filter(p => /^Take/.test(p.verdict || '') && p.grade?.kind !== 'ml') } };
 let psport = 'all';
 const closedGroups = new Set();
+let bank = { bankroll: null, pct: 1.5, since: null };  // Bankroll tab settings (saved with the unit size)
 let db = null, plays = [], dbState = 'loading', pday = todayET(), period = 'day', unitSize = null, draft = null, confirmDel = null, autoGraded = false;
 function todayET() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
 function shiftDay(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -1314,7 +1317,48 @@ function recapCard() {
     </div></details>` + `<details class="how"><summary>How results change future confidence</summary><p>After every refresh, each sport and bet type (CFB spreads, NBA totals, and so on) is checked against all of its graded picks so far, Takes and faded Leans alike, at the price they were logged. If that group is winning units, its future scores are scaled up a little; if it is losing units, they are scaled down. The multiplier starts once a group has 12 graded picks, moves slowly (a group needs about 30 picks before results count half), and stays between ×0.80 and ×1.15, so one bad night can't swing the model but a pattern over weeks will. A ×0.94 on CFB spreads turns a 7.0 into 6.6: borderline Plays drop to Leans, borderline Leans fall to Pass, and fewer of those picks get logged as Takes. It shows on each confidence box as Calibrated ×0.94. Not every game gets a pick: Leans need 6.5+ to become a Take. The record in each recap is Takes on spreads, totals and props.</p></details>`;
 }
 
+const saveSettings = () => db.doc('plays/_settings').set({ unitSize: unitSize || null, bankroll: bank.bankroll, bankPct: bank.pct, bankSince: bank.since });
+
+// Bankroll tab: a separate view. Suggests a unit from the bankroll and shows how much of it today's bets put at risk.
+function renderBank() {
+  const today = todayET(), U = UNIT();
+  const settled = plays.filter(p => p.result && bank.since && p.date >= bank.since);
+  const current = bank.bankroll ? bank.bankroll + settled.reduce((s, p) => s + unitsOf(p), 0) * U : null;
+  const unit = current ? Math.max(1, Math.round(current * bank.pct) / 100) : null;
+  const mineOpen = plays.filter(p => !p.result && p.date === today).reduce((s, p) => s + (+p.stake || 1), 0);
+  const modelOpen = (DATA.modelHistory || []).filter(p => p.date === today && !p.result && /^Take/.test(p.verdict || '') && p.grade?.kind !== 'ml')
+    .reduce((s, p) => s + (+p.stake || 1), 0);
+  const pct = d => current ? (100 * d / current) : 0;
+  const warn = d => pct(d) > 10 ? '<b class="neg"> · over 10% of your bankroll</b>' : '';
+  const tabs = `<div class="srctabs" role="tablist" aria-label="Whose plays">${[['model', 'Model picks'], ['mine', 'My plays'], ['bank', 'Bankroll']].map(([k, n]) =>
+    `<button type="button" role="tab" data-src="${k}" aria-selected="${src === k}"><span>${n}</span></button>`).join('')}</div>`;
+  $('board').innerHTML = `<div class="plays"><div class="ph">${tabs}</div>
+    <div class="bankv">
+      <p class="msg">Optional. Enter your bankroll and the board suggests a unit size and shows how much of it today's bets put at risk. Nothing else on the board changes.</p>
+      <div class="bank-in">
+        <label>Bankroll $<input id="b-roll" type="number" min="1" step="1" inputmode="decimal" value="${bank.bankroll || ''}" placeholder="e.g. 1000"></label>
+        <div class="seg" role="group" aria-label="Unit size">${[1, 1.5, 2].map(x => `<button type="button" data-bpct="${x}" aria-pressed="${bank.pct === x}">${x}% per unit</button>`).join('')}</div>
+      </div>
+      ${current ? `<div class="sumbar">
+        <div class="big"><span>Bankroll now</span><b>${money(current, false)}</b><small>${money(bank.bankroll, false)} start${bank.since ? ' · since ' + esc(bank.since) : ''} · ${money(current - bank.bankroll)} from My plays</small></div>
+        <div><span>Suggested unit</span><b>${money(unit, false)}</b><small>${bank.pct}% of the bankroll${Math.abs(unit - U) >= 0.5 ? ` · your unit is ${money(U, false)}` : ' · matches your unit'}</small>
+          ${Math.abs(unit - U) >= 0.5 ? '<button type="button" class="pbtn primary" id="b-use">Use as my unit</button>' : ''}</div>
+        <div><span>My open plays today</span><b>${money(mineOpen * U, false)}</b><small>${mineOpen.toFixed(1)}u · ${pct(mineOpen * U).toFixed(1)}% of bankroll${warn(mineOpen * U)}</small></div>
+        <div><span>Model card today</span><b>${money(modelOpen * unit, false)}</b><small>${modelOpen.toFixed(1)}u at the suggested unit · ${pct(modelOpen * unit).toFixed(1)}%${warn(modelOpen * unit)}</small></div>
+      </div>
+      <p class="pnote">A unit of 1-2% of your bankroll lets a bad week cost a few percent, not the bankroll. If a day's bets add up to more than about 10% of it, consider betting only the strongest (the Most confident list on Top Picks) or smaller stakes.</p>` : ''}
+    </div></div>`;
+  $('board').querySelectorAll('[data-src]').forEach(b => b.onclick = () => { src = b.dataset.src; confirmDel = null; renderPlays(); });
+  const persist = async () => { renderBank(); if (db) { try { await saveSettings(); } catch (e) { toast('Could not save the bankroll.'); } } };
+  $('b-roll').onchange = e => { const v = Math.round(parseFloat(e.target.value) * 100) / 100;
+    if (!(v > 0)) { toast('Enter a bankroll above $0.'); return; }
+    bank.bankroll = v; bank.since = todayET(); setTimeout(persist, 0); };
+  $('board').querySelectorAll('[data-bpct]').forEach(b => b.onclick = () => { bank.pct = +b.dataset.bpct; persist(); });
+  const use = $('b-use'); if (use) use.onclick = () => { unitSize = unit; persist(); toast(`1 unit = ${money(unit, false)}`); };
+}
+
 function renderPlays() {
+  if (src === 'bank') return renderBank();
   const [from, to] = periodRange(period, pday);
   const inSport = p => psport === 'all' || p.league === psport;
   const scope = SRC[src].list().filter(p => p.date >= from && p.date <= to && inSport(p));
@@ -1410,7 +1454,7 @@ function renderPlays() {
   $('board').innerHTML = `<div class="plays">
     <div class="ph">
       <div class="srctabs" role="tablist" aria-label="Whose plays">${[["model", SRC.model], ["mine", SRC.mine]].map(([key, sr]) => { const ss = summary(sr.list().filter(p => p.date >= from && p.date <= to && inSport(p))), v = ss.units * U;
-        return `<button type="button" role="tab" data-src="${key}" aria-selected="${src === key}"><span>${key === 'mine' ? 'My plays' : 'Model picks'}</span><b class="${pc(v)}">${ss.n ? money(v) : '—'}</b></button>`; }).join('')}</div>
+        return `<button type="button" role="tab" data-src="${key}" aria-selected="${src === key}"><span>${key === 'mine' ? 'My plays' : 'Model picks'}</span><b class="${pc(v)}">${ss.n ? money(v) : '—'}</b></button>`; }).join('')}<button type="button" role="tab" data-src="bank" aria-selected="false"><span>Bankroll</span><b>${bank.bankroll ? money(bank.bankroll, false) : 'set'}</b></button></div>
       <span class="spacer"></span>
       ${src === 'mine' ? `<button type="button" class="pbtn" id="p-grade" title="Grade finished plays now">Grade</button><button type="button" class="pbtn primary" id="p-add">+ Add play</button><button type="button" class="pbtn parlay" id="p-parlay">+ Add parlay</button>` : ''}
     </div>
@@ -1466,7 +1510,7 @@ function renderPlays() {
     if (!(v > 0)) { toast('Enter a unit size above $0.'); e.target.value = U; return; }
     unitSize = v; renderPlays();
     if (!db) { toast('Unit size applies for this visit; sign in on claude.ai to save it.'); return; }
-    try { await db.doc('plays/_settings').set({ unitSize: v }); toast(`1 unit = ${money(v, false)}`); } catch (err) { toast('Could not save the unit size.'); }
+    try { await saveSettings(); toast(`1 unit = ${money(v, false)}`); } catch (err) { toast('Could not save the unit size.'); }
   };
   on('p-grade', () => gradeAll(false));
   const addPlay = () => { draft = { date: pday, time: '', league: league, matchup: '', play: '', price: -110, book: 'DK', stake: 1 }; renderPlays(); };
@@ -1568,6 +1612,7 @@ function localDb() {
   db.collection('plays').onSnapshot(snap => {
     const st = snap.docs.find(d => d.id === '_settings');
     if (st && +st.data().unitSize > 0) unitSize = +st.data().unitSize;
+    if (st && +st.data().bankroll > 0) bank = { bankroll: +st.data().bankroll, pct: +st.data().bankPct || 1.5, since: st.data().bankSince || null };
     plays = snap.docs.filter(d => d.id !== '_settings').map(d => ({ id: d.id, ...d.data() })).filter(p => p.date && p.play);
     if (!snap.metadata.fromCache) clearTimeout(timer);
     dbState = 'ready';
