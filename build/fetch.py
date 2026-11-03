@@ -2626,6 +2626,8 @@ def blend_confidence(lg, g, n):
             c_ml, c_sp = conf["moneyline"], conf["spread"]
             new_ml = min(c_ml[0], SHORT_ML_CAP)
             new_sp = round(min(10.0, c_sp[0] + SHORT_ML_LIFT), 1)
+            if sp.get("valueSide") and sp["valueSide"] != sp["side"] and (sp.get("value") or 0) >= 1.0 and not ((sp.get("stat") or 0) >= 9):
+                new_sp = min(new_sp, max(c_sp[0], 6.9))  # the price model leans the other way: the lift can't make it a Play
             conf["moneyline"] = [new_ml, ("Lean " + ml["call"]) if new_ml >= 4 else "Pass"]
             conf["spread"] = [new_sp, (("Play " if new_sp >= 7 else "Lean ") + sp["call"])]
             ml["preferSpread"] = sp["preferSpread"] = True
