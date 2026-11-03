@@ -831,7 +831,7 @@ def rescore_prop(pr, key=None):
     gap = abs(form - pr["line"]) / max(pr["line"], 1.0)
     if pr["cat"] == "FG Made":
         gap /= 3  # kicker volume swings a lot game to game, so a line well below the average is normal
-    pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns" and (key not in ("nba", "cbb") or abs(form - pr["line"]) >= 2.5)
+    pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns" and (key not in ("nba", "cbb") or abs(form - pr["line"]) >= 2.0)
     w = 0.35 * max(0.0, 1 - gap / 0.5)
     blend = w * pr["prob"] + (1 - w) * market
     pr["edge"] = round(blend - market, 3)
@@ -1123,6 +1123,7 @@ BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
+NBA_PROP_BAR = 8.0  # basketball props need this read to be a bet (was 7.5)
 REB_PROP_BAR = 8.0  # basketball rebounds props: Takes went 1-4 over the first two slates
 REB_BIG_LINE = 6.5  # rebound lines from here up are big men
 REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
@@ -1527,7 +1528,9 @@ BB_PROPS = [  # label, value from a player game, markets, opponent-allowed keys,
     # Steals + blocks left off: not something we bet.
 ]
 BB_COUNT = {"3PT Made", "Blk+Stl"}
-HANDLER_OUT = 0.15  # players out who made this share of the team's season assists: assist unders are off
+TEAM_OUT = 0.15  # teammates out who made this share of the team's season production in the stat: unders are off
+BACK_MIN_MPG = 24  # a regular (this many minutes) who missed the last game and isn't on the injury report is back
+BACK_SHARE = 0.12  # ...and if he makes this share of the stat, teammates' overs get a warning
 BB_VAC_MIN = 0.10  # share of the team's recent production (this stat) belonging to teammates now out
 BB_FLOOR = {"Points": 4, "Rebounds": 2, "Assists": 1.5, "PRA": 5, "Pts+Reb": 4.5, "Pts+Ast": 4.5, "Reb+Ast": 2.5}
 
@@ -1870,13 +1873,31 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                     if q_id in injured:
                         gone_tot[k] = gone_tot.get(k, 0) + (q.get(k) or 0)
                         gone_names[q_id] = q.get("name")
-        # Ball-handlers out (any length of time): their season share of the team's assists.
-        ast_all = sum((q.get("ast") or 0) for gg in gl for q in (gg["teams"][tid].get("players") or {}).values())
-        ast_gone = sum((q.get("ast") or 0) for gg in gl for q_id, q in (gg["teams"][tid].get("players") or {}).items() if q_id in injured)
-        handlers_out = ast_all and ast_gone / ast_all >= HANDLER_OUT
+        # Season view: teammates out (any length of time) and regulars coming back (missed the last game, not on the
+        # injury report). Nov 2: unders lost when teammates were out (SGA, Dosunmu, Clingan); Maxey's three over lost
+        # with Embiid back.
+        s_tot, s_gone, s_ply, names_all, mins_all = {}, {}, {}, {}, {}
+        last_ids = set((gl[-1]["teams"][tid].get("players") or {}).keys())
+        for gg in gl:
+            for q_id, q in (gg["teams"][tid].get("players") or {}).items():
+                names_all[q_id] = q.get("name")
+                mins_all.setdefault(q_id, []).append(q.get("min") or 0)
+                for k in ("pts", "reb", "ast", "tpm"):
+                    s_tot[k] = s_tot.get(k, 0) + (q.get(k) or 0)
+                    s_ply.setdefault(q_id, {})[k] = s_ply.get(q_id, {}).get(k, 0) + (q.get(k) or 0)
+                    if q_id in injured:
+                        s_gone[k] = s_gone.get(k, 0) + (q.get(k) or 0)
+        out_names = sorted({names_all[i] for i in names_all if i in injured and s_ply.get(i, {}).get("pts", 0) > 0},
+                           key=lambda n: -max((s_ply[i].get("pts", 0) for i in names_all if names_all[i] == n), default=0))
+        back_ids = [i for i, m in mins_all.items() if len(gl) >= 3 and i not in last_ids and i not in injured
+                    and len(m) >= 2 and sum(m) / len(m) >= BACK_MIN_MPG]
         for label, val, market, okeys, min_avg in BB_PROPS:
             tt = sum(team_tot.get(k, 0) for k in okeys)
             vac_share = (sum(gone_tot.get(k, 0) for k in okeys) / tt) if tt and label != "Blk+Stl" else 0.0
+            st_ = sum(s_tot.get(k, 0) for k in okeys)
+            out_share = (sum(s_gone.get(k, 0) for k in okeys) / st_) if st_ else 0.0
+            back = [(names_all[i], sum(s_ply[i].get(k, 0) for k in okeys) / st_) for i in back_ids] if st_ else []
+            back = [(n, sh) for n, sh in back if sh >= BACK_SHARE]
             allowed = {t: sum((a["season"].get("o_" + k) or 0) for k in okeys) for t, a in agg.items()}
             rk = rank_map(allowed, False)  # 1st allows the least
             if label == "3PT Made":
@@ -1907,7 +1928,8 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
                              "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
                              "side": side, "prob": prob, "_hist": hist,
-                             **({"handlersOut": True} if handlers_out and "ast" in okeys else {}),
+                             **({"teamOut": {"share": round(out_share, 2), "names": out_names[:3]}} if out_share >= TEAM_OUT else {}),
+                             **({"bbBack": {"names": [n for n, _ in back][:2], "share": round(sum(sh for _, sh in back), 2)}} if back else {}),
                              **({"bbVac": {"share": round(vac_share, 2), "names": [n for n in gone_names.values() if n][:3]}}
                                 if vac_share >= BB_VAC_MIN else {})})
     return rows
@@ -1926,6 +1948,7 @@ INJ_SIDE_W = {"nba": 1.0, "cbb": 1.0}  # Nov 2: afternoon tweaks toward JD rever
 #  # injuries in the basketball stat matchup (the price model counts them too)
 DOG_ML_MAX = 200  # underdog prices where the moneyline follows the spread read
 DOG_ML_GAP = 99.0  # (off) ...to within this much
+INJ_MOVE = 3.0  # a total moved this much against us on injury news caps the pick at a Lean
 PACE1_UNDER = 0.0  # (warning only) trim on an under against the #1 pace team
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
@@ -2503,6 +2526,18 @@ def blend_confidence(lg, g, n):
             continue
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
+        if kind == "total" and SPORT[lg] == "bb":
+            # The market moved the total 3+ points against us on injury news (BOS-HOU over, Nov 2): a Lean at most.
+            op_t = pnum(((g["lines"].get("open") or {}).get("total")))
+            ia_ = g.get("injAdj") or {}
+            inj_pts = sum((ia_.get(sd_) or {}).get("off", 0) for sd_ in ("away", "home"))
+            if op_t is not None and g["lines"].get("totalNum") is not None and inj_pts >= 2:
+                mv_t = g["lines"]["totalNum"] - op_t
+                if (side == "over" and mv_t <= -INJ_MOVE) or (side == "under" and mv_t >= INJ_MOVE):
+                    score = min(score, 6.9)
+                    if st is not None:
+                        st.setdefault("notes", []).append((f"The total moved {op_t:g} to {g['lines']['totalNum']:g} on injury news ({inj_pts:.1f} points of players out): "
+                                                           "the market has already priced it, so this stays a Lean", "under" if side == "over" else "over"))
         if kind != "moneyline" and vs and vs != side and v >= 1.0 and not (st and st["side"] == side and st["score"] >= 9):
             score = min(score, 6.9)  # the season-long price model leans the other way: a Lean at most (unless the stats are 9+)
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
@@ -2704,6 +2739,10 @@ def analyze_prop(p, g=None, lg=None):
             why.append(f"{who} {'is' if len(rt['names']) == 1 else 'are'} back from injury: his recent numbers came while they were out, so his {kind} should shrink.")
         else:
             warn.append(f"{who} {'is' if len(rt['names']) == 1 else 'are'} back from injury: his recent numbers came while they were out, so his {kind} should shrink.")
+    bb_back = p.get("bbBack")
+    if bb_back and lg in ("nba", "cbb"):
+        txt = f"{' and '.join(bb_back['names'])} {'is' if len(bb_back['names']) == 1 else 'are'} back: about {bb_back['share']:.0%} of the team's {p['cat'].lower()} returns, so his share shrinks"
+        (why if under else warn).append(txt + ".")
     bv = p.get("bbVac")
     if bv and lg in ("nba", "cbb"):
         who = " and ".join(bv["names"][:2]) or "Teammates"
@@ -2727,6 +2766,10 @@ def analyze_prop(p, g=None, lg=None):
         # clears a small catch line even on a quiet day, so these get a small trim.
         p["score"] = round(max(0.0, p["score"] - 0.5), 1)
         against.append("Receptions unders lose to one extra target, so the score is trimmed slightly.")
+    if lg in ("nba", "cbb") and under and p["cat"] in ("PRA", "Pts+Reb", "Reb+Ast") and p.get("pos") == "C":
+        # A center's rebounds can explode (Clingan 18 boards on Nov 2), so his combo unders get the rebound trim.
+        p["score"] = round(max(0.0, p["score"] - 0.5), 1)
+        against.append("A center's rebounds can spike, so combo unders are trimmed slightly.")
     if lg in ("nba", "cbb") and under and p["cat"] == "Rebounds" and p["line"] >= REB_BIG_LINE:
         # Big men's rebound unders went 0-4 on Nov 1 (Queta, Sharpe, Jackson, Kessler): a missed-shot-heavy game
         # or extra minutes gives a center 3-4 extra boards fast.
@@ -2761,8 +2804,10 @@ def analyze_prop(p, g=None, lg=None):
     elif (pnum(p.get("kalshiOdds")) or 0) <= PROP_MAX_JUICE:
         against.append(f"Price is too heavy ({p['kalshiOdds']}): laying that much juice eats the edge.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif lg in ("nba", "cbb") and p.get("handlersOut") and p.get("side") == "Under" and p["cat"] in ("Assists", "Pts+Ast", "Reb+Ast", "PRA"):
-        against.append("Teammates who run the offense are out: the ball goes through him more, so assist unders are off (SGA and Dosunmu, Nov 2).")
+    elif lg in ("nba", "cbb") and p.get("teamOut") and p.get("side") == "Under" and p["cat"] != "3PT Made":
+        to = p["teamOut"]
+        against.append(f"{', '.join(to['names'][:2]) or 'Teammates'} out: about {to['share']:.0%} of the team's {p['cat'].lower()} is missing, "
+                       "so more of it runs through him and unders are off (SGA, Dosunmu, Clingan on Nov 2).")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and p["cat"] == "Assists" and p.get("side") == "Over" and (p["line"] <= LOW_AST_LINE or p.get("pos") == "C"):
         against.append("Assist overs need a real distributor: not a center, and not a 1-2 assist line.")
@@ -2775,6 +2820,8 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nba", "cbb") and p["cat"] == "Rebounds" and p["score"] < REB_PROP_BAR:
         against.append("Rebound counts swing on missed shots and minutes, so rebounds need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg in ("nba", "cbb") and p["score"] < NBA_PROP_BAR:
+        verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props: 8.0+ while the model proves itself
     elif lg in ("nba", "cbb", "nfl", "cfb") and p["score"] < BB_PROP_BAR:
         verdict = "Fade" if p["score"] >= 4 else "Pass"  # NBA and NFL props need a 7.5+ read to be a play
     elif lg in ("nfl", "cfb") and p["line"] < NFL_PROP_FLOOR.get(p["cat"], 0):
@@ -2790,7 +2837,12 @@ def analyze_prop(p, g=None, lg=None):
         verdict = "Fade"  # props need a 7.0+ read to be a play
     else:
         verdict = "Pass"
-    return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": []}
+    tips_ = []
+    if lg in ("nba", "cbb") and verdict in ("Take", "Take large"):
+        # NBA props hit 48% over the first 87 graded (Oct 31-Nov 2): half-unit stakes until they show an edge.
+        verdict = "Take small"
+        tips_.append("Basketball props are half-unit bets until the model shows an edge over a bigger sample.")
+    return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
 PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
