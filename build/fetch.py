@@ -1527,6 +1527,7 @@ BB_PROPS = [  # label, value from a player game, markets, opponent-allowed keys,
     # Steals + blocks left off: not something we bet.
 ]
 BB_COUNT = {"3PT Made", "Blk+Stl"}
+HANDLER_OUT = 0.15  # players out who made this share of the team's season assists: assist unders are off
 BB_VAC_MIN = 0.10  # share of the team's recent production (this stat) belonging to teammates now out
 BB_FLOOR = {"Points": 4, "Rebounds": 2, "Assists": 1.5, "PRA": 5, "Pts+Reb": 4.5, "Pts+Ast": 4.5, "Reb+Ast": 2.5}
 
@@ -1869,6 +1870,10 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                     if q_id in injured:
                         gone_tot[k] = gone_tot.get(k, 0) + (q.get(k) or 0)
                         gone_names[q_id] = q.get("name")
+        # Ball-handlers out (any length of time): their season share of the team's assists.
+        ast_all = sum((q.get("ast") or 0) for gg in gl for q in (gg["teams"][tid].get("players") or {}).values())
+        ast_gone = sum((q.get("ast") or 0) for gg in gl for q_id, q in (gg["teams"][tid].get("players") or {}).items() if q_id in injured)
+        handlers_out = ast_all and ast_gone / ast_all >= HANDLER_OUT
         for label, val, market, okeys, min_avg in BB_PROPS:
             tt = sum(team_tot.get(k, 0) for k in okeys)
             vac_share = (sum(gone_tot.get(k, 0) for k in okeys) / tt) if tt and label != "Blk+Stl" else 0.0
@@ -1902,6 +1907,7 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
                              "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
                              "side": side, "prob": prob, "_hist": hist,
+                             **({"handlersOut": True} if handlers_out and "ast" in okeys else {}),
                              **({"bbVac": {"share": round(vac_share, 2), "names": [n for n in gone_names.values() if n][:3]}}
                                 if vac_share >= BB_VAC_MIN else {})})
     return rows
@@ -1916,10 +1922,11 @@ TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
 LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
 LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
-INJ_SIDE_W = {"nba": 0.5, "cbb": 0.5}  # injuries in the basketball stat matchup (the price model counts them too)
+INJ_SIDE_W = {"nba": 1.0, "cbb": 1.0}  # Nov 2: afternoon tweaks toward JD reverted after they cost the slate
+#  # injuries in the basketball stat matchup (the price model counts them too)
 DOG_ML_MAX = 200  # underdog prices where the moneyline follows the spread read
-DOG_ML_GAP = 1.0  # ...to within this much
-PACE1_UNDER = 0.5  # trim on an under against the #1 pace team
+DOG_ML_GAP = 99.0  # (off) ...to within this much
+PACE1_UNDER = 0.0  # (warning only) trim on an under against the #1 pace team
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
 PROP_SMALL_BELOW = 8.0  # props from the 7.5 bar up to this are Small bets
@@ -2001,8 +2008,9 @@ NFL_HOME_EDGE = 2.0  # about 1.2 points at the NFL points scale
 LETDOWN = 1.0  # strength taken off a team coming off a big upset win
 HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
-BB_HOME_PTS = {"nba": 2.5, "cbb": 3.0}  # home-court points in the basketball stat matchup
-ALIGN_W = 0.35  # how far toward JD's scale (a slight shift)
+BB_HOME_PTS = {"nba": 0.0, "cbb": 0.0}  # Nov 2: afternoon tweaks toward JD reverted after they cost the slate
+#  # home-court points in the basketball stat matchup
+ALIGN_W = 0.0  # (off) how far toward JD's scale (a slight shift)
 ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", "cbb")}  # JD ~ a + b * ours, Nov 2 NBA boards
 # NBA: tried 1.25 on Nov 2, but the gap to the lines was a missing home-court edge, not scale (lines = 3.4 + 1.05 x data).
 LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
@@ -2035,7 +2043,7 @@ BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score poin
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
 LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
 DEF_TOTAL_W = 1.0  # two top (or bottom) quarter defenses push a football total this much
-INJ_TOTAL_W = 0.3  # share of a missing player's scoring a basketball total loses (was 0.6; the price model already subtracts injured players too)
+INJ_TOTAL_W = 0.6  # share of a missing player's scoring a basketball total loses (was 0.6; the price model already subtracts injured players too)
 CTX_CAP = 1.0  # most that defenses + pace together can move a football total
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
 SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.1)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
@@ -2752,6 +2760,9 @@ def analyze_prop(p, g=None, lg=None):
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif (pnum(p.get("kalshiOdds")) or 0) <= PROP_MAX_JUICE:
         against.append(f"Price is too heavy ({p['kalshiOdds']}): laying that much juice eats the edge.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg in ("nba", "cbb") and p.get("handlersOut") and p.get("side") == "Under" and p["cat"] in ("Assists", "Pts+Ast", "Reb+Ast", "PRA"):
+        against.append("Teammates who run the offense are out: the ball goes through him more, so assist unders are off (SGA and Dosunmu, Nov 2).")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and p["cat"] == "Assists" and p.get("side") == "Over" and (p["line"] <= LOW_AST_LINE or p.get("pos") == "C"):
         against.append("Assist overs need a real distributor: not a center, and not a 1-2 assist line.")
