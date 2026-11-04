@@ -2157,7 +2157,9 @@ TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a fo
 PROJ_W = {"cfb": 0.7, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.0  # line movement doesn't influence picks in any sport (was 0.25; shown on cards as information only)
+SIT_ROWS = {name for name, _k, _hb in SIT}
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
+FB_SIT_W = 0.5  # football situational rows (3rd downs, turnover margin, penalties) count half in the categories-won share
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5, "Fast Break": 0.25}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
 SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
@@ -2181,7 +2183,7 @@ SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os
 UNIT_PAIRS = {
     "fb": [("PPG", "PPG/A", 2, "scoring"), ("Pass YPG", "PassYPG/A", 1, "passing"), ("Rush YPG", "RushYPG/A", 1, "rushing"),
            ("Pass TD/G", "Pass TD/A", 1, "passing TDs"), ("Rush TD/G", "Rush TD/A", 1, "rushing TDs"),
-           ("Sacks Allow/G", "Sacks/G", 0.5, "pass protection"), ("Off 3rd %", "Def 3rd %", 1, "third downs")],
+           ("Sacks Allow/G", "Sacks/G", 0.5, "pass protection"), ("Off 3rd %", "Def 3rd %", 0.5, "third downs")],  # situational: half weight
     "bb": [("PPG", "Opp PPG", 2, "scoring"), ("2PT%", "Opp 2PT%", 1, "2-point shooting"), ("3PT%", "Opp 3PT%", 1, "3-point shooting"),
            ("FT%", "Opp FT%", 0.2, "free throws"), ("Paint PPG", "Opp Paint PPG", 1, "paint scoring")],
 }
@@ -2221,6 +2223,8 @@ def stat_matchup(lg, g, nteams):
         if r[0] in NEUTRAL_ROWS:
             continue  # playing fast or slow isn't better or worse
         w = ROW_W.get(r[0], 1.0)  # penalties swing week to week, so they count for less
+        if SPORT[lg] == "fb" and r[0] in SIT_ROWS:
+            w *= FB_SIT_W
         ra, rh = r[1][4], r[2][0]
         if ra is not None and rh is not None:
             a_better += w * (ra < rh)
@@ -2260,8 +2264,8 @@ def stat_matchup(lg, g, nteams):
         for name, yu, tu in (("passing", "passing", "passing TDs"), ("rushing", "rushing", "rushing TDs")):
             if yu in gv and tu in gv:
                 routes[name] = (gv[yu] + gv[tu]) / 2
-        part = 2 * gv.get("scoring", 0.0) + gv.get("third downs", 0.0)
-        wpart = (2 if "scoring" in gv else 0) + (1 if "third downs" in gv else 0)
+        part = 2 * gv.get("scoring", 0.0) + FB_SIT_W * gv.get("third downs", 0.0)
+        wpart = (2 if "scoring" in gv else 0) + (FB_SIT_W if "third downs" in gv else 0)
         if routes:
             hi, lo = max(routes.values()), min(routes.values())
             part += 2 * len(routes) * (TOT_BEST_W * hi + (1 - TOT_BEST_W) * lo)
