@@ -2160,7 +2160,7 @@ SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
-VALUE_W = 0.2  # how much the season price model adds to the stats (was 0.35): the stats lead
+VALUE_W = 0.1  # price model share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
 LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
@@ -3259,7 +3259,7 @@ def league_recap(lg):
     if pa:
         fmt_ = lambda r: f"{r[0]}-{r[1]}" + (f" ({r[0] / (r[0] + r[1]):.0%})" if sum(r) else "")
         plan.append(f"Price model check (3 weeks): when it agreed with the stats, picks went {fmt_(pa.get('agrees', [0, 0]))}; "
-                    f"when it disagreed by a point or more, the stat side went {fmt_(pa.get('disagrees', [0, 0]))}. It counts 20% of the score, "
+                    f"when it disagreed by a point or more, the stat side went {fmt_(pa.get('disagrees', [0, 0]))}. It counts 10% of the score, "
                     "and its weight comes down if disagreement keeps going our way.")
     pt = PROP_TUNE.get(lg)
     if pt:
