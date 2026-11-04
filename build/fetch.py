@@ -2143,9 +2143,9 @@ MARGIN_FIT = {"cfb": (0.94, 0.75), "nfl": (0.38, 2.33), "nba": (0.0, 1.55), "cbb
 LINE_PTS = {"cfb": (2.0, 1.0), "nfl": (0.6, 0.7), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
-REC_W = float(os.environ.get("GP_RECW", 1.5))  # record (win % gap) weight (college; was 3.0: Nov backtest, better-record side covered 39%)
+REC_W = float(os.environ.get("GP_RECW", 0.0))  # record (win % gap) weight (college; was 3.0: Nov backtest, better-record side covered 39%)
 REC_W_LG = {"nfl": float(os.environ.get("GP_RECW_NFL", 1.5))}
-POW_W = float(os.environ.get("GP_POWW", 1.0))  # opponent-adjusted power gap weight (cap; college was 2.0: power-vs-line side covered 38%)
+POW_W = float(os.environ.get("GP_POWW", 0.0))  # opponent-adjusted power gap weight (cap; college was 2.0: power-vs-line side covered 38%)
 POW_W_LG = {"nfl": float(os.environ.get("GP_POWW_NFL", 1.0))}
 SIDE_DEAD = {"nfl": float(os.environ.get("GP_SD_NFL", 0.15)), "nba": 0.1, "cbb": 0.08}  # rank gaps (share of the league) too small to matter on sides
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
@@ -2165,6 +2165,8 @@ SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
+CFB_OVER_TRIM = 1.0  # college overs
+VALUE_W_LG = {"cfb": 0.0}  # college: the price model has been on the wrong side (Oct backtest)
 VALUE_W = 0.1  # price model share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
@@ -2573,7 +2575,7 @@ def blend_confidence(lg, g, n):
         if st:
             sig += st["score"] * (1 if st["side"] == pos else -1)
         if vs:
-            sig += VALUE_W * v * (1 if vs == pos else -1)
+            sig += VALUE_W_LG.get(lg, VALUE_W) * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
         sig += tr
         mv = line_move(lg, g, kind)  # a big move from the open: news or sharp money the stats can't see
@@ -2625,6 +2627,14 @@ def blend_confidence(lg, g, n):
             # change, a team falling apart). A Lean at most, like football totals.
             score = min(score, 6.9)
             st["wildFlag"] = True  # shown as a warning, so it stays a Lean (no Lean-to-bet promotion)
+        if lg == "cfb" and kind == "total" and side == "over":
+            # College overs (Oct backtest 4-10 at 7+): a 1.0 trim from 6 up, and both offenses must rank in the top
+            # half in recent scoring to be a bet.
+            if score >= 6:
+                score = round(max(0.0, score - CFB_OVER_TRIM), 1)
+            r_ = next((r for sec in g.get("sections") or [] for r in sec["rows"] if r[0] == "PPG"), None)
+            if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
+                score = min(score, 6.4)
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind == "total" and SPORT[lg] == "bb":
