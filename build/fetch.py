@@ -482,13 +482,13 @@ ZERO_FILL = {"Rushing", "Receiving", "Receptions", "Rush + Rec", "Touchdowns"}
 OUT_STATUSES = {"out", "doubtful", "injured reserve", "suspended", "physically unable to perform"}
 
 
-PLAYER_LOGS = {"fb": {}, "bb": {}}  # sport -> {player id: last 7 games, newest first}
+PLAYER_LOGS = {"fb": {}, "bb": {}}  # sport -> {player id: last 5 games, newest first}
 LOG_FIELDS = {"fb": ["cmp", "passAtt", "passYds", "passTD", "int", "car", "rushYds", "rushTD", "rushLong", "rec", "tgt",
                      "recYds", "recTD", "recLong", "fg"],
               "bb": ["min", "pts", "reb", "oreb", "dreb", "ast", "tov", "fgm", "fga", "tpm", "tpa", "fta", "stl", "blk"]}
 
 
-def player_log(sport, gl, tid, pid, n=7):
+def player_log(sport, gl, tid, pid, n=5):
     """The player's last n games (newest first) for the prop table's game log: date, opponent, then LOG_FIELDS."""
     out = PLAYER_LOGS[sport]
     if pid in out:
