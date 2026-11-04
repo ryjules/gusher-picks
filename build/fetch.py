@@ -2193,7 +2193,7 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
             "paint scoring": "paint defense"}
 
 
-SOS_W = {"cfb": 0.5, "nfl": 1.0, "nba": 1.5, "cbb": 0.75}  # most strength the schedule can add or take (football's power rating already credits schedule)
+SOS_W = {"cfb": 0.25, "nfl": 0.5, "nba": 0.75, "cbb": 0.4}  # most strength the schedule can add or take (football's power rating already credits schedule)
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
 
@@ -2301,7 +2301,7 @@ def stat_matchup(lg, g, nteams):
             if abs(adj) >= 0.05:
                 strength += adj
                 parts["schedule"] = round(adj, 2)
-            if abs(adj) >= 0.4:
+            if abs(adj) >= 0.2:
                 tough, soft = ("away", "home") if diff > 0 else ("home", "away")
                 rec_notes.append((f"Schedule: {g[soft]['abbr']}'s recent opponents were weaker than {g[tough]['abbr']}'s "
                                   f"({sv[0 if soft == 'away' else 1]:+.1f} vs {sv[0 if tough == 'away' else 1]:+.1f} points per game), "
