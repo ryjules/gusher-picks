@@ -568,7 +568,7 @@ function confCell(g, kind, label, c) {
   const canAdd = g.state === 'pre' && g.model && (kind !== 'moneyline' || g.model.mlSide) && (kind !== 'spread' || g.model.spreadSide) && (kind !== 'total' || g.model.totalSide);
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
-  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? (pk.valueSide === pk.side ? ' agrees' : ' disagrees') : ''}${pk.trend ? ` · Trends ${pk.trend > 0 ? '+' : ''}${pk.trend.toFixed(1)}` : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
+  const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? (pk.valueSide === pk.side ? ' agrees' : ' disagrees') : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
   return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 
@@ -719,7 +719,7 @@ const BIG_SPREAD = { cfb: 17, nfl: 10, nba: 12, cbb: 14 }, LOW_TOTAL = { cfb: 45
 function analyze(lg, g, kind) { return (g.analysis || {})[kind] || null; }
 function analyzeProp(p) { return p.analysis || null; }
 const VCLS = { 'Take large': 'v-large', 'Take': 'v-take', 'Take small': 'v-small', 'Fade': 'v-fade', 'Pass': 'v-pass' };
-const VTIP = { 'Take large': 'Everything agrees: strong stats, the price model and trends on the same side, no warnings. 2 units.', 'Take': 'The numbers line up and nothing raises a red flag.', 'Take small': 'Strong edge, but with warnings: use a smaller stake.', 'Fade': 'Skip it: the warnings or the market outweigh the edge.', 'Pass': 'No real edge.' };
+const VTIP = { 'Take large': 'Everything agrees: strong stats, the price model on the same side, no warnings. 2 units.', 'Take': 'The numbers line up and nothing raises a red flag.', 'Take small': 'Strong edge, but with warnings: use a smaller stake.', 'Fade': 'Skip it: the warnings or the market outweigh the edge.', 'Pass': 'No real edge.' };
 const VLABEL = { 'Take small': 'Small bet', 'Take large': 'Large bet' };  // display names; the stored verdicts stay the same
 // Props: a strong score that still isn't a bet gets a short reason under the chip.
 function propWhyNot(p, pa) {
@@ -832,7 +832,7 @@ function whyScore(g, kind, a) {
   if (capped) cap = pk.tooShort ? 'Price too short to bet (−1000 or more), so it is a Pass.'
     : wild ? 'Capped at a Lean: our number is far from the market, which usually means the line knows something.'
     : raw > 7 && fin < raw && fin >= 6.9 && fin <= 7 ? 'Capped at a Lean: the price model leans the other way.'
-    : kind === 'total' && raw > fin && pk.stat != null && fin <= pk.stat * (pk.cal || 1) + 0.6 ? 'The stats decide football totals: the price and trends can add at most half a point.'
+    : kind === 'total' && raw > fin && pk.stat != null && fin <= pk.stat * (pk.cal || 1) + 0.6 ? 'The stats decide football totals: the price model can add at most half a point.'
     : raw > 7 ? 'Scores above 7 ease toward 10, so a 10 means nearly everything agrees.'
     : 'Capped (long-shot price).';
   const sum = humanSummary(g, kind, a, pk, fin, price);

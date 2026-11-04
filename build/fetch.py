@@ -2153,7 +2153,7 @@ SIDE_SCALE = {"cfb": 14, "nfl": float(os.environ.get("GP_SS_NFL", 18)), "nba": 1
 TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushing) counts over its other one
 TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
 TOT_WILD_CAP = 6.0
-TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
+TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that the price model can add to a football total (the NFL season model is steadier)
 PROJ_W = {"cfb": 0.7, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.0  # line movement doesn't influence picks in any sport (was 0.25; shown on cards as information only)
@@ -2597,15 +2597,14 @@ def blend_confidence(lg, g, n):
             sig += st["score"] * (1 if st["side"] == pos else -1)
         if vs:
             sig += VALUE_W_LG.get(lg, VALUE_W) * v * (1 if vs == pos else -1)
-        tr = trend_nudge(g, kind)  # betting trends: a small nudge toward away/over (+) or home/under (-)
-        sig += tr
+        tr = trend_nudge(g, kind)  # betting trends: shown for information only, they don't move the score
         mv = line_move(lg, g, kind)  # a big move from the open: news or sharp money the stats can't see
         if mv:
             sig += mv
             if st:
                 st.setdefault("notes", []).append(line_move_note(g, kind, mv))
         if kind == "total" and SPORT[lg] == "fb" and st and abs(sig) > st["score"] + TOT_EXTRA[lg]:
-            # Football totals: the stats decide. Price and trends can add at most half a point on top, so they
+            # Football totals: the stats decide. The price model can add at most half a point on top, so they
             # can't lift a weak stat read into a Play.
             sig = math.copysign(st["score"] + TOT_EXTRA[lg], sig)
         cal = CAL.get((lg, kind), 1.0)  # learned from this league's graded picks of this bet type
@@ -2807,7 +2806,7 @@ def analyze_game(lg, g, kind, nteams):
                 if abs(rate - 0.5) >= 0.2:
                     good = (rate > 0.5) == (side == "over" if kind == "total" else tm_side == side)
                     rec = f"{r[0]}-{r[1]}" + (f"-{r[2]}" if r[2] else "")
-                    (why if good else against).append(f"Trend: {g[tm_side]['abbr']} {rec} {label}.")
+                    tips.append(f"Trend: {g[tm_side]['abbr']} {rec} {label} (shown for information; trends don't affect our picks).")
     sm = (g.get("matchup") or {}).get(kind)
     oppose = False
     if sm:
@@ -2830,9 +2829,9 @@ def analyze_game(lg, g, kind, nteams):
         pk_raw = ((g.get("pick") or {}).get(kind) or {}).get("raw", score)  # the unshifted read (basketball scores are eased toward JD's scale)
         if (verdict == "Take" and kind != "moneyline" and max(score, pk_raw) >= LARGE_BAR and not warn and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
-                and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1) and (pk.get("trend") or 0) >= 0
+                and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1)
                 and not market_no):
-            # Everything agrees: the stats are strong, the price model and trends point the same way, no warnings.
+            # Everything agrees: the stats are strong, the price model points the same way, no warnings.
             verdict = "Take large"
     elif score >= 4:
         # Not every game needs a play: a Lean becomes a Take only from 6.5 up (raised from 5 after a 42-play college Saturday), with nothing against it.
