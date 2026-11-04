@@ -1310,7 +1310,7 @@ def prop_tuning(path, base=NBA_PROP_BAR):
             bar, why = base - 0.25, f"prop bets are hitting {hit:.0%} ({units:+.1f}u), so the bar eases a little"
         elif n >= 15:
             why = f"prop bets are hitting {hit:.0%}, inside the normal range, so the bar holds"
-        half = not (n >= 30 and hit is not None and hit >= 0.55 and units > 0)
+        half = False  # Nov 4: props use the normal mix again (small under 8.0 or with a warning, regular from 8.0, large at 9+ when everything agrees)
         groups = {}
         tally = {}
         for p in g:
@@ -2100,6 +2100,7 @@ INJ_MOVE = 999.0  # (off) line movement doesn't influence picks in any sport
 PACE1_UNDER = 0.0  # (warning only) trim on an under against the #1 pace team
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
+BB_PROP_SMALL_BELOW = 7.5  # basketball props: 7.0-7.4 small, 7.5+ regular (the 7-8 band backtested best)
 PROP_SMALL_BELOW = 8.0  # props from the 7.5 bar up to this are Small bets
 def ordn(n):
     if n is None:
@@ -3039,7 +3040,7 @@ def analyze_prop(p, g=None, lg=None):
     elif p["score"] >= 7 and warn and p["score"] < PROP_WARN_BAR:
         verdict = "Fade"  # a warning (bench role, injury tag, tough defense) needs a really strong read to still bet
     elif p["score"] >= 7:
-        verdict = "Take small" if warn or p["score"] < PROP_SMALL_BELOW else "Take"  # just over the bar: half a unit
+        verdict = "Take small" if warn or p["score"] < (BB_PROP_SMALL_BELOW if lg in ("nba", "cbb") else PROP_SMALL_BELOW) else "Take"  # just over the bar: half a unit
         if verdict == "Take" and p["score"] >= 9 and won >= 4 and not against and (p.get("edge") or 0) >= 0.05:
             verdict = "Take large"  # strong form, a good matchup and a real edge over the price
     elif p["score"] >= 4:
