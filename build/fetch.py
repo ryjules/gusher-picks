@@ -2703,8 +2703,7 @@ def analyze_game(lg, g, kind, nteams):
             (why if (side == "over") == (good_o + bad_d >= 2) else against).append(txt)
         if op.get("total") and pnum(op["total"]) != ln["totalNum"]:
             up = ln["totalNum"] > pnum(op["total"])
-            (why if (side == "over") == up else against).append(
-                f"Total moved {op['total']} → {ln['totalNum']:g}: money has come in on the {'over' if up else 'under'}.")
+            tips.append(f"Total moved {op['total']} → {ln['totalNum']:g} since it opened (shown for information; line moves don't affect our picks).")
         w = g.get("wx") or weather_of(g)
         if SPORT[lg] == "fb" and not w["indoor"] and (w["rain"] >= 40 or w["wind"] >= 15):
             wx = f"{w['rain']}% rain, {w['wind']} mph wind in the forecast"
@@ -2739,7 +2738,7 @@ def analyze_game(lg, g, kind, nteams):
             steam = c_s < pnum(o_s)
             ot = fsp(pnum(o_s)) if kind == "spread" else o_s
             ct = fsp(c_s) if kind == "spread" else fmt_ml(c_s)
-            (why if steam else against).append(f"Line moved {ot} → {ct}: money has come in on {team['abbr'] if steam else opp['abbr']}.")
+            tips.append(f"Line moved {ot} → {ct} since it opened (shown for information; line moves don't affect our picks).")
         for t in injury_notes(g, side):
             warn.append(t)
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
