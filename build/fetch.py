@@ -2138,7 +2138,7 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 # Our stat margin put on the betting lines' scale (fit Nov 4: home line = a + b x our margin). Without it the
 # line check saw every big line as too big (NBA, NFL) or too small (college), which a separate points cost used to mask.
 FB_DATA_W = 0.2  # football spreads: share of the score from raw matchup strength (the rest is edge over the line)
-SPREAD_WILD = {"nfl": 7.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
+SPREAD_WILD = {"nfl": 5.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
 MARGIN_FIT = {"cfb": (0.94, 0.75), "nfl": (0.38, 2.33), "nba": (0.0, 1.55), "cbb": (0.0, 1.0)}  # spread-matched (SD ratio), not a regression slope, which shrinks real disagreements
 LINE_PTS = {"cfb": (2.0, 0.85), "nfl": (0.6, 0.7), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
