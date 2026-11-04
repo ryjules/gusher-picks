@@ -931,7 +931,9 @@ def rescore_prop(pr, key=None):
             # far more and the cushion less (fit to the Profit Hunt 3PT sheet).
             pr["score"] = round(max(0.0, min(10.0, 1.875 + 2.81 * hit + 2.6 * cushion + 0.4 * m - hit_adj + vac_bump)), 1)
         else:
-            pr["score"] = round(max(0.0, min(10.0, 3.4 + 3.4 * hit + 2.9 * cushion + 0.03 * m * 10 / 10 - hit_adj + vac_bump)), 1)
+            # The matchup counts for real (Nov 4, closer to JD's sheets): 0.25 a point on its 0-10 scale, with the base
+            # lowered so an average matchup (5) scores about what it did before.
+            pr["score"] = round(max(0.0, min(10.0, 1.8 + 3.4 * hit + 2.9 * cushion + BB_PROP_MATCHUP_W * m - hit_adj + vac_bump)), 1)
         return
     s_prob = max(0.0, min(10.0, (pr["prob"] - 0.5) / 0.3 * 10))
     if key in ("nfl", "cfb"):
@@ -1186,6 +1188,7 @@ BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
+BB_PROP_MATCHUP_W = 0.25  # basketball props (not threes): weight per point of matchup (0-10); was 0.03
 BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
 BB_PROP_BAR_LOWMIN = 7.5
 # Prop types we bet. 3-pointer overs and rebound unders lost in the Oct backtest, so they aren't bets; points-based
@@ -2187,6 +2190,7 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 # NBA: tried 1.25 on Nov 2, but the gap to the lines was a missing home-court edge, not scale (lines = 3.4 + 1.05 x data).
 # Our stat margin put on the betting lines' scale (fit Nov 4: home line = a + b x our margin). Without it the
 # line check saw every big line as too big (NBA, NFL) or too small (college), which a separate points cost used to mask.
+SPREAD_DATA_W = 0.15  # every sport: share of the spread score from how lopsided the matchup is, so the line is measured a bit less
 FB_DATA_W = 0.0  # (edge over the line only: best of the October backtests, 31-36 -4.6u vs -9.9u at 0.2)  # football spreads: share of the score from raw matchup strength (the rest is edge over the line)
 SPREAD_WILD = {"nfl": 5.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
 MARGIN_FIT = {"cfb": (0.94, 0.75), "nfl": (0.38, 2.33), "nba": (0.0, 1.55), "cbb": (0.0, 1.0)}  # spread-matched (SD ratio), not a regression slope, which shrinks real disagreements
@@ -2439,7 +2443,7 @@ def stat_matchup(lg, g, nteams):
                 margin_away = sfit * LINE_PTS[lg][0] * strength - hfit  # data's expected margin for the away team, on the lines' scale
                 e_away = margin_away - ln["spreadNum"]          # beat the away line by this many points (home line = spreadNum)
                 line_signed = max(-10.0, min(10.0, e_away / LINE_PTS[lg][1]))
-                dw = FB_DATA_W if SPORT[lg] == "fb" else 0.0  # football: a share for how lopsided the matchup is
+                dw = SPREAD_DATA_W  # a share for how lopsided the matchup is (the rest is edge over the line)
                 blended = dw * min(10.0, base) * (1 if side == "away" else -1) + (1 - dw) * line_signed
                 sp_side = "away" if blended > 0 else "home"
                 sp = abs(blended)
