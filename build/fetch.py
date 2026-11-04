@@ -2047,7 +2047,7 @@ INJ_SIDE_W = {"nba": 1.0, "cbb": 1.0}  # Nov 2: afternoon tweaks toward JD rever
 #  # injuries in the basketball stat matchup (the price model counts them too)
 DOG_ML_MAX = 200  # underdog prices where the moneyline follows the spread read
 DOG_ML_GAP = 99.0  # (off) ...to within this much
-INJ_MOVE = 3.0  # a total moved this much against us on injury news caps the pick at a Lean
+INJ_MOVE = 999.0  # (off) line movement doesn't influence picks in any sport
 PACE1_UNDER = 0.0  # (warning only) trim on an under against the #1 pace team
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
@@ -2151,7 +2151,7 @@ TOT_WILD_CAP = 6.0
 TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
 PROJ_W = {"cfb": 0.7, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
-MOVE_W = 0.25  # most a line move can add to a confidence score (was 0.75: the data drives picks, the market is a light touch)
+MOVE_W = 0.0  # line movement doesn't influence picks in any sport (was 0.25; shown on cards as information only)
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
@@ -2185,7 +2185,7 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
             "paint scoring": "paint defense"}
 
 
-SOS_W = {"cfb": 1.0, "nfl": 1.0, "nba": 1.5, "cbb": 1.5}  # most strength the schedule can add or take (football's power rating already credits schedule)
+SOS_W = {"cfb": 0.5, "nfl": 1.0, "nba": 1.5, "cbb": 0.75}  # most strength the schedule can add or take (football's power rating already credits schedule)
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
 
