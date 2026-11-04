@@ -1167,6 +1167,10 @@ def injury_impact(inj, tid, per_team, key):
     return res
 
 
+BB_INJ_SCALE = 0.5  # NBA injuries count half (Nov 4): teammates take a star's shots, and the line already moves on the news
+#                    (Tatum out: the formula said 6.5 points, the market moved 3)
+
+
 def injury_impact_bb(inj, tid, per_team):
     """Basketball: points a team loses for injured rotation players (same shape as injury_impact).
 
@@ -1189,12 +1193,12 @@ def injury_impact_bb(inj, tid, per_team):
             continue  # out the whole window: already missing from the stats
         a = lambda k: sum(q.get(k, 0) for q in games) / len(games)
         # Count him by the share of the recent games he played in, since only those games carry his production.
-        pts = min(7.0, 0.15 * a("pts") + 0.15 * a("reb") + 0.2 * a("ast")) * w * len(games) / len(window)
-        if pts < 0.3:
+        pts = min(7.0, 0.15 * a("pts") + 0.15 * a("reb") + 0.2 * a("ast")) * w * len(games) / len(window) * BB_INJ_SCALE
+        if pts < 0.15:
             continue
         res["off"] += pts
         res["players"].append([x.get("name"), x.get("pos"), x.get("status"), round(pts, 1), "off"])
-    res["off"] = round(min(res["off"], 15.0), 1)
+    res["off"] = round(min(res["off"], 15.0 * BB_INJ_SCALE), 1)
     return res
 
 
