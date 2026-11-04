@@ -552,7 +552,8 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
             avg5, season = sum(l5) / len(l5), sum(hist) / len(hist)
             if season < min_avg:
                 continue
-            proj = (0.5 * avg5 + 0.5 * season) * factor
+            med5 = sorted(l5)[len(l5) // 2] if len(l5) % 2 else sum(sorted(l5)[len(l5) // 2 - 1:len(l5) // 2 + 1]) / 2
+            proj = (0.5 * med5 + 0.5 * season) * factor  # median of the last 5, so one big game can't carry the projection
             line, opn = posted or (None, None)
             if label == "Touchdowns" and line is None:
                 line = 0.5  # anytime TD is always 0.5; the price comes from Kalshi when it lists the player
@@ -2257,6 +2258,7 @@ MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that cou
 MOVE_W = 0.0  # line movement doesn't influence picks in any sport (was 0.25; shown on cards as information only)
 SIT_ROWS = {name for name, _k, _hb in SIT}
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
+FB_ML_MAX_FAV = -300  # football moneylines this short or shorter are never bets
 NBA_TOTAL_CUSHION = 5.0  # NBA totals: projected combined scoring must clear the line by this much to be a bet (JD's rule)
 FB_SIT_W = 0.5  # football situational rows (3rd downs, turnover margin, penalties) count half in the categories-won share
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5, "Fast Break": 0.25}  # weight in the "better in more stat categories" count
@@ -2948,6 +2950,10 @@ def analyze_game(lg, g, kind, nteams):
         verdict = "Take small" if (score >= TAKE_BAR and not warn and not oppose and not market_no and n_against <= n_why) else "Fade"  # a Lean that clears the bar: half a unit
     else:
         verdict = "Pass"
+    if kind == "moneyline" and SPORT[lg] == "fb" and verdict.startswith("Take") and (pnum(ln.get("homeML" if side == "home" else "awayML")) or 0) <= FB_ML_MAX_FAV:
+        # Heavy football favorites (-300 or shorter): risking 3+ to win 1 isn't a bet; the spread is the play.
+        verdict = "Fade"
+        against.append(f"Priced {ln.get('homeML' if side == 'home' else 'awayML')}: we don't bet football moneylines at -300 or shorter. Look at the spread instead.")
     if lg == "cbb" and verdict in ("Take", "Take large"):
         # College basketball starts at half stakes until its bets show an edge (30+ graded at 55%+ and in profit).
         n_, h_, u_ = (LEAN_BAR.get("cbb") or {}).get("takes", [0, None, 0])
