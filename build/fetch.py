@@ -2047,8 +2047,8 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
             vac_share = (sum(gone_tot.get(k, 0) for k in okeys) / tt) if tt and label != "Blk+Stl" else 0.0
             st_ = sum(s_tot.get(k, 0) for k in okeys)
             out_share = (sum(s_gone.get(k, 0) for k in okeys) / st_) if st_ else 0.0
-            back = [(names_all[i], sum(s_ply[i].get(k, 0) for k in okeys) / st_) for i in back_ids] if st_ else []
-            back = [(n, sh) for n, sh in back if sh >= BACK_SHARE]
+            back = [(i, names_all[i], sum(s_ply[i].get(k, 0) for k in okeys) / st_) for i in back_ids] if st_ else []
+            back = [(i, n, sh) for i, n, sh in back if sh >= BACK_SHARE]
             allowed = {t: sum((a["season"].get("o_" + k) or 0) for k in okeys) for t, a in agg.items()}
             rk = rank_map(allowed, False)  # 1st allows the least
             if label == "3PT Made":
@@ -2080,7 +2080,9 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                              "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
                              "side": side, "prob": prob, "_hist": hist,
                              **({"teamOut": {"share": round(out_share, 2), "names": out_names[:3]}} if out_share >= TEAM_OUT else {}),
-                             **({"bbBack": {"names": [n for n, _ in back][:2], "share": round(sum(sh for _, sh in back), 2)}} if back else {}),
+                             # Teammates returning (never the player himself: his own return doesn't shrink his share).
+                             **({"bbBack": {"names": [n for i, n, _ in back if i != pid][:2], "share": round(sum(sh for i, _, sh in back if i != pid), 2)}}
+                                if any(i != pid for i, _, _ in back) else {}),
                              **({"bbVac": {"share": round(vac_share, 2), "names": [n for n in gone_names.values() if n][:3]}}
                                 if vac_share >= BB_VAC_MIN else {})})
     return rows
