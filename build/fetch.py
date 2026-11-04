@@ -2137,9 +2137,10 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 # NBA: tried 1.25 on Nov 2, but the gap to the lines was a missing home-court edge, not scale (lines = 3.4 + 1.05 x data).
 # Our stat margin put on the betting lines' scale (fit Nov 4: home line = a + b x our margin). Without it the
 # line check saw every big line as too big (NBA, NFL) or too small (college), which a separate points cost used to mask.
-SPREAD_WILD = {"nfl": 5.0, "cfb": 10.0}  # football: spread edges this big (points) are held to a Lean
+FB_DATA_W = 0.2  # football spreads: share of the score from raw matchup strength (the rest is edge over the line)
+SPREAD_WILD = {"nfl": 7.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
 MARGIN_FIT = {"cfb": (0.94, 0.75), "nfl": (0.38, 2.33), "nba": (0.0, 1.55), "cbb": (0.0, 1.0)}  # spread-matched (SD ratio), not a regression slope, which shrinks real disagreements
-LINE_PTS = {"cfb": (2.0, 1.0), "nfl": (0.6, 0.85), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
+LINE_PTS = {"cfb": (2.0, 0.85), "nfl": (0.6, 0.7), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 1.5))  # record (win % gap) weight (college; was 3.0: Nov backtest, better-record side covered 39%)
@@ -2383,8 +2384,10 @@ def stat_matchup(lg, g, nteams):
                 margin_away = sfit * LINE_PTS[lg][0] * strength - hfit  # data's expected margin for the away team, on the lines' scale
                 e_away = margin_away - ln["spreadNum"]          # beat the away line by this many points (home line = spreadNum)
                 line_signed = max(-10.0, min(10.0, e_away / LINE_PTS[lg][1]))
-                sp_side = "away" if line_signed > 0 else "home"
-                sp = abs(line_signed)
+                dw = FB_DATA_W if SPORT[lg] == "fb" else 0.0  # football: a share for how lopsided the matchup is
+                blended = dw * min(10.0, base) * (1 if side == "away" else -1) + (1 - dw) * line_signed
+                sp_side = "away" if blended > 0 else "home"
+                sp = abs(blended)
                 if SPORT[lg] == "fb" and max_gap < TOT_DEAD:
                     sp = min(sp, 3.9)  # no unit has a real edge on either side: not a spread bet
                 fav = g["away"] if margin_away > 0 else g["home"]
