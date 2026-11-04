@@ -1145,9 +1145,10 @@ OVER_TAX = 0.4  # props on the over need this much more (books shade over prices
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
 BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
 BB_PROP_BAR_LOWMIN = 7.5
-# Prop types that won in the Oct backtest at 7+ (138-93, +32.5u); points-based props lost, so they aren't bets.
+# Prop types we bet. 3-pointer overs and rebound unders lost in the Oct backtest, so they aren't bets; points-based
+# props are back in by request (Nov 4).
 BB_GOOD_PROPS = {("Assists", "Over"), ("Assists", "Under"), ("Reb+Ast", "Over"), ("Reb+Ast", "Under"),
-                 ("3PT Made", "Under"), ("Rebounds", "Over")}
+                 ("3PT Made", "Under"), ("Rebounds", "Over")} | {(c, sd) for c in ("Points", "Pts+Reb", "Pts+Ast", "PRA") for sd in ("Over", "Under")}
 REB_PROP_BAR = 8.0  # basketball rebounds props: Takes went 1-4 over the first two slates
 REB_BIG_LINE = 6.5  # rebound lines from here up are big men
 REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
@@ -2979,8 +2980,7 @@ def analyze_prop(p, g=None, lg=None):
         against.append("The line is far from his usual numbers, so the model can't claim an edge: likely role news or a heavy price.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and (p["cat"], p.get("side")) not in BB_GOOD_PROPS:
-        against.append("Not a prop type we bet: points-based props and these overs/unders lost in our backtest; we bet assists, "
-                       "rebounds + assists, 3-pointer unders and rebound overs.")
+        against.append("Not a prop type we bet: 3-pointer overs and rebound unders lost in our backtest.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and p["score"] < (PROP_TUNE.get(lg) or {}).get("bar", NBA_PROP_BAR):
         verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props: 7.0+
