@@ -575,7 +575,7 @@ function modelText(g, L, R) {
 
 function confCell(g, kind, label, c) {
   const [score, call] = c;
-  const cls = score >= 7 ? 'c-hi' : score >= 4 ? 'c-md' : score >= 2 ? 'c-pass' : 'c-lo';  // Pass: orange from 2, red below
+  const cls = score >= 7 ? 'c-hi' : score >= 4 ? 'c-md' : score >= 2 ? 'c-lo' : 'c-pass';  // Pass: red from 2, orange below
   const canAdd = g.state === 'pre' && g.model && (kind !== 'moneyline' || g.model.mlSide) && (kind !== 'spread' || g.model.spreadSide) && (kind !== 'total' || g.model.totalSide);
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
