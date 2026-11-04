@@ -719,8 +719,8 @@ function propWhyNot(p, pa) {
   if (/receptions need an 8\.0/.test(t)) return 'Receptions need 8.0+';
   if (/rebounds need an 8\.0/.test(t)) return 'Rebounds need 8.0+';
   if (/Backup-sized line/.test(t)) return 'Line too small to bet';
-  if (p.score < 7.5) return 'Props need 7.5+ to bet';
-  if ((pa.warn || []).length) return 'Warning: needs 8.5+ (hover for why)';
+  if ((pa.warn || []).length) { const w = pa.warn[0].split(/[:.(]/)[0].trim(); return w.length > 42 ? w.slice(0, 40) + '…' : w; }
+  if (p.score < 9) return 'Below the bar to bet';
   return 'Hover for why';
 }
 const vchip = v => `<span class="vchip ${VCLS[v]}" title="${esc(VTIP[v])}">${esc(VLABEL[v] || v)}</span>`;
