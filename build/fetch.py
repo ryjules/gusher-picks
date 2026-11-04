@@ -2621,7 +2621,7 @@ def blend_confidence(lg, g, n):
             # Our margin is far from the market's: a gap that big usually means the line knows something (injury, a QB
             # change, a team falling apart). A Lean at most, like football totals.
             score = min(score, 6.9)
-            st.setdefault("notes", []).append((f"Our number is {st['edgePts']:g} points from the line: a gap that big usually means the line knows something", "home" if side == "away" else "away"))
+            st["wildFlag"] = True  # shown as a warning, so it stays a Lean (no Lean-to-bet promotion)
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind == "total" and SPORT[lg] == "bb":
@@ -2735,6 +2735,9 @@ def analyze_game(lg, g, kind, nteams):
             tips.append(f"Line moved {ot} → {ct} since it opened (shown for information; line moves don't affect our picks).")
         for t in injury_notes(g, side):
             warn.append(t)
+        sp_m = (g.get("matchup") or {}).get("spread") or {}
+        if kind == "spread" and sp_m.get("wildFlag") and sp_m.get("side") == side:
+            warn.append(f"Our number is {sp_m['edgePts']:g} points from the line: a gap that big usually means the line knows something (a QB change, injuries, a team falling apart).")
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
             tips.append("Road favorite: worth knowing, but the data drives this pick.")
         if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg] and ((g.get("pick") or {}).get("spread") or {}).get("preferSpread"):
