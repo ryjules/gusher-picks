@@ -2137,8 +2137,9 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 # NBA: tried 1.25 on Nov 2, but the gap to the lines was a missing home-court edge, not scale (lines = 3.4 + 1.05 x data).
 # Our stat margin put on the betting lines' scale (fit Nov 4: home line = a + b x our margin). Without it the
 # line check saw every big line as too big (NBA, NFL) or too small (college), which a separate points cost used to mask.
+SPREAD_WILD = {"nfl": 5.0, "cfb": 10.0}  # football: spread edges this big (points) are held to a Lean
 MARGIN_FIT = {"cfb": (0.94, 0.75), "nfl": (0.38, 2.33), "nba": (0.0, 1.55), "cbb": (0.0, 1.0)}  # spread-matched (SD ratio), not a regression slope, which shrinks real disagreements
-LINE_PTS = {"cfb": (2.0, 1.0), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
+LINE_PTS = {"cfb": (2.0, 1.0), "nfl": (0.6, 0.85), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 1.5))  # record (win % gap) weight (college; was 3.0: Nov backtest, better-record side covered 39%)
@@ -2392,7 +2393,7 @@ def stat_matchup(lg, g, nteams):
                                  "away" if e_away > 0 else "home"))
             sl = ln["spreadNum"] if sp_side == "home" else -ln["spreadNum"]
             out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": sp_side, "call": f"{g[sp_side]['abbr']} {fsp(sl)}",
-                             "notes": sp_notes}
+                             "notes": sp_notes, "edgePts": round(abs(e_away), 1) if lg in LINE_PTS else None}
     off, dfn = R.get("PPG"), R.get("PPG/A") or R.get("Opp PPG")
     if off and dfn and ln.get("totalNum") is not None and None not in (off[1][3], off[2][1], dfn[1][3], dfn[2][1]):
         recent = (off[1][3] + dfn[2][1]) / 2 + (off[2][1] + dfn[1][3]) / 2  # last 3 (football) / last 5 (hoops)
@@ -2616,6 +2617,11 @@ def blend_confidence(lg, g, n):
             pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                           "value": v, "valueSide": vs, "trend": 0.0, "tooShort": True}
             continue
+        if kind == "spread" and SPORT[lg] == "fb" and st and st["side"] == side and (st.get("edgePts") or 0) >= SPREAD_WILD[lg]:
+            # Our margin is far from the market's: a gap that big usually means the line knows something (injury, a QB
+            # change, a team falling apart). A Lean at most, like football totals.
+            score = min(score, 6.9)
+            st.setdefault("notes", []).append((f"Our number is {st['edgePts']:g} points from the line: a gap that big usually means the line knows something", "home" if side == "away" else "away"))
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind == "total" and SPORT[lg] == "bb":
