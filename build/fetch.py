@@ -1838,16 +1838,24 @@ def run_basketball(lg, key, start, groups):
     agg = {t: {"season": bb_window(gl, t), "home": bb_window([g for g in gl if g["teams"][t]["ha"] == "home" and not g["neutral"]], t),
                "away": bb_window([g for g in gl if g["teams"][t]["ha"] == "away" and not g["neutral"]], t),
                "l10": bb_window(gl[-10:], t), "l5": bb_window(gl[-5:], t, per_game_pct=True)} for t, gl in per_team.items() if gl}
-    ranks = {k: rank_map({t: a["l5"].get(k) for t, a in agg.items()}, hb) for _, _, k, hb, _ in BB_ROWS}
-    nteams = len(agg)
+    if key == "cbb":
+        # Ranks are among Division I teams only (about 362), so a D-II/NAIA opponent's stats don't push the
+        # numbers past 400. Those teams keep their stats; they just aren't ranked.
+        d1 = get(f"{BB}/{lg}/teams?groups=50&limit=500", "cbb_d1_teams.json") or {}
+        d1_ids = {t["team"]["id"] for sp in d1.get("sports", []) for l_ in sp.get("leagues", []) for t in l_.get("teams", [])}
+        rk_agg = {t: a for t, a in agg.items() if t in d1_ids} if len(d1_ids) > 300 else agg
+    else:
+        rk_agg = agg
+    ranks = {k: rank_map({t: a["l5"].get(k) for t, a in rk_agg.items()}, hb) for _, _, k, hb, _ in BB_ROWS}
+    nteams = len(rk_agg)
     mu, hfa, rat = fit_ratings(games, key, teams_in) if games else (0, 0, {})
     net = {t: rat[t][0] + rat[t][1] for t in agg if t in rat}
-    srank = {"off": rank_map({t: a["season"].get("ortg") for t, a in agg.items()}, True),
-             "def": rank_map({t: a["season"].get("drtg") for t, a in agg.items()}, False),
-             "overall": rank_map(net, True),
+    srank = {"off": rank_map({t: a["season"].get("ortg") for t, a in rk_agg.items()}, True),
+             "def": rank_map({t: a["season"].get("drtg") for t, a in rk_agg.items()}, False),
+             "overall": rank_map({t: v for t, v in net.items() if t in rk_agg}, True),
              # strength of schedule over the last 5: average opponent rating, 1st = toughest
              "sos": rank_map({t: sum(net.get(next(k for k in g["teams"] if k != t), 0) for g in gl[-5:]) / max(1, len(gl[-5:]))
-                              for t, gl in per_team.items() if gl}, True)}
+                              for t, gl in per_team.items() if gl and t in rk_agg}, True)}
     sigma, unit = (12.0, 0.45) if key == "nba" else (11.0, 0.6)
 
     cur = get(f"{BB}/{lg}/scoreboard?{q.lstrip('&')}")
