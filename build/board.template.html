@@ -354,7 +354,7 @@ details.grp > summary:hover { color: var(--cyan); }
 @media (max-width: 640px) { .leg { grid-template-columns: 1fr 1fr; } }
 .ptab td.pos { font: 700 .85rem var(--f-display); color: var(--muted); letter-spacing: .04em; }
 .ou { font: 800 1.05em var(--f-display); margin-right: 3px; display: inline-block !important; background: none; }
-.ou.o { color: var(--win); } .ou.u { color: var(--loss); }
+.ou.o, .ptab td.ln b.ou.o { color: var(--win); } .ou.u, .ptab td.ln b.ou.u { color: var(--loss); }
 .lbar { margin-top: 4px; width: 165px; } .ptbl td:has(.lbar) { min-width: 180px; } .lbar span { display: block; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .lbar span i { display: block; height: 100%; background: var(--cyan); border-radius: 3px; transition: width .6s; }
 .lbar.ok span i { background: var(--win); } .lbar.bad span i { background: var(--loss); } .lbar small { display: block; color: var(--muted); font-size: .72rem; margin-top: 2px; white-space: nowrap; }
