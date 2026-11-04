@@ -86,6 +86,12 @@ td.stat { font: 700 1.05rem var(--f-body); }
 td.stat.l { text-align: right; } td.stat.r { text-align: left; }
 td.rank { font-weight: 700; }
 .g { color: var(--win); } .y { color: var(--mid); } .o { color: var(--hot); } .rd { color: var(--loss); }
+.tlogo { width: 18px; height: 18px; object-fit: contain; vertical-align: -4px; margin-right: 4px; }
+.logo.has-img, .adv.has-img { background: transparent !important; }
+.logo.has-img span, .adv.has-img b { display: none; }
+.logo img { width: 78px; height: 78px; object-fit: contain; }
+.adv.has-img { border-color: transparent; }
+.adv img { width: 20px; height: 20px; object-fit: contain; }
 .adv { display: inline-grid; place-items: center; width: 22px; height: 22px; border: 1.5px solid #d7dde4; border-radius: 3px; font: 800 .62rem var(--f-display); }
 .dash { color: var(--muted); }
 
@@ -491,8 +497,15 @@ function rankClass(r) {
   return q <= 0.33 ? 'g' : q <= 0.5 ? 'y' : q <= 0.67 ? 'o' : 'rd';
 }
 const mcls = m => m == null ? '' : m >= 6.7 ? 'g' : m >= 5 ? 'y' : m >= 3.3 ? 'o' : 'rd';
-const logo = t => `<div class="logo" style="background:${esc(t.color)};color:${esc(t.alt)}">${esc(t.abbr)}</div>`;
-const badge = t => `<span class="adv" style="background:${esc(t.color)};color:${esc(t.alt)}" title="${esc(t.name)}">${esc(t.abbr.slice(0, 4))}</span>`;
+// Team logos from ESPN's image library (pro teams by abbreviation, college by team id). If an image can't load,
+// the old colored box with the abbreviation shows instead.
+const LOGO_LG = { nfl: 'nfl', nba: 'nba', cfb: 'ncaa', cbb: 'ncaa' };
+const logoSrc = (t, lg = league) => LOGO_LG[lg] === 'ncaa' ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${encodeURIComponent(t.id)}.png`
+  : `https://a.espncdn.com/i/teamlogos/${LOGO_LG[lg]}/500/${encodeURIComponent(String(t.abbr || '').toLowerCase())}.png`;
+const LOGO_ERR = `this.parentNode.classList.remove('has-img');this.remove()`;
+const mini = (t, lg = league) => t ? `<img class="tlogo" src="${logoSrc(t, lg)}" alt="" loading="lazy" onerror="this.remove()">` : '';
+const logo = t => `<div class="logo has-img" style="background:${esc(t.color)};color:${esc(t.alt)}"><img src="${logoSrc(t)}" alt="${esc(t.abbr)}" onerror="${LOGO_ERR}"><span>${esc(t.abbr)}</span></div>`;
+const badge = t => `<span class="adv has-img" style="background:${esc(t.color)};color:${esc(t.alt)}" title="${esc(t.name)}"><img src="${logoSrc(t)}" alt="${esc(t.abbr)}" loading="lazy" onerror="${LOGO_ERR}"><b>${esc(t.abbr.slice(0, 4))}</b></span>`;
 function toast(text) { const el = $('toast'); el.textContent = text; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2600); }
 const findGame = (lg, id) => (DATA[lg] || []).find(g => g.id === id);
 
@@ -651,7 +664,7 @@ function list() {
   const active = shown.filter(g => g.state !== 'post'), done = shown.filter(g => g.state === 'post');
   const item = g => {
     const st = stHtml(g);
-    return `<button type="button" class="game-btn" data-id="${esc(g.id)}"><span class="gtop"><span>${esc(tl(g.away))} @ ${esc(tl(g.home))}</span>${st}</span>
+    return `<button type="button" class="game-btn" data-id="${esc(g.id)}"><span class="gtop"><span>${mini(g.away)}${esc(tl(g.away))} @ ${mini(g.home)}${esc(tl(g.home))}</span>${st}</span>
       <small>${esc(g.home.abbr)} ${esc(g.lines.homeSpread)} · O/U ${esc(g.lines.total)}${(g.check || []).some(x => !x.ok) ? ' · <span class="warn-t">⚠ data</span>' : (g.check || []).length ? ' · ✓ checked' : ''}</small>${g.state === 'pre' ? `<span class="picks">${picks(g)}</span>` : ''}</button>`;
   };
   let html = '', day = '';
@@ -870,7 +883,7 @@ function renderHome() {
     const label = { moneyline: 'Moneyline', spread: 'Spread', total: 'Total' }[x.kind];
     return `<div class="pick" data-gi="${i}" role="button" tabindex="0">${badge(x.score)}
       <span class="what">${esc(x.call)}<small>${label}${k && k.odds ? ` · Kalshi ${Math.round(k.p * 100)}% (${esc(k.odds)})` : ''}</small></span>
-      <span class="who">${esc(tl(x.g.away))} @ ${esc(tl(x.g.home))}<small>${esc(x.g.date)}</small></span>
+      <span class="who">${mini(x.g.away, x.lg)}${esc(tl(x.g.away))} @ ${mini(x.g.home, x.lg)}${esc(tl(x.g.home))}<small>${esc(x.g.date)}</small></span>
       <span class="why">${vchip(x.a.verdict)}</span>
       <button type="button" class="add" data-gadd="${i}">+ Track</button>${shortWhy(x.a)}</div>`;
   };
@@ -879,7 +892,7 @@ function renderHome() {
     const pick = p.cat === 'Touchdowns' ? 'Anytime TD' : `${under ? 'Under' : 'Over'} ${p.line} ${p.cat}`;
     return `<div class="pick" data-pi="${i}" role="button" tabindex="0">${badge(p.score)}
       <span class="what">${esc(p.player)}<small>${esc(pick)}${p.kalshiOdds ? ` · Kalshi ${esc(p.kalshiOdds)}` : ''}</small></span>
-      <span class="who">${esc(p.team)} ${p.home ? 'vs' : '@'} ${esc(p.oppName)}<small>${esc(x.g.date)}</small></span>
+      <span class="who">${mini(p.home ? x.g.home : x.g.away, x.lg)}${esc(p.team)} ${p.home ? 'vs' : '@'} ${mini(p.home ? x.g.away : x.g.home, x.lg)}${esc(p.oppName)}<small>${esc(x.g.date)}</small></span>
       <span class="why">${vchip(x.a.verdict)}</span>
       <button type="button" class="add" data-padd="${i}">+ Track</button>${shortWhy(x.a)}</div>`;
   };
@@ -962,7 +975,7 @@ function renderProps() {
     const g = findGame(league, p.game);
     if (p.line == null) {
       return `<tr class="nl"><td class="rk">${p.rank}</td><td><span class="score lo">—</span></td><td class="ln">${dash}</td>
-        <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small></td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}<td class="op">${esc(g.away.abbr)} @ ${esc(g.home.abbr)}</td>
+        <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small></td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}<td class="op">${mini(g.away)}${esc(g.away.abbr)} @ ${mini(g.home)}${esc(g.home.abbr)}</td>
         <td>${dash}</td><td>${dash}</td><td>${p.avg5.toFixed(1)}</td><td><div class="chips">${p.l5.map(v => `<span class="chip5">${v.toFixed(0)}</span>`).join('')}</div></td>
         <td class="sm">proj ${p.proj.toFixed(1)}</td><td></td></tr>`;
     }
@@ -978,7 +991,7 @@ function renderProps() {
     return `<tr><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${pa.verdict === 'Fade' ? '<span class="vchip v-fade">No bet</span>' : vchip(pa.verdict)}</div>` : ''}</td>
       <td class="ln">${lineTxt}${moveTag(p.open, p.line)}${p.lineSrc === 'Kalshi' ? '<small class="ksrc">Kalshi line</small>' : ''}${p.line != null ? liveBar({ grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: under ? 'under' : 'over', line: p.line } }) : ''}</td>
       <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small>${p.check && !p.check.ok ? `<small class="flag" title="${esc(p.check.text)}">⚠ game log differs from nflverse</small>` : ''}${p.flag ? '<small class="flag" title="The line is far from this player\'s recent numbers and the market agrees, which usually means injury or role news.">⚠ line far from form, check news</small>' : ''}</td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}
-      <td class="op">${p.home ? 'vs' : '@'} ${esc(p.oppName)} <small>(${ord(p.oppRank)})</small></td>
+      <td class="op">${p.home ? 'vs' : '@'} ${(gg => gg ? mini(p.home ? gg.away : gg.home) : '')(findGame(league, p.game))}${esc(p.oppName)} <small>(${ord(p.oppRank)})</small></td>
       <td class="rank ${mcls(p.matchup)}">${p.matchup != null ? p.matchup.toFixed(1) : dash}</td>
       <td class="rank ${hr >= 0.6 ? 'g' : hr >= 0.4 ? 'y' : 'rd'}">${won}/${p.l5.length}</td>
       <td class="rank ${avgCls}">${p.avg5.toFixed(1)}</td>
