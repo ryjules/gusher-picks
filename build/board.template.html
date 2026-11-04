@@ -569,7 +569,7 @@ function confCell(g, kind, label, c) {
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
   const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? (pk.valueSide === pk.side ? ' agrees' : ' disagrees') : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
-  return `<div><span>${label}</span><b class="${cls}">${score.toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
+  return `<div><span>${label}</span><b class="${cls}">${shown(score, kind).toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 
 function lineCell(label, cur, open, kal) {
@@ -716,6 +716,9 @@ function totalStats(g) {
 }
 const BIG_SPREAD = { cfb: 17, nfl: 10, nba: 12, cbb: 14 }, LOW_TOTAL = { cfb: 45, nfl: 41, nba: 215, cbb: 135 };
 // Verdicts and reasons are computed once per refresh by the build script.
+// Moneyline and spread scores under the bet bar read on a 4-7 band (an even matchup about 4, a real lean 5-6);
+// 7 and up is unchanged, and every verdict still comes from the underlying score.
+const shown = (sc, kind) => (kind === 'moneyline' || kind === 'spread') && sc < 7 ? Math.round((4 + sc * 2.9 / 7) * 10) / 10 : sc;
 function analyze(lg, g, kind) { return (g.analysis || {})[kind] || null; }
 function analyzeProp(p) { return p.analysis || null; }
 const VCLS = { 'Take large': 'v-large', 'Take': 'v-take', 'Take small': 'v-small', 'Fade': 'v-fade', 'Pass': 'v-pass' };
@@ -804,7 +807,7 @@ function humanSummary(g, kind, a, pk, fin, price) {
   const lead = [...strong, ...soft].slice(0, 2).map(humanize);
   const joinAnd = xs => xs.length > 1 ? `${xs[0]}, and ${xs[1]}` : xs[0];
   const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-  const sc = `${fin.toFixed(1)} out of 10`;
+  const sc = `${shown(fin, kind).toFixed(1)} out of 10`;
   const open = {
     'Take large': `This is one of our strongest spots: ${call} (${sc}), and everything we look at points the same way.`,
     'Take': `We're on ${call} at ${sc}.`,
@@ -883,7 +886,7 @@ function renderHome() {
   const gameRow = (x, i) => {
     const k = kalshiFor(x.g, x.kind);
     const label = { moneyline: 'Moneyline', spread: 'Spread', total: 'Total' }[x.kind];
-    return `<div class="pick" data-gi="${i}" role="button" tabindex="0">${badge(x.score)}
+    return `<div class="pick" data-gi="${i}" role="button" tabindex="0">${badge(shown(x.score, x.kind))}
       <span class="what">${esc(x.call)}<small>${label}${k && k.odds ? ` · Kalshi ${Math.round(k.p * 100)}% (${esc(k.odds)})` : ''}</small></span>
       <span class="who">${mini(x.g.away, x.lg)}${esc(tl(x.g.away))} @ ${mini(x.g.home, x.lg)}${esc(tl(x.g.home))}<small>${esc(x.g.date)}</small></span>
       <span class="why">${vchip(x.a.verdict)}</span>
