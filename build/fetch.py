@@ -944,8 +944,9 @@ def rescore_prop(pr, key=None):
     if key in ("nba", "cbb") and l5:
         # Basketball: how often he has cleared this line lately (newest games count most) and by how much his
         # last-5 average clears it, with the matchup as a light touch (fit to the Profit Hunt prop sheets).
-        avg = sum(l5) / len(l5)
-        # Lines already move after a hot week, so the cushion uses half last-5, half season form.
+        avg = sorted(l5)[len(l5) // 2] if len(l5) % 2 else sum(sorted(l5)[len(l5) // 2 - 1:len(l5) // 2 + 1]) / 2
+        # The middle game of the last 5 (median), so one big night can't carry the read (JD: "that 24 is doing a lot
+        # of heavy lifting"). Lines already move after a hot week, so the cushion uses half last-5, half season form.
         avg = 0.5 * avg + 0.5 * (pr.get("season") if pr.get("season") is not None else avg)
         cushion = (pr["line"] - avg if under else avg - pr["line"]) / max(pr["line"], 1.0)
         cushion = max(-1.0, min(1.0, cushion))
@@ -2256,6 +2257,7 @@ MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that cou
 MOVE_W = 0.0  # line movement doesn't influence picks in any sport (was 0.25; shown on cards as information only)
 SIT_ROWS = {name for name, _k, _hb in SIT}
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
+NBA_TOTAL_CUSHION = 5.0  # NBA totals: projected combined scoring must clear the line by this much to be a bet (JD's rule)
 FB_SIT_W = 0.5  # football situational rows (3rd downs, turnover margin, penalties) count half in the categories-won share
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5, "Fast Break": 0.25}  # weight in the "better in more stat categories" count
 MISMATCH_UNITS = {"scoring", "passing", "rushing", "third downs"}
@@ -2753,6 +2755,11 @@ def blend_confidence(lg, g, n):
             r_ = next((r for sec in g.get("sections") or [] for r in sec["rows"] if r[0] == "PPG"), None)
             if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
                 score = min(score, 6.4)
+        if lg == "nba" and kind == "total" and st and st.get("proj") is not None and g["lines"].get("totalNum") is not None:
+            cush = (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1)
+            if cush < NBA_TOTAL_CUSHION:
+                score = min(score, 6.9)  # a Lean at most; the warning below keeps it from being promoted
+                st["thin"] = round(cush, 1)
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind == "total" and SPORT[lg] == "bb":
@@ -2914,6 +2921,9 @@ def analyze_game(lg, g, kind, nteams):
             (why if sd == side else against).append(txt + ".")
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
+    tm_ = (g.get("matchup") or {}).get("total") or {}
+    if kind == "total" and tm_.get("thin") is not None:
+        warn.append(f"Projected scoring is only {tm_['thin']:+.1f} points past the total: a total needs a {NBA_TOTAL_CUSHION:g}-point cushion to bet.")
     TAKE_BAR = (LEAN_BAR.get(lg) or {}).get("bar", LEAN_BAR_BASE)  # set from recent results (see lean_bars)
     # Market signals (Kalshi, line moves) are shown but count lightly: only a clear Kalshi lean the other way
     # (under 45%) holds a pick back, and they don't count in the reasons-for vs reasons-against tally.
@@ -3047,7 +3057,11 @@ def analyze_prop(p, g=None, lg=None):
         q = next((x for x in ((g.get("inj") or {}).get(side) or []) if x.get("id") == p.get("pid")), None)
         if q:
             warn.append(f"{p['player']} is listed {q['status'].lower()}.")
-    if (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else PROP_EDGE_MIN) and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
+    need = len(p["l5"]) - 1 if len(p["l5"]) >= 3 else len(p["l5"])  # 4 of 5 (3 of 4, 2 of 3)
+    if p["cat"] != "Touchdowns" and p.get("line") is not None and p["l5"] and won < need:
+        against.append(f"Beat this line in only {won} of his last {len(p['l5'])} games: a bet needs {need} of {len(p['l5'])}.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else PROP_EDGE_MIN) and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
         # The data likes it, but the price already says so: no value in betting it.
         against.append("The price already reflects what the data shows, so there's no value at this number."
                        if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
