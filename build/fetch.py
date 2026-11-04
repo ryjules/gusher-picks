@@ -1142,7 +1142,12 @@ BACKFILL = os.environ.get("BACKFILL_DAY", "").strip()
 LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
-NBA_PROP_BAR = 8.0  # basketball props need this read to be a bet (was 7.5)
+NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
+BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
+BB_PROP_BAR_LOWMIN = 7.5
+# Prop types that won in the Oct backtest at 7+ (138-93, +32.5u); points-based props lost, so they aren't bets.
+BB_GOOD_PROPS = {("Assists", "Over"), ("Assists", "Under"), ("Reb+Ast", "Over"), ("Reb+Ast", "Under"),
+                 ("3PT Made", "Under"), ("Rebounds", "Over")}
 REB_PROP_BAR = 8.0  # basketball rebounds props: Takes went 1-4 over the first two slates
 REB_BIG_LINE = 6.5  # rebound lines from here up are big men
 REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
@@ -1234,7 +1239,7 @@ def lean_bars(path):
 LEAN_BAR = lean_bars(sys.argv[3]) if len(sys.argv) > 3 else {}
 
 
-def prop_tuning(path, base=8.0):
+def prop_tuning(path, base=NBA_PROP_BAR):
     """Every rebuild re-tunes basketball props from the last 3 weeks of graded results: the bar to bet, whether stakes
     stay at half a unit, and a small nudge for prop types (stat + over/under) that have been clearly winning or losing.
     Moves are modest and need a real sample, so one bad night can't swing the board."""
@@ -1253,10 +1258,8 @@ def prop_tuning(path, base=8.0):
         n, hit = len(bets), (sum(p["result"] == "W" for p in bets) / len(bets) if bets else None)
         units = round(sum(u1(p) for p in bets), 2)
         bar, why = base, "not enough graded prop bets yet to move the bar"
-        if n >= 15 and hit < 0.45:
-            bar, why = base + 0.5, f"prop bets are hitting {hit:.0%}, well under break-even, so only the strongest reads play"
-        elif n >= 15 and hit < 0.50:
-            bar, why = base + 0.3, f"prop bets are hitting {hit:.0%}, under break-even, so the bar goes up a little"
+        if n >= 15 and hit < 0.50:
+            why = f"prop bets are hitting {hit:.0%}; the bar stays at {base:g} (raising it backtested worse) and the prop-type filter does the work"
         elif n >= 40 and hit >= 0.60 and units > 0:
             bar, why = base - 0.5, f"prop bets are hitting {hit:.0%} ({units:+.1f}u), so a few more reads make it"
         elif n >= 25 and hit >= 0.57 and units > 0:
@@ -2975,12 +2978,16 @@ def analyze_prop(p, g=None, lg=None):
         # role or minutes change, or the price is heavily juiced (lines like o0.5). Not a bet without an edge.
         against.append("The line is far from his usual numbers, so the model can't claim an edge: likely role news or a heavy price.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif lg in ("nba", "cbb") and p["cat"] == "Rebounds" and p["score"] < REB_PROP_BAR:
-        against.append("Rebound counts swing on missed shots and minutes, so rebounds need an 8.0+ read.")
+    elif lg in ("nba", "cbb") and (p["cat"], p.get("side")) not in BB_GOOD_PROPS:
+        against.append("Not a prop type we bet: points-based props and these overs/unders lost in our backtest; we bet assists, "
+                       "rebounds + assists, 3-pointer unders and rebound overs.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg in ("nba", "cbb") and p["score"] < (PROP_TUNE.get(lg) or {}).get("bar", NBA_PROP_BAR):
-        verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props: 8.0+ while the model proves itself
-    elif lg in ("nba", "cbb", "nfl", "cfb") and p["score"] < BB_PROP_BAR:
+        verdict = "Fade" if p["score"] >= 4 else "Pass"  # basketball props: 7.0+
+    elif lg in ("nba", "cbb") and p.get("mpg") is not None and p["mpg"] < BB_PROP_MPG and p["score"] < BB_PROP_BAR_LOWMIN:
+        against.append(f"Plays {p['mpg']:.0f} minutes a game: under 30 minutes needs a {BB_PROP_BAR_LOWMIN:g}+ read.")
+        verdict = "Fade"
+    elif lg in ("nfl", "cfb") and p["score"] < BB_PROP_BAR:
         verdict = "Fade" if p["score"] >= 4 else "Pass"  # NBA and NFL props need a 7.5+ read to be a play
     elif lg in ("nfl", "cfb") and p["line"] < NFL_PROP_FLOOR.get(p["cat"], 0):
         against.append(f"Backup-sized line ({p['line']:g}): small roles swing too much to bet.")

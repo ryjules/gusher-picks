@@ -731,6 +731,8 @@ function propWhyNot(p, pa) {
   if (/can.t claim an edge/.test(t)) return 'Line far from his usual numbers';
   if (/receptions need an 8\.0/.test(t)) return 'Receptions need 8.0+';
   if (/rebounds need an 8\.0/.test(t)) return 'Rebounds need 8.0+';
+  if (/Not a prop type we bet/.test(t)) return 'Not a prop type we bet';
+  if (/under 30 minutes needs/.test(t)) return 'Under 30 minutes: needs 7.5+';
   if (/Backup-sized line/.test(t)) return 'Line too small to bet';
   if ((pa.warn || []).length) { const w = pa.warn[0].split(/[:.(]/)[0].trim(); return w.length > 42 ? w.slice(0, 40) + '…' : w; }
   if (p.score < 9) return 'Below the bar to bet';
