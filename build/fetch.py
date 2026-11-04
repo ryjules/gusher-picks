@@ -114,10 +114,13 @@ def parse_summary(d, lg):
                     if cat["name"] == "passing":
                         p["passYds"] = num(v.get("YDS")); p["passTD"] = num(v.get("TD"))
                         p["passAtt"] = num((v.get("C/ATT") or "0/0").split("/")[-1])
+                        p["cmp"] = num((v.get("C/ATT") or "0/0").split("/")[0]); p["int"] = num(v.get("INT"))
                     elif cat["name"] == "rushing":
                         p["rushYds"] = num(v.get("YDS")); p["rushTD"] = num(v.get("TD")); p["car"] = num(v.get("CAR"))
+                        p["rushLong"] = num(v.get("LONG"))
                     elif cat["name"] == "receiving":
                         p["recYds"] = num(v.get("YDS")); p["recTD"] = num(v.get("TD")); p["rec"] = num(v.get("REC"))
+                        p["tgt"] = num(v.get("TGTS")); p["recLong"] = num(v.get("LONG"))
                     elif cat["name"] == "defensive":
                         p["tackles"] = num(v.get("TOT")); p["sacks"] = num(v.get("SACKS"))
                     elif cat["name"] == "kicking":
@@ -479,6 +482,32 @@ ZERO_FILL = {"Rushing", "Receiving", "Receptions", "Rush + Rec", "Touchdowns"}
 OUT_STATUSES = {"out", "doubtful", "injured reserve", "suspended", "physically unable to perform"}
 
 
+PLAYER_LOGS = {"fb": {}, "bb": {}}  # sport -> {player id: last 7 games, newest first}
+LOG_FIELDS = {"fb": ["cmp", "passAtt", "passYds", "passTD", "int", "car", "rushYds", "rushTD", "rushLong", "rec", "tgt",
+                     "recYds", "recTD", "recLong", "fg"],
+              "bb": ["min", "pts", "reb", "oreb", "dreb", "ast", "tov", "fgm", "fga", "tpm", "tpa", "fta", "stl", "blk"]}
+
+
+def player_log(sport, gl, tid, pid, n=7):
+    """The player's last n games (newest first) for the prop table's game log: date, opponent, then LOG_FIELDS."""
+    out = PLAYER_LOGS[sport]
+    if pid in out:
+        return
+    rows = []
+    for g in reversed(gl):
+        q = g["teams"][tid].get("players", {}).get(pid)
+        if not q:
+            continue
+        opp = next((t for k, t in g["teams"].items() if k != tid), {})
+        d = datetime.fromisoformat(g["date"].replace("Z", "+00:00")).astimezone(ET)
+        rows.append([f"{d.month}/{d.day}", ("@ " if g["teams"][tid].get("ha") == "away" else "vs ") + opp.get("abbr", "?")]
+                    + [(int(q[f]) if float(q[f]).is_integer() else round(q[f], 1)) if isinstance(q.get(f), (int, float)) else None
+                       for f in LOG_FIELDS[sport]])
+        if len(rows) >= n:
+            break
+    out[pid] = rows
+
+
 def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
     """Rows for one team's players in one upcoming game."""
     tid = team["id"]
@@ -528,6 +557,7 @@ def build_props(game, opp_id, team, opp, per_team, agg, injured, lines):
             if label == "Touchdowns" and line is None:
                 line = 0.5  # anytime TD is always 0.5; the price comes from Kalshi when it lists the player
             score, side, prob = prop_score(label, proj, line, hist)
+            player_log("fb", gl, tid, pid)
             rows.append({"pid": pid, "line": line, "open": opn, "score": score, "side": side, "prob": prob,
                          "hits": sum(1 for x in l5 if line is not None and x > line) if line is not None else None,"cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
                          "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home",
@@ -1720,7 +1750,9 @@ def parse_bb(d):
                 r.setdefault("players", {})[ath["id"]] = {
                     "name": ath.get("shortName") or ath.get("displayName"), "full": ath.get("displayName"),
                     "min": num(v.get("MIN")), "pts": num(v.get("PTS")), "reb": num(v.get("REB")), "ast": num(v.get("AST")),
-                    "stl": num(v.get("STL")), "blk": num(v.get("BLK")), "tpm": mk(v.get("3PT"))[0],
+                    "stl": num(v.get("STL")), "blk": num(v.get("BLK")), "tpm": mk(v.get("3PT"))[0], "tpa": mk(v.get("3PT"))[1],
+                    "fgm": mk(v.get("FG"))[0], "fga": mk(v.get("FG"))[1], "fta": mk(v.get("FT"))[1],
+                    "oreb": num(v.get("OREB")), "dreb": num(v.get("DREB")), "tov": num(v.get("TO")),
                     "pos": ((ath.get("position") or {}).get("abbreviation") or "")}
     if any("fga" not in r for r in teams.values()):
         return None
@@ -2072,6 +2104,7 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                 proj = (0.5 * avg5 + 0.5 * season) * factor
                 line, opn = lines.get((market, pid)) or (None, None)
                 score, side, prob = prop_score(label, proj, line, hist, BB_COUNT, BB_FLOOR)
+                player_log("bb", gl, tid, pid)
                 rows.append({"pid": pid, "open": opn, "cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
                              "mpg": round(sum(mins[-5:]) / len(mins[-5:]), 1), "pos": p.get("pos") or "",
                              "opp": opp["abbr"], "oppName": opp["name"], "home": team["ha"] == "home", "oppRank": orank,
@@ -3815,6 +3848,8 @@ attach_analysis()
 update_history(sys.argv[3] if len(sys.argv) > 3 else None, sys.argv[4] if len(sys.argv) > 4 else None)
 build_recap()
 
+OUT_DATA["logs"] = PLAYER_LOGS  # per-player game logs behind the prop tables (fields: LOG_FIELDS)
+OUT_DATA["logFields"] = LOG_FIELDS
 with open(OUT, "w") as f:
     json.dump(OUT_DATA, f, separators=(",", ":"))
 print("wrote", OUT, os.path.getsize(OUT), file=sys.stderr)

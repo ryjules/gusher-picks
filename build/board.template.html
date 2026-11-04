@@ -196,6 +196,17 @@ td.rank { font-weight: 700; }
 .lines div.lc span { white-space: nowrap; }
 .lines div.lc b { justify-self: end; }
 .lines div.lc small { grid-column: 1 / -1; justify-self: end; font: 600 .74rem var(--f-body); color: var(--muted); white-space: nowrap; }
+tr.xrow { cursor: pointer; }
+button.xp { margin-left: 6px; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: .8rem; }
+tr.logrow > td { padding: 4px 8px 12px; background: rgba(255, 255, 255, .02); }
+.plog table { width: auto; min-width: 420px; border-collapse: collapse; }
+.plog th { font-size: .7rem; letter-spacing: .06em; color: var(--muted); padding: 6px 14px; text-align: center; font-weight: 700; }
+.plog td { padding: 5px 14px; text-align: center; border-top: 1px solid var(--line); }
+.plog td.dim { color: var(--muted); }
+.plog td.main { font-weight: 800; }
+.plog td.main.g { color: var(--win); }
+.plog tr.avg td { font-weight: 800; border-top: 2px solid var(--line); }
+.plog tr.avg td:first-child { color: var(--accent, var(--gold)); }
 .score.or { color: var(--hot); border-color: var(--hot); background: #2c1a0d; }
 .score.rd { color: var(--loss); border-color: var(--loss); background: #2a1215; }
 .ptab td.rk { color: var(--muted); font-weight: 600; }
@@ -979,10 +990,10 @@ function renderProps() {
   const body = rows.map((p, i) => {
     const g = findGame(league, p.game);
     if (p.line == null) {
-      return `<tr class="nl"><td class="rk">${p.rank}</td><td><span class="score lo">—</span></td><td class="ln">${dash}</td>
+      return `<tr class="nl xrow" data-x="${i}"><td class="rk">${p.rank}</td><td><span class="score lo">—</span></td><td class="ln">${dash}</td>
         <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small></td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}<td class="op">${mini(g.away)}${esc(g.away.abbr)} @ ${mini(g.home)}${esc(g.home.abbr)}</td>
         <td>${dash}</td><td>${dash}</td><td>${p.avg5.toFixed(1)}</td><td><div class="chips">${p.l5.map(v => `<span class="chip5">${v.toFixed(0)}</span>`).join('')}</div></td>
-        <td class="sm">proj ${p.proj.toFixed(1)}</td><td></td></tr>`;
+        <td class="sm">proj ${p.proj.toFixed(1)}</td><td><button type="button" class="xp" aria-label="Game log" aria-expanded="false">▾</button></td></tr>`;
     }
     const under = p.side === 'Under';
     const beat = v => under ? v < p.line : v > p.line;
@@ -993,7 +1004,7 @@ function renderProps() {
     const avgCls = beat(p.avg5) ? 'g' : '';
     const edge = p.edge != null ? `<span class="${p.edge > 0 ? 'g' : 'rd'}">${p.edge > 0 ? '+' : ''}${(p.edge * 100).toFixed(1)}%</span>` : '';
     const pa = analyzeProp(p);
-    return `<tr><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${pa.verdict === 'Fade' ? '<span class="vchip v-fade">No bet</span>' : vchip(pa.verdict)}</div>` : ''}</td>
+    return `<tr class="xrow" data-x="${i}"><td class="rk">${p.rank}</td><td><span class="score ${scls(p.score)}">${p.score != null ? p.score.toFixed(1) : '—'}</span>${pa && p.score >= 4 ? `<div style="margin-top:4px" title="${esc([...pa.why, ...pa.against, ...pa.warn].join(' '))}">${pa.verdict === 'Fade' ? '<span class="vchip v-fade">No bet</span>' : vchip(pa.verdict)}</div>` : ''}</td>
       <td class="ln">${lineTxt}${moveTag(p.open, p.line)}${p.lineSrc === 'Kalshi' ? '<small class="ksrc">Kalshi line</small>' : ''}${p.line != null ? liveBar({ grade: { league, game: p.game, kind: 'prop', pid: p.pid, cat: p.cat, side: under ? 'under' : 'over', line: p.line } }) : ''}</td>
       <td class="pn">${esc(p.player)}<small>${esc(p.team)}</small>${p.check && !p.check.ok ? `<small class="flag" title="${esc(p.check.text)}">⚠ game log differs from nflverse</small>` : ''}${p.flag ? '<small class="flag" title="The line is far from this player\'s recent numbers and the market agrees, which usually means injury or role news.">⚠ line far from form, check news</small>' : ''}</td>${showPos ? `<td class="pos">${esc(p.pos || '—')}</td>` : ''}
       <td class="op">${p.home ? 'vs' : '@'} ${(gg => gg ? mini(p.home ? gg.away : gg.home) : '')(findGame(league, p.game))}${esc(p.oppName)} <small>(${ord(p.oppRank)})</small></td>
@@ -1002,7 +1013,7 @@ function renderProps() {
       <td class="rank ${avgCls}">${p.avg5.toFixed(1)}</td>
       <td><div class="chips">${p.l5.map(v => `<span class="chip5 ${beat(v) ? 'hi' : ''}">${v.toFixed(0)}</span>`).join('')}</div></td>
       <td class="sm">${edge}${p.kalshiP != null ? `<small>Kalshi ${(p.kalshiP * 100).toFixed(0)}%</small>` : ''}</td>
-      <td><button type="button" class="add" data-p="${i}">+ Track</button></td></tr>`;
+      <td><button type="button" class="add" data-p="${i}">+ Track</button><button type="button" class="xp" aria-label="Game log" aria-expanded="false">▾</button></td></tr>`;
   }).join('');
   const opts = games.map(g => `<option value="${esc(g.id)}" ${pgame === g.id ? 'selected' : ''}>${esc(g.away.abbr)} @ ${esc(g.home.abbr)} (${esc(g.date.split(' · ')[1].replace(' ET', ''))})</option>`).join('');
   $('board').innerHTML = `<div class="props">
@@ -1017,7 +1028,52 @@ function renderProps() {
   $('board').querySelectorAll('.cats button').forEach(b => b.onclick = () => { cat[league] = b.dataset.c; renderProps(); });
   $('gsel').onchange = e => { pgame = e.target.value; renderProps(); };
   const tb = $('to-board'); if (tb) tb.onclick = () => { current[league] = pgame; setMode('games'); };
-  $('board').querySelectorAll('[data-p]').forEach(b => b.onclick = () => openAdd(fromProp(rows[+b.dataset.p])));
+  $('board').querySelectorAll('[data-p]').forEach(b => b.onclick = e => { e.stopPropagation(); openAdd(fromProp(rows[+b.dataset.p])); });
+  $('board').querySelectorAll('tr.xrow').forEach(tr => tr.onclick = e => {
+    if (e.target.closest('button:not(.xp), a, select, input')) return;
+    const nx = tr.nextElementSibling, btn = tr.querySelector('.xp');
+    if (nx && nx.classList.contains('logrow')) { nx.remove(); if (btn) { btn.textContent = '▾'; btn.setAttribute('aria-expanded', 'false'); } return; }
+    const row = document.createElement('tr');
+    row.className = 'logrow';
+    row.innerHTML = `<td></td><td colspan="${tr.children.length - 1}">${logTable(rows[+tr.dataset.x])}</td>`;
+    tr.after(row);
+    if (btn) { btn.textContent = '▴'; btn.setAttribute('aria-expanded', 'true'); }
+  });
+}
+
+
+/* ---------------- prop game logs ---------------- */
+// Columns per prop type: [label, value(g), main?]. g(f) reads a field from the player's game-log row.
+const lpct = (a, b) => b ? Math.round(1000 * a / b) / 10 : null;
+const lsum = (...xs) => xs.every(x => x == null) ? null : xs.reduce((t, x) => t + (x || 0), 0);
+const LOGCOLS = {
+  Points: [['PTS', g => g('pts'), 1], ['FGA', g => g('fga')], ['3PM', g => g('tpm')], ['FTA', g => g('fta')], ['FG%', g => lpct(g('fgm'), g('fga'))], ['MIN', g => g('min')]],
+  Rebounds: [['REB', g => g('reb'), 1], ['OREB', g => g('oreb')], ['DREB', g => g('dreb')], ['PTS', g => g('pts')], ['MIN', g => g('min')]],
+  Assists: [['AST', g => g('ast'), 1], ['TO', g => g('tov')], ['PTS', g => g('pts')], ['FGA', g => g('fga')], ['MIN', g => g('min')]],
+  PRA: [['PRA', g => lsum(g('pts'), g('reb'), g('ast')), 1], ['PTS', g => g('pts')], ['REB', g => g('reb')], ['AST', g => g('ast')], ['MIN', g => g('min')]],
+  'Pts+Reb': [['P+R', g => lsum(g('pts'), g('reb')), 1], ['PTS', g => g('pts')], ['REB', g => g('reb')], ['FGA', g => g('fga')], ['MIN', g => g('min')]],
+  'Pts+Ast': [['P+A', g => lsum(g('pts'), g('ast')), 1], ['PTS', g => g('pts')], ['AST', g => g('ast')], ['FGA', g => g('fga')], ['MIN', g => g('min')]],
+  'Reb+Ast': [['R+A', g => lsum(g('reb'), g('ast')), 1], ['REB', g => g('reb')], ['AST', g => g('ast')], ['PTS', g => g('pts')], ['MIN', g => g('min')]],
+  '3PT Made': [['3PM', g => g('tpm'), 1], ['3PA', g => g('tpa')], ['3P%', g => lpct(g('tpm'), g('tpa'))], ['FGA', g => g('fga')], ['PTS', g => g('pts')], ['MIN', g => g('min')]],
+  Passing: [['YDS', g => g('passYds'), 1], ['CMP', g => g('cmp')], ['ATT', g => g('passAtt')], ['CMP%', g => lpct(g('cmp'), g('passAtt'))], ['TD', g => g('passTD')], ['INT', g => g('int')], ['RUSH YDS', g => g('rushYds')]],
+  Rushing: [['YDS', g => g('rushYds'), 1], ['CAR', g => g('car')], ['YPC', g => g('car') ? Math.round(10 * (g('rushYds') || 0) / g('car')) / 10 : null], ['TD', g => g('rushTD')], ['LONG', g => g('rushLong')], ['REC YDS', g => g('recYds')]],
+  Receiving: [['YDS', g => g('recYds'), 1], ['REC', g => g('rec')], ['TGT', g => g('tgt')], ['YPR', g => g('rec') ? Math.round(10 * (g('recYds') || 0) / g('rec')) / 10 : null], ['TD', g => g('recTD')], ['LONG', g => g('recLong')]],
+  Receptions: [['REC', g => g('rec'), 1], ['TGT', g => g('tgt')], ['CATCH%', g => lpct(g('rec'), g('tgt'))], ['YDS', g => g('recYds')], ['TD', g => g('recTD')]],
+  'Rush + Rec': [['YDS', g => lsum(g('rushYds'), g('recYds')), 1], ['RUSH YDS', g => g('rushYds')], ['REC YDS', g => g('recYds')], ['CAR', g => g('car')], ['REC', g => g('rec')], ['TD', g => lsum(g('rushTD'), g('recTD'))]],
+  Touchdowns: [['TD', g => lsum(g('rushTD'), g('recTD')), 1], ['RUSH TD', g => g('rushTD')], ['REC TD', g => g('recTD')], ['CAR', g => g('car')], ['TGT', g => g('tgt')], ['YDS', g => lsum(g('rushYds'), g('recYds'))]],
+};
+function logTable(p) {
+  const sp = LEAGUES[league].sport, F = (DATA.logFields || {})[sp] || [], rows = ((DATA.logs || {})[sp] || {})[p.pid] || [];
+  const cols = LOGCOLS[p.cat];
+  if (!cols || !rows.length) return '<div class="plog"><small>No game log for this player yet.</small></div>';
+  const vals = rows.map(r => { const g = f => { const i = F.indexOf(f); return i < 0 ? null : r[i + 2]; }; return cols.map(([, fn]) => fn(g)); });
+  const under = p.side === 'Under', beat = v => v != null && p.line != null && (under ? v < p.line : v > p.line);
+  const fmt = v => v == null ? '–' : Number.isInteger(v) ? String(v) : v.toFixed(1);
+  const avg = cols.map((_, j) => { const xs = vals.map(v => v[j]).filter(x => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; });
+  const head = `<tr><th>Date</th><th>Opp</th>${cols.map(([l]) => `<th>${esc(l)}</th>`).join('')}</tr>`;
+  const body = rows.map((r, i) => `<tr><td class="dim">${esc(r[0])}</td><td>${esc(r[1])}</td>${cols.map(([, , main], j) => `<td class="${main ? 'main' + (beat(vals[i][j]) ? ' g' : '') : ''}">${fmt(vals[i][j])}</td>`).join('')}</tr>`).join('');
+  const foot = `<tr class="avg"><td>AVG</td><td class="dim">${rows.length} GP</td>${avg.map((v, j) => `<td class="${cols[j][2] ? 'main' + (beat(v) ? ' g' : '') : ''}">${v == null ? '–' : v.toFixed(1)}</td>`).join('')}</tr>`;
+  return `<div class="plog"><table><thead>${head}</thead><tbody>${body}${foot}</tbody></table></div>`;
 }
 
 /* ---------------- plays tracker ---------------- */
