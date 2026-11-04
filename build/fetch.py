@@ -819,12 +819,49 @@ def enrich(key, slate):
                 continue
             ps = po if pr.get("side") != "Under" else 1 - po
             pr["kalshiP"], pr["kalshiOdds"] = round(ps, 3), fair(ps)
+            pr["_ms"] = ms
     print(key, "kalshi matched", matched, "of", len(slate), file=sys.stderr)
     for g in slate:
         for pr in g.get("props") or []:
             rescore_prop(pr, key)
-            for k in ("_hist", "_car5", "_ypc"):
+            if key in ("nba", "cbb"):
+                kalshi_alt_line(pr, key)
+            for k in ("_hist", "_car5", "_ypc", "_ms"):
                 pr.pop(k, None)
+
+
+def kalshi_alt_line(pr, key):
+    """No value at DraftKings' line: look along the player's Kalshi ladder (1-3 away) for a line where our read
+    still makes it a bet and Kalshi's price leaves a real edge. If one exists, the prop moves to that Kalshi line."""
+    ms, hist = pr.get("_ms"), pr.get("_hist")
+    if not ms or not hist or pr.get("kalshiP") is None or (pr.get("edge") or 0) >= PROP_EDGE_MIN or pr.get("line") is None:
+        return
+    base, best = pr["line"], None
+    steps = (1, 2) if pr["cat"] in BB_COUNT or pr["cat"] in ("Assists", "Rebounds") else (1, 2, 3)
+    for d in [x for st in steps for x in (-st, st)]:
+        L = base + d
+        if L <= 0:
+            continue
+        po = ladder_p(ms, L)
+        if po is None:
+            continue
+        sc, side, prob = prop_score(pr["cat"], pr["proj"], L, hist, BB_COUNT, BB_FLOOR)
+        if sc is None:
+            continue
+        kp = po if side != "Under" else 1 - po
+        if not 0.05 < kp <= 0.6:
+            continue  # no long shots, and nothing priced -150 or heavier
+        t = dict(pr, line=L, side=side, prob=prob, score=sc, kalshiP=round(kp, 3), kalshiOdds=fair(kp))
+        t["l5"] = pr.get("l5")
+        rescore_prop(t, key)
+        bar = NBA_PROP_BAR if (pr.get("mpg") or 0) >= BB_PROP_MPG else BB_PROP_BAR_LOWMIN
+        if ((t.get("edge") or 0) >= PROP_EDGE_MIN and (t.get("score") or 0) >= bar and (pr["cat"], side) in BB_GOOD_PROPS
+                and (best is None or t["score"] > best["score"])):
+            best = t
+    if best:
+        best["hits"] = sum(1 for x in hist[-5:] if x > best["line"])
+        best["dkLine"], best["lineSrc"] = base, "Kalshi"
+        pr.update(best)
 
 
 def rescore_prop(pr, key=None):
@@ -849,7 +886,12 @@ def rescore_prop(pr, key=None):
     if pr["cat"] == "FG Made":
         gap /= 3  # kicker volume swings a lot game to game, so a line well below the average is normal
     pr["flag"] = gap > 0.35 and pr["cat"] != "Touchdowns" and (key not in ("nba", "cbb") or abs(form - pr["line"]) >= 2.0)
-    w = 0.35 * max(0.0, 1 - gap / 0.5)
+    gw = gap
+    if key in ("nba", "cbb") and pr["cat"] in ("3PT Made", "Assists", "Rebounds"):
+        # Small-count lines (o1.5 threes, o2.5 boards) look "far" from form in percentage terms when they're only a
+        # board or two off, which zeroed the model's weight and hid real Kalshi value. Measure those against 4.
+        gw = abs(form - pr["line"]) / max(pr["line"], 4.0)
+    w = 0.35 * max(0.0, 1 - gw / 0.5)
     blend = w * pr["prob"] + (1 - w) * market
     pr["edge"] = round(blend - market, 3)
     if pr["cat"] == "Touchdowns":
@@ -1143,6 +1185,7 @@ LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
+PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
 BB_PROP_BAR_LOWMIN = 7.5
 # Prop types we bet. 3-pointer overs and rebound unders lost in the Oct backtest, so they aren't bets; points-based
@@ -2172,7 +2215,6 @@ SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
 SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
-PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 CFB_OVER_TRIM = 1.0  # college overs
 VALUE_W_LG = {"cfb": 0.0}  # college: the price model has been on the wrong side (Oct backtest)
 VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
@@ -2873,6 +2915,8 @@ def analyze_prop(p, g=None, lg=None):
     if p.get("matchup") is not None:
         (why if (p["matchup"] >= 5) != under else against).append(
             f"Opponent ranks {ordn(p['oppRank'])} in what it allows here (matchup {p['matchup']:.1f}/10).")
+    if p.get("dkLine") is not None:
+        why.append(f"No value at DraftKings' line ({p['dkLine']:g}), so this uses Kalshi's {p['line']:g} line, where the price leaves an edge. Bet it on Kalshi.")
     if p.get("kalshiP") is not None:
         why.append(f"Kalshi prices this at {round(p['kalshiP'] * 100)}% ({p['kalshiOdds']}); the model's edge over that is {p['edge'] * 100:.1f} points.")
     if p.get("flag"):
