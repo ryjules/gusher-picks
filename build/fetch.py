@@ -2138,9 +2138,9 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 LINE_PTS = {"cfb": (2.0, 1.5), "nfl": (0.6, 0.6), "nba": (1.0, 0.8), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
-REC_W = float(os.environ.get("GP_RECW", 3.0))  # record (win % gap) weight
+REC_W = float(os.environ.get("GP_RECW", 1.5))  # record (win % gap) weight (college; was 3.0: Nov backtest, better-record side covered 39%)
 REC_W_LG = {"nfl": float(os.environ.get("GP_RECW_NFL", 1.5))}
-POW_W = float(os.environ.get("GP_POWW", 2.0))  # opponent-adjusted power gap weight (cap)
+POW_W = float(os.environ.get("GP_POWW", 1.0))  # opponent-adjusted power gap weight (cap; college was 2.0: power-vs-line side covered 38%)
 POW_W_LG = {"nfl": float(os.environ.get("GP_POWW_NFL", 1.0))}
 SIDE_DEAD = {"nfl": float(os.environ.get("GP_SD_NFL", 0.15)), "nba": 0.1, "cbb": 0.08}  # rank gaps (share of the league) too small to matter on sides
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
@@ -2149,7 +2149,7 @@ TOT_BEST_W = 0.8  # how much an offense's best route to points (passing or rushi
 TOT_WILD = {"cfb": 8.0, "nfl": 6.0}  # points from the line where the market likely knows more than the stats
 TOT_WILD_CAP = 6.0
 TOT_EXTRA = {"cfb": 0.5, "nfl": 1.0}  # most that price + trends can add to a football total (the NFL season model is steadier)
-PROJ_W = {"cfb": 0.5, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
+PROJ_W = {"cfb": 0.7, "nfl": 0.5}  # weight of the opponent-adjusted scoring projection vs the rank matchup in a total
 MOVE_MIN = {"cfb": 3.0, "nfl": 1.5}  # line move from the open (points) that counts as real news
 MOVE_W = 0.25  # most a line move can add to a confidence score (was 0.75: the data drives picks, the market is a light touch)
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
@@ -2160,6 +2160,7 @@ SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
+CFB_BIGFAV_TRIM = 0.5  # college favorites laying 14+
 VALUE_W = 0.1  # price model share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
@@ -2639,6 +2640,10 @@ def blend_confidence(lg, g, n):
                                                            "the market has already priced it, so this stays a Lean", "under" if side == "over" else "over"))
         # (Removed Nov 3: the 6.9 cap when the price model disagreed. Graded picks went 9-3 on the stat side when it
         # disagreed by 1+ and 34-32 when it agreed, and the 4 capped picks all won. The price model still counts 20%.)
+        if lg == "cfb" and kind == "spread" and ln.get("spreadNum") is not None:
+            # Laying 14+ in college: big favorites covered 4-7 in the October backtest, so the read is trimmed.
+            if (ln["spreadNum"] if side == "home" else -ln["spreadNum"]) <= -14:
+                score = round(max(0.0, score - CFB_BIGFAV_TRIM), 1)
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                       "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal, "raw": raw_score}
