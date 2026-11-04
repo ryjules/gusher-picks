@@ -2555,6 +2555,23 @@ def line_move_note(g, kind, mv):
     return (f"Total moved from {op.get('total')} to {ln['totalNum']:g} since it opened", "over" if mv > 0 else "under")
 
 
+def bad_team(g, side, n):
+    """Football: the side we'd back is the worse team on both sides of the ball and in the standings, and its offense
+    ranks in the bottom third in recent scoring. Points alone don't make a bad team a bet (Colts +6 vs Dallas, Nov 2026)."""
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    i, j = (1, 2) if side == "away" else (2, 1)
+    rk = lambda name, k: (R[name][k][4] if k == 1 else R[name][k][0]) if name in R else None
+    po, oo, pd, od = rk("PPG", i), rk("PPG", j), rk("PPG/A", i), rk("PPG/A", j)
+    (wa, la), (wh, lh) = g.get("wl") or [[0, 0], [0, 0]]
+    if None in (po, oo, pd, od) or not (wa + la and wh + lh):
+        return None
+    mine, theirs = (wa / (wa + la), wh / (wh + lh)) if side == "away" else (wh / (wh + lh), wa / (wa + la))
+    if po > oo and pd > od and po > n * 2 / 3 and mine < theirs:
+        t = g[side]["abbr"]
+        return f"{t} is the worse team: scoring offense {ordn(po)}, scoring defense {ordn(pd)}, and the worse record. Getting points doesn't make a bad team a bet."
+    return None
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -2631,6 +2648,8 @@ def blend_confidence(lg, g, n):
             # change, a team falling apart). A Lean at most, like football totals.
             score = min(score, 6.9)
             st["wildFlag"] = True  # shown as a warning, so it stays a Lean (no Lean-to-bet promotion)
+        if kind == "spread" and SPORT[lg] == "fb" and bad_team(g, side, n):
+            score = min(score, 6.9)  # with the warning below this is a Fade
         if lg == "cfb" and kind == "total" and side == "over":
             # College overs (Oct backtest 4-10 at 7+): a 1.0 trim from 6 up, and both offenses must rank in the top
             # half in recent scoring to be a bet.
@@ -2755,6 +2774,9 @@ def analyze_game(lg, g, kind, nteams):
         sp_m = (g.get("matchup") or {}).get("spread") or {}
         if kind == "spread" and sp_m.get("wildFlag") and sp_m.get("side") == side:
             warn.append(f"Our number is {sp_m['edgePts']:g} points from the line: a gap that big usually means the line knows something (a QB change, injuries, a team falling apart).")
+        bt = bad_team(g, side, nteams) if kind == "spread" and SPORT[lg] == "fb" else None
+        if bt:
+            warn.append(bt)
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
             tips.append("Road favorite: worth knowing, but the data drives this pick.")
         if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg] and ((g.get("pick") or {}).get("spread") or {}).get("preferSpread"):
