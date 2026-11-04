@@ -2160,7 +2160,6 @@ SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
-CFB_BIGFAV_TRIM = 0.5  # college favorites laying 14+
 VALUE_W = 0.1  # price model share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
@@ -2372,28 +2371,17 @@ def stat_matchup(lg, g, nteams):
             ml *= (100 / price) ** 0.5  # an underdog has to win outright: +150 keeps 82%, +300 keeps 58%
         out["moneyline"] = {"score": round(ml, 1), "side": side, "parts": parts, "call": f"{team['abbr']} {fmt_ml(price) if price else 'ML'}", "notes": notes}
         if ln.get("spreadNum") is not None:
-            line_side = ln["spreadNum"] if side == "home" else -ln["spreadNum"]
-            k1, k2 = SM_SPREAD[lg]
-            line_w = LINE_W
-            if SPORT[lg] == "fb" and side == "home" and line_side < 0 and gap_h >= HUGE_GAP:
-                # A massive mismatch at home (e.g. 12th vs 109th): big spreads are fine, so soften the penalty.
-                k1, k2, line_w = k1 / 2, k2 / 2, LINE_W / 2
-                notes = notes + [(f"Massive mismatch at home for {g['home']['abbr']}: a big spread is fine here", "home")]
-            if line_side > 0:  # getting points: no bonus; the line check below weighs points against the data
-                sp = base
-            else:
-                sp = base - (k1 * abs(line_side) + k2 * line_side ** 2)
-            sp_side, sp_notes = side, list(notes)
+            sp, sp_side, sp_notes = base, side, list(notes)
             if lg in LINE_PTS:
-                # Line check (a lighter blend): turn the data edge into points and compare it with the spread,
-                # so laying a big number costs confidence and getting points the data says aren't deserved helps.
+                # The line is charged once: turn the data's edge into an expected margin and score how far it beats
+                # the spread. (Nov 4: this replaced a separate points-laid cost that charged the line a second time.)
                 margin_away = LINE_PTS[lg][0] * strength       # data's expected margin for the away team
                 e_away = margin_away - ln["spreadNum"]          # beat the away line by this many points (home line = spreadNum)
                 line_signed = max(-10.0, min(10.0, e_away / LINE_PTS[lg][1]))
-                old_signed = max(0.0, min(10.0, sp)) * (1 if side == "away" else -1)
-                blended = (1 - line_w) * old_signed + line_w * line_signed
-                sp_side = "away" if blended > 0 else "home"
-                sp = abs(blended)
+                sp_side = "away" if line_signed > 0 else "home"
+                sp = abs(line_signed)
+                if SPORT[lg] == "fb" and max_gap < TOT_DEAD:
+                    sp = min(sp, 3.9)  # no unit has a real edge on either side: not a spread bet
                 fav = g["away"] if margin_away > 0 else g["home"]
                 sp_notes.append((f"The data makes {fav['abbr']} about {abs(margin_away):.1f} points better; against the line that leaves "
                                  f"{abs(e_away):.1f} points of edge for {g['away']['abbr'] if e_away > 0 else g['home']['abbr']}",
@@ -2640,10 +2628,6 @@ def blend_confidence(lg, g, n):
                                                            "the market has already priced it, so this stays a Lean", "under" if side == "over" else "over"))
         # (Removed Nov 3: the 6.9 cap when the price model disagreed. Graded picks went 9-3 on the stat side when it
         # disagreed by 1+ and 34-32 when it agreed, and the 4 capped picks all won. The price model still counts 20%.)
-        if lg == "cfb" and kind == "spread" and ln.get("spreadNum") is not None:
-            # Laying 14+ in college: big favorites covered 4-7 in the October backtest, so the read is trimmed.
-            if (ln["spreadNum"] if side == "home" else -ln["spreadNum"]) <= -14:
-                score = round(max(0.0, score - CFB_BIGFAV_TRIM), 1)
         conf[kind] = [score, (("Play " if score >= 7 else "Lean ") + call) if score >= 4 else "Pass"]
         pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                       "value": v, "valueSide": vs, "trend": round(tr if side == pos else -tr, 1), "cal": cal, "raw": raw_score}
