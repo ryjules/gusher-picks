@@ -744,7 +744,9 @@ function fbTotalShown(sc, g) {
   const pj = (((g || {}).matchup || {}).total || {}).proj, t = ((g || {}).lines || {}).totalNum;
   return pj == null || t == null ? sc : Math.round(Math.min(6.9, Math.abs(pj - t)) * 10) / 10;
 }
-const shown = (sc, kind, lg = league, g = null) => sc >= 7 ? sc
+// Leans (4 to 7) and bets (7+) always show their own score, so the number never contradicts the Lean/Play label;
+// only Passes are re-read on the scales below.
+const shown = (sc, kind, lg = league, g = null) => sc >= 7 || ((lg === 'cfb' || lg === 'nfl') && sc >= 4) ? sc
   : kind === 'total' ? ((lg === 'cfb' || lg === 'nfl') && g ? fbTotalShown(sc, g) : sc)
   : (kind !== 'moneyline' && kind !== 'spread') ? sc
   : (lg === 'nba' || lg === 'cbb') ? Math.round((4 + sc * 2.9 / 7) * 10) / 10
