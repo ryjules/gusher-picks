@@ -1033,7 +1033,7 @@ def injury_report(summ, away, home):
     return out
 
 
-INJ_W = {"out": 1.0, "doubtful": 0.8, "questionable": 0.25}  # chance-weighted: questionable players usually play
+INJ_W = {"out": 1.0}  # only players confirmed out cost points; questionable and doubtful are shown but not counted
 INJ_QB = {"nfl": 5.0, "cfb": 7.0}  # points a starting QB is worth over his backup
 
 
@@ -1073,6 +1073,8 @@ def injury_impact(inj, tid, per_team, key):
             share = sum(scrim(q) for q in mine) / team_scrim
             if share >= 0.05:
                 pts = min(2.0, 6 * share)
+                if (x.get("pos") or "") in ("WR", "TE"):
+                    pts = min(1.0, 3 * share)  # receivers matter less than a QB or lead back: the targets go to the next man
             else:
                 t_share = sum((q.get("tackles", 0) or 0) for q in mine) / team_tkl
                 if t_share >= 0.04:
@@ -1124,12 +1126,12 @@ def injury_notes(g, side):
     """Warnings about the chosen team's injuries (football)."""
     inj = (g.get("inj") or {}).get(side) or []
     notes = []
-    qb = [p for p in inj if p["pos"] == "QB" and p["status"].lower() in ("questionable", "doubtful", "out")]
+    qb = [p for p in inj if p["pos"] == "QB" and p["status"].lower() == "out"]
     if qb:
         notes.append(f"{g[side]['abbr']} QB {qb[0]['name']} is {qb[0]['status'].lower()}.")
-    hurt = [p for p in inj if p["pos"] != "QB" and p["pos"] in KEY_POS and p["status"].lower() in ("doubtful", "out")]
+    hurt = [p for p in inj if p["pos"] != "QB" and p["pos"] in KEY_POS and p["status"].lower() == "out"]
     if len(hurt) >= 3:
-        notes.append(f"{g[side]['abbr']} has {len(hurt)} starters-level players listed doubtful or out ({', '.join(p['pos'] for p in hurt[:5])}).")
+        notes.append(f"{g[side]['abbr']} has {len(hurt)} starters-level players listed out ({', '.join(p['pos'] for p in hurt[:5])}).")
     return notes
 
 
@@ -2169,7 +2171,7 @@ KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 CFB_OVER_TRIM = 1.0  # college overs
 VALUE_W_LG = {"cfb": 0.0}  # college: the price model has been on the wrong side (Oct backtest)
-VALUE_W = 0.1  # price model share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
+VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
 LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
@@ -2770,6 +2772,10 @@ def analyze_game(lg, g, kind, nteams):
             tips.append(f"Line moved {ot} → {ct} since it opened (shown for information; line moves don't affect our picks).")
         for t in injury_notes(g, side):
             warn.append(t)
+        for p_ in ((g.get("inj") or {}).get(side) or []):
+            if p_["pos"] == "QB" and p_["status"].lower() in ("questionable", "doubtful"):
+                tips.append(f"{g[side]['abbr']} QB {p_['name']} is {p_['status'].lower()} (not counted unless he's ruled out).")
+                break
         sp_m = (g.get("matchup") or {}).get("spread") or {}
         if kind == "spread" and sp_m.get("wildFlag") and sp_m.get("side") == side:
             warn.append(f"Our number is {sp_m['edgePts']:g} points from the line: a gap that big usually means the line knows something (a QB change, injuries, a team falling apart).")
@@ -3298,7 +3304,7 @@ def league_recap(lg):
     if pa:
         fmt_ = lambda r: f"{r[0]}-{r[1]}" + (f" ({r[0] / (r[0] + r[1]):.0%})" if sum(r) else "")
         plan.append(f"Price model check (3 weeks): when it agreed with the stats, picks went {fmt_(pa.get('agrees', [0, 0]))}; "
-                    f"when it disagreed by a point or more, the stat side went {fmt_(pa.get('disagrees', [0, 0]))}. It counts 10% of the score, "
+                    f"when it disagreed by a point or more, the stat side went {fmt_(pa.get('disagrees', [0, 0]))}. It counts 5% of the score, "
                     "and its weight comes down if disagreement keeps going our way.")
     pt = PROP_TUNE.get(lg)
     if pt:
