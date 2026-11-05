@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gushers Hockey</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root { --bg: #0f141b; --panel: #161d26; --panel2: #1c2531; --line: #2a3542; --ink: #e8edf2; --muted: #8b98a8;
+  --cyan: #19a7b8; --gold: #f0b429; --win: #18a957; --loss: #e0313b; --hot: #f07c2a;
+  --f-display: 'Bebas Neue', Impact, sans-serif; --f-body: 'Inter', system-ui, sans-serif; }
+:root[data-theme="light"] { --bg: #f4f6f9; --panel: #fff; --panel2: #eef2f6; --line: #d6dde5; --ink: #18202a; --muted: #5b6878; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #f4f6f9; --panel: #fff; --panel2: #eef2f6; --line: #d6dde5; --ink: #18202a; --muted: #5b6878; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--f-body); }
+header { padding: 18px 16px 8px; max-width: 1200px; margin: 0 auto; }
+h1 { font: 2.2rem var(--f-display); letter-spacing: .5px; margin: 0; } h1 span { color: var(--gold); }
+.sub { color: var(--muted); font-size: .85rem; }
+main { max-width: 1200px; margin: 0 auto; padding: 0 16px 40px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 14px; }
+.chips button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: 600 .82rem var(--f-body); cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--cyan); border-color: var(--cyan); color: #fff; }
+.chips small { display: block; color: inherit; opacity: .75; font-weight: 600; }
+.chips .pk { display: inline-block; margin-top: 2px; font: 700 .68rem var(--f-body); color: var(--win); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.top { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; padding: 14px; align-items: center; }
+.team { display: flex; gap: 10px; align-items: center; } .team.r { justify-content: flex-end; text-align: right; }
+.badge { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: #fff; font: 1.15rem var(--f-display); letter-spacing: .5px; flex: none; border: 2px solid rgba(255,255,255,.25); }
+.chips button[aria-pressed="true"] .pk { color: #fff; } .team b { font: 1.7rem var(--f-display); display: block; line-height: 1; }
+.team small { color: var(--muted); }
+.l5 { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; } .team.r .l5 { justify-content: flex-end; }
+.l5 span { font: 700 .66rem var(--f-body); padding: 2px 4px; border-radius: 3px; color: #fff; }
+.l5 .w { background: var(--win); } .l5 .l { background: var(--loss); }
+.mid { text-align: center; } .mid b { font: 1.5rem var(--f-display); display: block; } .mid small { color: var(--muted); }
+.bar { background: var(--cyan); color: #fff; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; padding: 8px 14px; font-size: .78rem; }
+.bar b { display: block; font-size: .85rem; } .bar span { opacity: .85; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: .66rem; }
+.goalies { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.gk { background: var(--panel2); border-radius: 8px; padding: 10px 12px; } .gk.r { text-align: right; }
+.gk b { font: 1.25rem var(--f-display); } .tag { display: inline-block; font: 800 .66rem var(--f-body); padding: 1px 6px; border-radius: 10px; margin: 0 6px; vertical-align: middle; }
+.tag.p { background: var(--gold); color: #000; } .tag.c { background: var(--win); color: #fff; }
+.gk small { display: block; color: var(--muted); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+th { font: 700 .68rem var(--f-body); letter-spacing: .06em; color: var(--muted); text-transform: uppercase; padding: 6px 8px; text-align: center; }
+td { padding: 6px 8px; text-align: center; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+td.stat { font-weight: 800; } td.stat.l { text-align: right; } td.stat.r { text-align: left; }
+.sec td { background: var(--panel2); color: var(--cyan); font: 1.15rem var(--f-display); letter-spacing: .5px; text-align: left; }
+.sec td.r { text-align: right; }
+.rk { font-weight: 800; } .g { color: var(--win); } .y { color: var(--gold); } .rd { color: var(--loss); }
+.adv { font: 800 .7rem var(--f-body); }
+.conf { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
+.conf > div { padding: 12px 14px; border-left: 1px solid var(--line); } .conf > div:first-child { border-left: 0; }
+.conf span { font: 700 .72rem var(--f-body); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+.conf b { font: 2rem var(--f-display); margin: 0 8px; } .conf em { font: 1.2rem var(--f-display); font-style: normal; }
+.c-hi { color: var(--win); } .c-md { color: var(--gold); } .c-pass { color: var(--hot); } .c-lo { color: var(--loss); }
+.why { padding: 12px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+.why b { color: var(--ink); }
+.how { margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: .86rem; }
+.how h2 { font: 1.3rem var(--f-display); margin: 0 0 6px; color: var(--cyan); }
+.how li { margin: 3px 0; }
+@media (max-width: 720px) {
+  .top { grid-template-columns: 1fr 1fr; } .mid { grid-column: 1 / -1; order: 3; }
+  .goalies, .conf { grid-template-columns: 1fr; } .conf > div { border-left: 0; border-top: 1px solid var(--line); }
+  .gk.r { text-align: left; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>GUSHERS <span>HOCKEY</span></h1>
+  <div class="sub" id="sub"></div>
+</header>
+<main>
+  <div class="chips" id="chips" role="group" aria-label="Games"></div>
+  <div id="board"></div>
+  <section class="how">
+    <h2>How the confidence levels work</h2>
+    <ul>
+      <li><b>Scale:</b> under 5 is a Pass, 5 to 6.9 a Lean, 7 and up a Play.</li>
+      <li><b>Total:</b> three last-5 sums against the line: the two goalies' goals allowed, the two offenses' goals scored, and the two defenses' goals allowed. Their average is the projection; about one goal away from the line reads as a 9, a tenth of a goal is a Pass. All three on the same side counts in full; two of three counts less.</li>
+      <li><b>Moneyline:</b> how lopsided the matchup is: each offense against the other defense (goals, shots on goal, power play vs penalty kill, shot attempts), categories won, and the goalie edge in recent save %. Favorites of -250 or shorter stay a Lean at most.</li>
+      <li><b>Puck line:</b> the moneyline read minus 3: the better team has to win by two, so only a clear mismatch gets there.</li>
+      <li><b>Goalies:</b> P = probable, C = confirmed. Starters usually confirm around 1 to 2 PM ET; a change can move the total a lot.</li>
+      <li>Hits and blocks are shown and ranked but don't count as better or worse.</li>
+    </ul>
+  </section>
+</main>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ord = n => n == null ? '' : n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+const PCT = new Set(['pp', 'pk']);
+const fmt = (v, k) => v == null ? '–' : PCT.has(k) ? v.toFixed(1) + '%' : v.toFixed(Math.abs(v) < 10 ? 2 : 1);
+const rcls = r => r == null ? '' : r <= 10 ? 'g' : r <= 22 ? 'y' : 'rd';
+const ccls = s => s >= 7 ? 'c-hi' : s >= 5 ? 'c-md' : s >= 4 ? 'c-pass' : 'c-lo';
+let cur = 0;
+try { const h = location.hash.slice(1); const i = D.slate.findIndex(g => g.id === h); if (i >= 0) cur = i; } catch (e) {}
+$('sub').textContent = `${D.slate.length} games on ${D.slate[0] ? D.slate[0].date : ''} · built ${D.built} from ${D.games} games this season · lines from DraftKings`;
+function chips() {
+  $('chips').innerHTML = D.slate.map((g, i) => {
+    const plays = Object.entries(g.conf).filter(([, c]) => c[0] >= 7).map(([, c]) => c[1].replace(/^Play /, ''));
+    return `<button type="button" data-i="${i}" aria-pressed="${i === cur}">${esc(g.away.abbr)} @ ${esc(g.home.abbr)}<small>${esc(g.time)}</small>${plays.map(p => `<span class="pk">PLAY ${esc(p)}</span>`).join('<br>')}</button>`;
+  }).join('');
+  $('chips').querySelectorAll('button').forEach(b => b.onclick = () => { cur = +b.dataset.i; try { history.replaceState(null, '', '#' + D.slate[cur].id); } catch (e) {} render(); });
+}
+function gk(g, sd) {
+  const x = g.goalies[sd] || {}; const conf = /confirm/i.test(x.status || '');
+  const stats = x.gp ? `${x.w}-${x.gp - x.w} · ${x.gp} GP · ${x.gaa.toFixed(2)} GAA · ${(100 * x.svpct).toFixed(1)}% saves` : 'No starts this season';
+  const l5 = x.gp ? `Last 5: ${x.ga5.toFixed(2)} goals allowed, ${(100 * x.sv5).toFixed(1)}%, ${x.sa5.toFixed(1)} shots against${x.svRank ? ` · ${ord(x.svRank)} in save %` : ''}` : '';
+  return `<div class="gk ${sd === 'home' ? 'r' : ''}"><b>${esc(x.name || 'TBD')}</b><span class="tag ${conf ? 'c' : 'p'}">${conf ? 'C' : 'P'}</span><small>${stats}</small><small>${l5}</small></div>`;
+}
+function render() {
+  chips();
+  const g = D.slate[cur]; if (!g) { $('board').innerHTML = '<p>No NHL games today.</p>'; return; }
+  const L = g.away, R = g.home, ln = g.lines;
+  const last5 = sd => `<div class="l5">${g.last5[sd].map(([o, s, w]) => `<span class="${w ? 'w' : 'l'}">${esc(o)} ${esc(s)}</span>`).join('')}</div>`;
+  const rows = sec => g.sections[sec].map(([lab, a, b, k]) => {
+    const ra = a[4], rb = b[0], neutral = ['hits', 'o_hits', 'blocks', 'o_blocks'].includes(k);
+    const adv = neutral || ra == null || rb == null || ra === rb ? '–' : (ra < rb ? L.abbr : R.abbr);
+    return `<tr><td class="stat l">${esc(lab)}</td>${a.slice(0, 4).map(v => `<td>${fmt(v, k)}</td>`).join('')}<td class="rk ${rcls(ra)}">${ra ?? '–'}</td>
+      <td class="adv">${esc(adv)}</td><td class="rk ${rcls(rb)}">${rb ?? '–'}</td>${b.slice(1).map(v => `<td>${fmt(v, k)}</td>`).join('')}<td class="stat r">${esc(lab)}</td></tr>`;
+  }).join('');
+  const head = `<tr><th style="text-align:right">Statistic</th><th>Season</th><th>Away</th><th>Last 10</th><th>Last 5</th><th>L5 rank</th><th>Adv</th><th>L5 rank</th><th>Last 5</th><th>Last 10</th><th>Home</th><th>Season</th><th style="text-align:left">Statistic</th></tr>`;
+  const cell = (lab, c) => `<div><span>${lab}</span><br><b class="${ccls(c[0])}">${c[0].toFixed(1)}</b><em class="${ccls(c[0])}">${esc(c[1].toUpperCase())}</em></div>`;
+  const tp = g.totParts || {};
+  $('board').innerHTML = `<div class="card">
+    <div class="top">
+      <div class="team"><span class="badge" style="background:${esc(L.color)}">${esc(L.abbr)}</span><div><b>${esc(L.name)}</b><small>${esc(L.record || '')}</small>${last5('away')}</div></div>
+      <div class="mid"><small>${esc(g.date)} · ${esc(g.time)} ET</small><b>${esc(L.abbr)} ${esc(ln.awayML || '–')} · O/U ${ln.total ?? '–'} · ${esc(R.abbr)} ${esc(ln.homeML || '–')}</b><small>${esc(g.venue || '')}</small></div>
+      <div class="team r"><div><b>${esc(R.name)}</b><small>${esc(R.record || '')}</small>${last5('home')}</div><span class="badge" style="background:${esc(R.color)}">${esc(R.abbr)}</span></div>
+    </div>
+    <div class="bar"><div><span>Puck line</span><b>${esc(L.abbr)} ${esc(ln.awayPL || '')} (${esc(ln.awayPLOdds || '')}) / ${esc(R.abbr)} ${esc(ln.homePL || '')} (${esc(ln.homePLOdds || '')})</b></div>
+      <div><span>Total</span><b>${ln.total ?? '–'} · O ${esc(ln.overOdds || '')} / U ${esc(ln.underOdds || '')}</b></div>
+      <div><span>Projected goals</span><b>${g.proj.toFixed(2)}</b></div></div>
+    <div class="goalies">${gk(g, 'away')}${gk(g, 'home')}</div>
+    <div class="scroll"><table><thead>${head}</thead><tbody>
+      <tr class="sec"><td colspan="6">${esc(L.name)} offense</td><td></td><td colspan="6" class="r">${esc(R.name)} offense</td></tr>${rows('Offense')}
+      <tr class="sec"><td colspan="6">${esc(L.name)} defense</td><td></td><td colspan="6" class="r">${esc(R.name)} defense</td></tr>${rows('Defense')}
+    </tbody></table></div>
+    <div class="conf">${cell('Moneyline', g.conf.moneyline)}${cell('Puck line', g.conf.puckline)}${cell('Total', g.conf.total)}</div>
+    <div class="why"><b>Total math:</b> goalies allow ${(tp.goalies ?? 0).toFixed(1)} combined lately, the offenses score ${(tp.offenses ?? 0).toFixed(1)}, the defenses allow ${(tp.defenses ?? 0).toFixed(1)}: about ${g.proj.toFixed(1)} against ${ln.total ?? '–'}.
+      ${g.notes.length ? '<br><b>Matchup:</b> ' + g.notes.map(esc).join(' · ') : ''}</div>
+  </div>`;
+}
+render();
+</script>
+</body>
+</html>
