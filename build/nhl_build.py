@@ -148,7 +148,30 @@ for g in games:
             continue
         s = gstats.setdefault(gk["id"], {"name": gk["name"], "gp": 0, "ga": 0, "sa": 0, "sv": 0, "w": 0, "log": []})
         s["gp"] += 1; s["ga"] += gk["ga"]; s["sa"] += gk["sa"]; s["sv"] += gk["sv"]; s["w"] += t["win"]
-        s["log"].append(gk)
+        s["log"].append({**gk, "ha": t["ha"], "win": t["win"]})
+
+
+def gwin(log):
+    """Goalie split: goals allowed, saves and shots against per start, save %, win %."""
+    if not log:
+        return None
+    n, sa, sv = len(log), sum(x["sa"] for x in log), sum(x["sv"] for x in log)
+    return {"ga": sum(x["ga"] for x in log) / n, "sv": sv / n, "svp": 100 * sv / sa if sa else None, "sa": sa / n,
+            "win": 100 * sum(1 for x in log if x["win"]) / n}
+
+
+G_ROWS = [("Goals Allowed", "ga", False), ("Saves", "sv", True), ("Save%", "svp", True), ("Shots Against", "sa", False), ("Win%", "win", True)]
+G_L5 = {gid: gwin(st["log"][-5:]) for gid, st in gstats.items() if st["gp"] >= 2}
+G_RANK = {k: rank_map({gid: w[k] for gid, w in G_L5.items() if w}, hb) for _, k, hb in G_ROWS}
+
+
+def gsheet(gid):
+    st = gstats.get(gid)
+    if not st:
+        return None
+    lg = st["log"]
+    return {"season": gwin(lg), "away": gwin([x for x in lg if x["ha"] == "away"]), "home": gwin([x for x in lg if x["ha"] == "home"]),
+            "l10": gwin(lg[-10:]), "l5": gwin(lg[-5:]), "rank": {k: G_RANK[k].get(gid) for _, k, _ in G_ROWS}}
 
 
 def gline(gid):
@@ -208,6 +231,7 @@ for e in (sb or {}).get("events", []):
         gid = (pr.get("athlete") or {}).get("id")
         gl_ = gline(gid) if gid else None
         goalies[sd] = {"name": (pr.get("athlete") or {}).get("displayName"), "status": (pr.get("status") or {}).get("name") or "probable",
+                       "sheet": gsheet(gid) if gid else None,
                        **(gl_ or {}), "svRank": SV_RANK.get(round(gl_["svpct"], 4)) if gl_ and gl_.get("svpct") else None}
     ta, th = agg[aid], agg[hid]
     sections = {}

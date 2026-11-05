@@ -81,6 +81,7 @@ td.stat { font-weight: 800; } td.stat.l { text-align: right; } td.stat.r { text-
       <li><b>Total:</b> three last-5 sums against the line: the two goalies' goals allowed, the two offenses' goals scored, and the two defenses' goals allowed. Their average is the projection; about one goal away from the line reads as a 9, a tenth of a goal is a Pass. All three on the same side counts in full; two of three counts less.</li>
       <li><b>Moneyline:</b> how lopsided the matchup is: each offense against the other defense (goals, shots on goal, power play vs penalty kill, shot attempts), categories won, and the goalie edge in recent save %. Favorites of -250 or shorter stay a Lean at most.</li>
       <li><b>Puck line:</b> the moneyline read minus 3: the better team has to win by two, so only a clear mismatch gets there.</li>
+      <li><b>Goalie table:</b> each probable starter's goals allowed, saves, save %, shots against and win % per start, by season, road or home, last 10 and last 5; the rank is his last 5 among every goalie with 2+ starts.</li>
       <li><b>Goalies:</b> P = probable, C = confirmed. Starters usually confirm around 1 to 2 PM ET; a change can move the total a lot.</li>
       <li>Hits and blocks are shown and ranked but don't count as better or worse.</li>
     </ul>
@@ -123,6 +124,17 @@ function render() {
     return `<tr><td class="stat l">${esc(lab)}</td>${a.slice(0, 4).map(v => `<td>${fmt(v, k)}</td>`).join('')}<td class="rk ${rcls(ra)}">${ra ?? '–'}</td>
       <td class="adv">${esc(adv)}</td><td class="rk ${rcls(rb)}">${rb ?? '–'}</td>${b.slice(1).map(v => `<td>${fmt(v, k)}</td>`).join('')}<td class="stat r">${esc(lab)}</td></tr>`;
   }).join('');
+  const GR = [['Goals Allowed', 'ga', v => v.toFixed(2)], ['Saves', 'sv', v => v.toFixed(1)], ['Save%', 'svp', v => (v / 100).toFixed(3).replace(/^0/, '')],
+    ['Shots Against', 'sa', v => v.toFixed(1)], ['Win%', 'win', v => v.toFixed(1) + '%']];
+  const gsA = (g.goalies.away || {}).sheet, gsH = (g.goalies.home || {}).sheet;
+  const gv = (sh, w, k, f) => sh && sh[w] && sh[w][k] != null ? f(sh[w][k]) : '–';
+  const grows = GR.map(([lab, k, f]) => {
+    const ra = gsA ? gsA.rank[k] : null, rb = gsH ? gsH.rank[k] : null;
+    const adv = ra == null || rb == null || ra === rb ? '–' : (ra < rb ? L.abbr : R.abbr);
+    const gc = r => r == null ? '' : r <= 20 ? 'g' : r <= 45 ? 'y' : 'rd';
+    return `<tr><td class="stat l">${lab}</td>${['season', 'away', 'l10', 'l5'].map(w => `<td>${gv(gsA, w, k, f)}</td>`).join('')}<td class="rk ${gc(ra)}">${ra ?? '–'}</td>
+      <td class="adv">${esc(adv)}</td><td class="rk ${gc(rb)}">${rb ?? '–'}</td>${['l5', 'l10', 'home', 'season'].map(w => `<td>${gv(gsH, w, k, f)}</td>`).join('')}<td class="stat r">${lab}</td></tr>`;
+  }).join('');
   const head = `<tr><th style="text-align:right">Statistic</th><th>Season</th><th>Away</th><th>Last 10</th><th>Last 5</th><th>L5 rank</th><th>Adv</th><th>L5 rank</th><th>Last 5</th><th>Last 10</th><th>Home</th><th>Season</th><th style="text-align:left">Statistic</th></tr>`;
   const cell = (lab, c) => `<div><span>${lab}</span><br><b class="${ccls(c[0])}">${c[0].toFixed(1)}</b><em class="${ccls(c[0])}">${esc(c[1].toUpperCase())}</em></div>`;
   const tp = g.totParts || {};
@@ -137,6 +149,7 @@ function render() {
       <div><span>Projected goals</span><b>${g.proj.toFixed(2)}</b></div></div>
     <div class="goalies">${gk(g, 'away')}${gk(g, 'home')}</div>
     <div class="scroll"><table><thead>${head}</thead><tbody>
+      <tr class="sec"><td colspan="6">${esc((g.goalies.away || {}).name || L.name + ' goalie')} (goalie)</td><td></td><td colspan="6" class="r">${esc((g.goalies.home || {}).name || R.name + ' goalie')} (goalie)</td></tr>${grows}
       <tr class="sec"><td colspan="6">${esc(L.name)} offense</td><td></td><td colspan="6" class="r">${esc(R.name)} offense</td></tr>${rows('Offense')}
       <tr class="sec"><td colspan="6">${esc(L.name)} defense</td><td></td><td colspan="6" class="r">${esc(R.name)} defense</td></tr>${rows('Defense')}
     </tbody></table></div>
