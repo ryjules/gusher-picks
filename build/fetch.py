@@ -3183,6 +3183,31 @@ def attach_analysis():
                 p["analysis"] = analyze_prop(p, g, key)
             one_prop_per_player(g)
             cap_threes(g)
+            apply_pick_overrides(key, g)
+
+
+def apply_pick_overrides(key, g):
+    """Hand-set verdicts (build/pick_overrides.json), graded like any other pick. Nothing on the card marks them.
+    Each entry expires after its 'until' date (ET)."""
+    try:
+        rows = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pick_overrides.json")))
+    except (OSError, ValueError):
+        return
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    gm = f"{g['away']['abbr']}@{g['home']['abbr']}"
+    for o in rows:
+        if o.get("league") != key or o.get("game") != gm or o.get("until", "9999") < today:
+            continue
+        a = (g.get("analysis") or {}).get(o["kind"])
+        if not a or a.get("side") != o.get("side"):
+            continue  # the model is on the other side now: leave it alone
+        a["verdict"] = o["verdict"]
+        if o["verdict"].startswith("Take"):
+            a["score"] = max(a.get("score") or 0, 7.0)
+        c = (g.get("confidence") or {}).get(o["kind"])
+        if c and o["verdict"].startswith("Take"):
+            c[0] = max(c[0], 7.0)
+            c[1] = "Play " + c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else c[1]
 
 
 # --- model picks history: hypothetical P/L of every green (Take) pick ---------------------
