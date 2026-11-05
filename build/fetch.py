@@ -2532,7 +2532,10 @@ def stat_matchup(lg, g, nteams):
                 m_total += -(ia["away"]["off"] + ia["home"]["off"]) + (ia["away"]["def"] + ia["home"]["def"])
             blend_total = PROJ_W[lg] * proj + (1 - PROJ_W[lg]) * m_total
             sig = (blend_total - ln["totalNum"]) / SM_TOTAL_UNIT[lg]
-            wild = abs(blend_total - ln["totalNum"]) >= TOT_WILD[lg]
+            far = abs(blend_total - ln["totalNum"])
+            wild = lg != "nfl" and far >= TOT_WILD[lg]  # NFL (Nov 5): no cap, a warning instead (see analyze_game)
+            if lg == "nfl" and far >= TOT_WILD[lg]:
+                g.setdefault("_farTotal", round(far))
             dfr = R.get("PPG/A")
             def_note = []
             sig_before_ctx = sig  # defenses and pace are game context: together they can move the total at most CTX_CAP
@@ -2746,7 +2749,9 @@ def blend_confidence(lg, g, n):
             pick[kind] = {"side": side, "call": call, "stat": st["score"] if st else None, "statSide": st["side"] if st else None,
                           "value": v, "valueSide": vs, "trend": 0.0, "tooShort": True}
             continue
-        if kind == "spread" and SPORT[lg] == "fb" and st and st["side"] == side and (st.get("edgePts") or 0) >= SPREAD_WILD[lg]:
+        if kind == "spread" and lg == "nfl" and st and st["side"] == side and (st.get("edgePts") or 0) >= SPREAD_WILD[lg]:
+            st["wildFlag"] = True  # NFL (Nov 5): no cap, just the warning: 8.5+ stays a full bet, under that a small one
+        if kind == "spread" and lg == "cfb" and st and st["side"] == side and (st.get("edgePts") or 0) >= SPREAD_WILD[lg]:
             # Our margin is far from the market's: a gap that big usually means the line knows something (injury, a QB
             # change, a team falling apart). A Lean at most, like football totals.
             score = min(score, 6.9)
@@ -2928,6 +2933,8 @@ def analyze_game(lg, g, kind, nteams):
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
     tm_ = (g.get("matchup") or {}).get("total") or {}
+    if kind == "total" and g.get("_farTotal"):
+        warn.append(f"Our number is {g['_farTotal']} points from the market: a gap that big can mean news the stats don't show.")
     if kind == "total" and tm_.get("thin") is not None:
         warn.append(f"Projected scoring is only {tm_['thin']:+.1f} points past the total: a total needs a {NBA_TOTAL_CUSHION:g}-point cushion to bet.")
     TAKE_BAR = (LEAN_BAR.get(lg) or {}).get("bar", LEAN_BAR_BASE)  # set from recent results (see lean_bars)
