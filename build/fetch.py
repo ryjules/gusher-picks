@@ -3215,6 +3215,10 @@ def apply_pick_overrides(key, g):
         if c and o["verdict"].startswith("Take"):
             c[0] = max(c[0], 7.0)
             c[1] = "Play " + c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else c[1]
+        elif c:  # not a bet: shown as a Lean at most
+            c[0] = min(c[0], 6.9)
+            a["score"] = min(a.get("score") or 0, 6.9)
+            c[1] = "Lean " + c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else c[1]
 
 
 # --- model picks history: hypothetical P/L of every green (Take) pick ---------------------

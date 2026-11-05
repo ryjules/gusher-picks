@@ -7,5 +7,23 @@
   "verdict": "Take",
   "until": "2026-11-06",
   "why": "JAX -10 set to a full play by request (Nov 5)."
+ },
+ {
+  "league": "nfl",
+  "game": "ARI@SEA",
+  "kind": "spread",
+  "side": "away",
+  "verdict": "Fade",
+  "until": "2026-11-09",
+  "why": "ARI +8.5 not a play, by request (Nov 5)."
+ },
+ {
+  "league": "nfl",
+  "game": "CIN@ATL",
+  "kind": "spread",
+  "side": "away",
+  "verdict": "Take",
+  "until": "2026-11-09",
+  "why": "CIN -3 a full play, by request (Nov 5)."
  }
 ]
