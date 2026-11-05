@@ -279,6 +279,8 @@ for e in (sb or {}).get("events", []):
         gap = proj - tl
         agree = sum(1 for v in (g_sum, o_sum, d_sum) if (v - tl) * gap > 0)
         tot_raw = min(10.0, abs(gap) * 9.0) * (1.0 if agree == 3 else 0.8 if agree == 2 else 0.5)
+        if agree < 3:
+            tot_raw = min(tot_raw, 6.9)  # JD passes when one sum disagrees (VAN-WPG Nov 5: goalies say over, offenses don't)
         tot_call = f"{'Over' if gap > 0 else 'Under'} {tl:g}"
     tot_parts = {"goalies": round(g_sum, 2), "offenses": round(o_sum, 2), "defenses": round(d_sum, 2)}
     # notes for the case
