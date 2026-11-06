@@ -2230,7 +2230,7 @@ ML_FAV_EXP = {"cfb": 0.3, "nfl": 0.2, "nba": 0.5, "cbb": 0.5}  # how hard a heav
 TOT_DEAD = float(os.environ.get("GP_TOTDEAD", 0.25))  # rank gap (as a share of the league) that is ignored
 TOT_PTS = {"nfl": float(os.environ.get("GP_TOTPTS_NFL", 35)), "cfb": float(os.environ.get("GP_TOTPTS_CFB", 52.5))}  # points per unit of real gap
 CFB_HOME_EDGE = 1.0  # extra strength toward the home team in college
-NFL_HOME_EDGE = 2.0  # about 1.2 points at the NFL points scale
+NFL_HOME_EDGE = 1.0  # about 1.4 points once MARGIN_FIT scales it (2.0 had grown to 2.8 points after the Nov 4 margin fit, nearly a full field goal)
 LETDOWN = 1.0  # strength taken off a team coming off a big upset win
 HUGE_GAP = 0.55  # unit gap (share of the league) that counts as a massive mismatch
 LINE_W = float(os.environ.get("GP_LINEW", 0.35))  # share of the spread score that comes from data-vs-line
@@ -2435,7 +2435,7 @@ def stat_matchup(lg, g, nteams):
             strength -= BB_HOME_PTS[lg] / LINE_PTS[lg][0]
         if lg == "nfl" and not g.get("neutral"):
             parts["home"] = -NFL_HOME_EDGE
-            strength -= NFL_HOME_EDGE  # home field is worth about a point and a half; the line already includes it
+            strength -= NFL_HOME_EDGE  # home field is worth about a point and a half
         for sd, sgn in (("away", -1), ("home", 1)):
             if (g.get("letdown") or {}).get(sd):
                 # Coming off a big upset win as a 7+ point underdog: the emotional letdown spot.
