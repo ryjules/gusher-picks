@@ -2143,6 +2143,7 @@ run_basketball("mens-college-basketball", "cbb", date(2026, 11, 1), 50)
 TAKES = ("Take", "Take small", "Take large")
 STAKE = {"Take small": 0.5, "Take large": 2}  # units; a plain Take is 1
 LARGE_BAR = 9.0  # a Take large needs at least this, with every signal agreeing (was 8.5: four Large totals on one night was too much risk)
+LARGE_BAR_FB = 8.5  # football: a clean 8.5 is Large too, and from 9.0 one warning is allowed (Nov 6)
 LARGE_STAT = 8.0  # ...and the stat matchup alone has to be this strong
 INJ_SIDE_W = {"nba": 1.0, "cbb": 1.0}  # Nov 2: afternoon tweaks toward JD reverted after they cost the slate
 #  # injuries in the basketball stat matchup (the price model counts them too)
@@ -2956,7 +2957,9 @@ def analyze_game(lg, g, kind, nteams):
         verdict = "Take small" if ((warn and not strong) or oppose or score < SMALL_BELOW) else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         pk_raw = ((g.get("pick") or {}).get(kind) or {}).get("raw", score)  # the unshifted read (basketball scores are eased toward JD's scale)
-        if (verdict == "Take" and kind != "moneyline" and max(score, pk_raw) >= LARGE_BAR and not warn and not against
+        big = max(score, pk_raw)
+        fb_ok = SPORT[lg] == "fb" and (big >= LARGE_BAR_FB and not warn or big >= LARGE_BAR and len(warn) <= 1)
+        if (verdict == "Take" and kind != "moneyline" and (fb_ok or big >= LARGE_BAR and not warn) and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
                 and (pk.get("valueSide") in (None, side) or (pk.get("value") or 0) < 1)
                 and not market_no):
