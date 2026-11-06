@@ -2701,6 +2701,16 @@ def dominant_side(g, n):
 DOMINANT_MAX_LAY = 13.5  # NFL: a dominant team is a full spread play laying up to this many points
 
 
+def defense_battle(g, n):
+    """Both scoring defenses rank in the top third in points allowed lately (football PPG/A over the last 3,
+    basketball Opp PPG over the last 5): (away rank, home rank), or None."""
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    d = R.get("PPG/A") or R.get("Opp PPG")
+    if not d or None in (d[1][4], d[2][0]):
+        return None
+    return (d[1][4], d[2][0]) if max(d[1][4], d[2][0]) <= n / 3 else None
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -2808,6 +2818,11 @@ def blend_confidence(lg, g, n):
             if cush < NBA_TOTAL_CUSHION:
                 score = min(score, 6.9)  # a Lean at most; the warning below keeps it from being promoted
                 st["thin"] = round(cush, 1)
+        if kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
+                and g["lines"].get("totalNum") is not None and st["proj"] < g["lines"]["totalNum"] and defense_battle(g, n):
+            score = max(score, 7.0)  # two top-third defenses and a projection under the line: the Under is a play (Nov 6)
+            g["_dBattle"] = defense_battle(g, n)
+            st.pop("thin", None)  # the defenses carry it: no NBA cushion warning
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind == "total" and SPORT[lg] == "bb":
@@ -2890,7 +2905,10 @@ def analyze_game(lg, g, kind, nteams):
             (warn.append(f"Weather: {wx} can slow scoring.") if side == "over" else why.append(f"Weather helps the under: {wx}."))
         if SPORT[lg] == "bb" and side == "under" and fastest_pace(g):
             warn.append(f"{' and '.join(fastest_pace(g))} {'plays' if len(fastest_pace(g)) == 1 else 'play'} the fastest pace in the league lately: extra possessions are risky for an under.")
-        if side == "under" and ln["totalNum"] <= LOW_TOTAL[lg]:
+        if side == "under" and g.get("_dBattle"):
+            da_, dh_ = g["_dBattle"]
+            why.insert(0, f"Two top-third defenses ({ordn(da_)} and {ordn(dh_)} in points allowed lately) and our projection is under the line: the data points to a low score.")
+        elif side == "under" and ln["totalNum"] <= LOW_TOTAL[lg]:
             warn.append(f"Low total ({ln['totalNum']:g}): one big quarter can bust an under.")
     else:
         team, opp = g[side], g["away" if side == "home" else "home"]
