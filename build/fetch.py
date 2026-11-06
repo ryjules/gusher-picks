@@ -3243,23 +3243,30 @@ def attach_analysis():
             top_large(key)
 
 
-def top_large(key, per_day=3):
-    """Football: each day's Large bets are its most data-backed picks -- the top 3 bets scoring 8.0+ with a 9+ stat
-    read, ranked by nothing against them, then fewest warnings, then score (Nov 6)."""
-    by_day = {}
+def top_large(key, big_slate=20):
+    """Football: Large bets are the picks that meet the Large requirements (analyze_game). On a big slate (20+ games
+    that day) with none, the single most data-backed pick is Large: score 8.0+ with a 9+ stat read, ranked by nothing
+    against it, then fewest warnings, then score (Nov 6). Small slates get one only if a pick qualifies on its own."""
+    by_day, games, has_large = {}, {}, set()
     for g in OUT_DATA.get(key) or []:
         if g.get("state") != "pre":
             continue
+        day = g["date"].split(" · ")[0]
+        games[day] = games.get(day, 0) + 1
         for k in ("spread", "total"):
             a = (g.get("analysis") or {}).get(k)
             pk = (g.get("pick") or {}).get(k) or {}
-            if a and a.get("verdict", "").startswith("Take") and (a.get("score") or 0) >= 8.0 and (pk.get("stat") or 0) >= 9.0 \
+            if not a:
+                continue
+            if a.get("verdict") == "Take large":
+                has_large.add(day)
+            if a.get("verdict", "").startswith("Take") and (a.get("score") or 0) >= 8.0 and (pk.get("stat") or 0) >= 9.0 \
                     and pk.get("statSide") == a.get("side"):
-                by_day.setdefault(g["date"].split(" · ")[0], []).append((len(a["against"]), len(a["warn"]), -a["score"], id(a), a))
+                by_day.setdefault(day, []).append((len(a["against"]), len(a["warn"]), -a["score"], id(a), a))
     for day, rows in by_day.items():
-        rows.sort(key=lambda r: r[:4])
-        for *_, a in rows[:per_day]:
-            a["verdict"] = "Take large"
+        if games.get(day, 0) >= big_slate and day not in has_large:
+            rows.sort(key=lambda r: r[:4])
+            rows[0][-1]["verdict"] = "Take large"
 
 
 def apply_pick_overrides(key, g):
