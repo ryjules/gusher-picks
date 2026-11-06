@@ -2151,6 +2151,7 @@ DOG_ML_MAX = 200  # underdog prices where the moneyline follows the spread read
 DOG_ML_GAP = 99.0  # (off) ...to within this much
 INJ_MOVE = 999.0  # (off) line movement doesn't influence picks in any sport
 PACE1_UNDER = 0.0  # (warning only) trim on an under against the #1 pace team
+STRONG_READ_FB, SMALL_BELOW_FB = 8.0, 7.0  # football (Nov 6): a clean 7.0 is a full bet, and from 8.0 one warning keeps it full
 STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
 SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
 BB_PROP_SMALL_BELOW = 7.5  # basketball props: 7.0-7.4 small, 7.5+ regular (the 7-8 band backtested best)
@@ -2793,8 +2794,7 @@ def blend_confidence(lg, g, n):
                 score = min(score, 6.4)  # rain: never bet the over (JD, Nov 5: "should we take the over in a rain game? No")
         if (lg == "cfb" and kind == "spread" and side == "away" and g["lines"].get("spreadNum") is not None
                 and g["lines"]["spreadNum"] >= ROAD_FAV_MAX and not g.get("neutral")):
-            score = min(score, 6.9)  # big college road favorite: the upset spot (JD: Louisville -14 at GT, Liberty -17 at NMSU)
-            g["_bigRoadFav"] = True
+            g["_bigRoadFav"] = True  # big college road favorite: the upset spot, so a warning (a small bet unless the read is strong)
         if lg == "cfb" and kind == "total" and side == "over":
             # College overs (Oct backtest 4-10 at 7+): a 1.0 trim from 6 up, and both offenses must rank in the top
             # half in recent scoring to be a bet.
@@ -2972,7 +2972,7 @@ def analyze_game(lg, g, kind, nteams):
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
     if kind == "spread" and side == "away" and g.get("_bigRoadFav"):
-        warn.append(f"Big road favorite ({fsp(-g['lines']['spreadNum'])}): college home teams pull these upsets, so it's a Lean at most.")
+        warn.append(f"Big road favorite ({fsp(-g['lines']['spreadNum'])}): college home teams pull these upsets, so the stake is smaller.")
     tm_ = (g.get("matchup") or {}).get("total") or {}
     if kind == "total" and side == "over" and g.get("_overWeakO"):
         warn.append(f"One offense ranks {ordn(g['_overWeakO'])} in recent scoring: an over needs both offenses in the top half.")
@@ -2991,11 +2991,12 @@ def analyze_game(lg, g, kind, nteams):
     if score >= 7:
         # Sizing manages risk without capping plays: any warning (low total, big spread, key injury) makes it a half-unit bet.
         # When the data lines up strongly (8.5+), one warning (like a low total) is noted but doesn't halve the stake.
-        strong = score >= STRONG_READ and len(warn) <= 1
-        verdict = "Take small" if ((warn and not strong) or oppose or score < SMALL_BELOW) else "Take"
+        fb_ = SPORT.get(lg) == "fb"
+        strong = score >= (STRONG_READ_FB if fb_ else STRONG_READ) and len(warn) <= 1
+        verdict = "Take small" if ((warn and not strong) or oppose or score < (SMALL_BELOW_FB if fb_ else SMALL_BELOW)) else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         pk_raw = ((g.get("pick") or {}).get(kind) or {}).get("raw", score)  # the unshifted read (basketball scores are eased toward JD's scale)
-        big = max(score, pk_raw)
+        big = score if SPORT[lg] == "fb" else max(score, pk_raw)  # football: the final score (after the over trim)
         fb_ok = SPORT[lg] == "fb" and (big >= LARGE_BAR_FB and not warn or big >= LARGE_BAR and len(warn) <= 1)
         if (verdict == "Take" and kind != "moneyline" and (fb_ok or big >= LARGE_BAR and not warn) and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
