@@ -2711,6 +2711,26 @@ def defense_battle(g, n):
     return (d[1][4], d[2][0]) if max(d[1][4], d[2][0]) <= n / 3 else None
 
 
+def strength_matchups(g, n):
+    """College football totals (Oct backtest, 183 games): each offense against the defense it faces, by recent scoring
+    rank in thirds. ('under', ...) if a top-third offense meets a top-third defense (unders 31-18); ('over', ...) if a
+    top-third offense meets a bottom-third defense (overs 27-13). Returns (side, text) or None."""
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    o, d = R.get("PPG"), R.get("PPG/A")
+    if not o or not d or None in (o[1][4], o[2][0], d[1][4], d[2][0]):
+        return None
+    pairs = [(g["away"]["abbr"], o[1][4], g["home"]["abbr"], d[2][0]), (g["home"]["abbr"], o[2][0], g["away"]["abbr"], d[1][4])]
+    good_good = [p_ for p_ in pairs if p_[1] <= n / 3 and p_[3] <= n / 3]
+    good_bad = [p_ for p_ in pairs if p_[1] <= n / 3 and p_[3] > 2 * n / 3]
+    if good_good and not good_bad:
+        t, orr, dt, dr = good_good[0]
+        return "under", f"{t}'s offense ({ordn(orr)} in scoring) runs into {dt}'s defense ({ordn(dr)}): a good offense meeting a good defense goes under (31-18 in our October data)."
+    if good_bad and not good_good:
+        t, orr, dt, dr = good_bad[0]
+        return "over", f"{t}'s offense ({ordn(orr)} in scoring) faces {dt}'s defense ({ordn(dr)}): a good offense against a bad defense goes over (27-13 in our October data)."
+    return None
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -2818,7 +2838,14 @@ def blend_confidence(lg, g, n):
             if cush < NBA_TOTAL_CUSHION:
                 score = min(score, 6.9)  # a Lean at most; the warning below keeps it from being promoted
                 st["thin"] = round(cush, 1)
-        if kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
+        sm_ = strength_matchups(g, n) if lg == "cfb" and kind == "total" else None
+        if sm_ and sm_[0] == "over" and (lambda w_: not w_["indoor"] and w_["rain"] >= 40)(weather_of(g)):
+            sm_ = None  # rain still rules out the over
+        if sm_ and sm_[0] == side and st and st.get("side") == side and st.get("proj") is not None and g["lines"].get("totalNum") is not None \
+                and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > 0:
+            score = max(score, 7.0)  # college: a strength matchup with the projection on the same side is a play (Nov 6)
+            g["_strength"] = sm_
+        if lg != "cfb" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
                 and g["lines"].get("totalNum") is not None and st["proj"] < g["lines"]["totalNum"] and defense_battle(g, n):
             score = max(score, 7.0)  # two top-third defenses and a projection under the line: the Under is a play (Nov 6)
             g["_dBattle"] = defense_battle(g, n)
@@ -2905,7 +2932,9 @@ def analyze_game(lg, g, kind, nteams):
             (warn.append(f"Weather: {wx} can slow scoring.") if side == "over" else why.append(f"Weather helps the under: {wx}."))
         if SPORT[lg] == "bb" and side == "under" and fastest_pace(g):
             warn.append(f"{' and '.join(fastest_pace(g))} {'plays' if len(fastest_pace(g)) == 1 else 'play'} the fastest pace in the league lately: extra possessions are risky for an under.")
-        if side == "under" and g.get("_dBattle"):
+        if g.get("_strength") and g["_strength"][0] == side:
+            why.insert(0, g["_strength"][1])
+        elif side == "under" and g.get("_dBattle"):
             da_, dh_ = g["_dBattle"]
             why.insert(0, f"Two top-third defenses ({ordn(da_)} and {ordn(dh_)} in points allowed lately) and our projection is under the line: the data points to a low score.")
         elif side == "under" and ln["totalNum"] <= LOW_TOTAL[lg]:
