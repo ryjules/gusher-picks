@@ -2758,6 +2758,15 @@ def blend_confidence(lg, g, n):
             st["wildFlag"] = True  # shown as a warning, so it stays a Lean (no Lean-to-bet promotion)
         if kind == "spread" and SPORT[lg] == "fb" and bad_team(g, side, n):
             score = min(score, 6.9)  # with the warning below this is a Fade
+        if lg == "nfl" and kind == "total" and side == "over":
+            # The college over rules (Nov 6): a 1.0 trim from 6 up, and both offenses must rank in the top half in recent
+            # scoring to be a bet (NYG-PHI over with the Eagles' offense 29th).
+            if score >= 6:
+                score = round(max(0.0, score - CFB_OVER_TRIM), 1)
+            r_ = next((r for sec in g.get("sections") or [] for r in sec["rows"] if r[0] == "PPG"), None)
+            if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
+                score = min(score, 6.4)
+                g["_overWeakO"] = max(r_[1][4], r_[2][0])
         if lg == "cfb" and kind == "total" and side == "over":
             # College overs (Oct backtest 4-10 at 7+): a 1.0 trim from 6 up, and both offenses must rank in the top
             # half in recent scoring to be a bet.
@@ -2933,6 +2942,8 @@ def analyze_game(lg, g, kind, nteams):
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
     tm_ = (g.get("matchup") or {}).get("total") or {}
+    if kind == "total" and side == "over" and g.get("_overWeakO"):
+        warn.append(f"One offense ranks {ordn(g['_overWeakO'])} in recent scoring: an over needs both offenses in the top half.")
     if kind == "total" and g.get("_farTotal"):
         warn.append(f"Our number is {g['_farTotal']} points from the market: a gap that big can mean news the stats don't show.")
     if kind == "total" and tm_.get("thin") is not None:
