@@ -2265,6 +2265,7 @@ MOVE_W = 0.0  # line movement doesn't influence picks in any sport (was 0.25; sh
 SIT_ROWS = {name for name, _k, _hb in SIT}
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
 FB_ML_MAX_FAV = -300  # football moneylines this short or shorter are never bets
+ROAD_FAV_MAX = 14.0  # college: a road favorite laying this many or more is never a bet
 NBA_TOTAL_CUSHION = 5.0  # NBA totals: projected combined scoring must clear the line by this much to be a bet (JD's rule)
 FB_SIT_W = 0.5  # football situational rows (3rd downs, turnover margin, penalties) count half in the categories-won share
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5, "Fast Break": 0.25}  # weight in the "better in more stat categories" count
@@ -2786,6 +2787,14 @@ def blend_confidence(lg, g, n):
             if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
                 score = min(score, 6.4)
                 g["_overWeakO"] = max(r_[1][4], r_[2][0])
+        if SPORT[lg] == "fb" and kind == "total" and side == "over":
+            w_ = weather_of(g)
+            if not w_["indoor"] and w_["rain"] >= 40:
+                score = min(score, 6.4)  # rain: never bet the over (JD, Nov 5: "should we take the over in a rain game? No")
+        if (lg == "cfb" and kind == "spread" and side == "away" and g["lines"].get("spreadNum") is not None
+                and g["lines"]["spreadNum"] >= ROAD_FAV_MAX and not g.get("neutral")):
+            score = min(score, 6.9)  # big college road favorite: the upset spot (JD: Louisville -14 at GT, Liberty -17 at NMSU)
+            g["_bigRoadFav"] = True
         if lg == "cfb" and kind == "total" and side == "over":
             # College overs (Oct backtest 4-10 at 7+): a 1.0 trim from 6 up, and both offenses must rank in the top
             # half in recent scoring to be a bet.
@@ -2962,6 +2971,8 @@ def analyze_game(lg, g, kind, nteams):
             (why if sd == side else against).append(txt + ".")
         if sm["side"] != side and sm["score"] >= 4:
             oppose = True
+    if kind == "spread" and side == "away" and g.get("_bigRoadFav"):
+        warn.append(f"Big road favorite ({fsp(-g['lines']['spreadNum'])}): college home teams pull these upsets, so it's a Lean at most.")
     tm_ = (g.get("matchup") or {}).get("total") or {}
     if kind == "total" and side == "over" and g.get("_overWeakO"):
         warn.append(f"One offense ranks {ordn(g['_overWeakO'])} in recent scoring: an over needs both offenses in the top half.")
