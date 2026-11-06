@@ -2275,6 +2275,8 @@ SHORT_ML = -400  # moneyline this short or shorter: prefer the spread
 SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
+ELITE_D_RANK = 6  # NFL: a top-6 scoring defense (last 3 games) can carry an Under on its own (see one_elite_defense)
+ELITE_D_PROJ = 2.0  # ...when the projection is at least this far under the total
 CFB_OVER_TRIM = 1.0  # college overs
 VALUE_W_LG = {"cfb": 0.0, "nfl": 0.0}  # NFL follows college (Nov 6; was 5%)  # college: the price model has been on the wrong side (Oct backtest)
 VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
@@ -2711,6 +2713,19 @@ def defense_battle(g, n):
     return (d[1][4], d[2][0]) if max(d[1][4], d[2][0]) <= n / 3 else None
 
 
+def one_elite_defense(g, n):
+    """NFL: one scoring defense ranks top 6 in points allowed over the last 3 games and the offense it faces is not
+    top third in recent scoring (GB-NE, Nov 8: Packers 6th against the Patriots' 16th-ranked offense). (team, rank) or None."""
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    o, d = R.get("PPG"), R.get("PPG/A")
+    if not o or not d or None in (o[1][4], o[2][0], d[1][4], d[2][0]):
+        return None
+    for dsd, drk, ork in (("away", d[1][4], o[2][0]), ("home", d[2][0], o[1][4])):
+        if drk <= ELITE_D_RANK and ork > n / 3:
+            return (g[dsd]["abbr"], drk)
+    return None
+
+
 def strength_matchups(g, n):
     """College football totals (Oct backtest, 183 games): each offense against the defense it faces, by recent scoring
     rank in thirds. ('under', ...) if a top-third offense meets a top-third defense (unders 31-18); ('over', ...) if a
@@ -2871,6 +2886,14 @@ def blend_confidence(lg, g, n):
             score = max(score, 7.0)  # two top-third defenses and a projection under the line: the Under is a play (Nov 6)
             g["_dBattle"] = defense_battle(g, n)
             st.pop("thin", None)  # the defenses carry it: no NBA cushion warning
+        if lg == "nfl" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
+                and g["lines"].get("totalNum") is not None and g["lines"]["totalNum"] - st["proj"] >= ELITE_D_PROJ and one_elite_defense(g, n):
+            # One elite scoring defense against an ordinary offense, with the projection 2+ under: a Lean, and a play
+            # when the price model also has the Under by 2+ points (Nov 6).
+            md_ = g.get("model") or {}
+            agree = str(md_.get("totalSide", "")).startswith("Under") and (md_.get("totalEdge") or 0) >= 2
+            score = max(score, 7.0 if agree else 6.0)
+            g["_eliteD"] = one_elite_defense(g, n)
         if kind == "total" and st and st.get("wild") and st["side"] == side:
             score = min(score, TOT_WILD_CAP)  # far from the market: a Lean, never a Take
         if kind == "total" and SPORT[lg] == "bb":
@@ -2958,6 +2981,9 @@ def analyze_game(lg, g, kind, nteams):
         elif side == "under" and g.get("_dBattle"):
             da_, dh_ = g["_dBattle"]
             why.insert(0, f"Two top-third defenses ({ordn(da_)} and {ordn(dh_)} in points allowed lately) and our projection is under the line: the data points to a low score.")
+        elif side == "under" and g.get("_eliteD"):
+            t_, r_ = g["_eliteD"]
+            why.insert(0, f"{t_} has a top scoring defense ({ordn(r_)} in points allowed lately) against an ordinary offense, and our projection is 2+ points under the line.")
         elif side == "under" and ln["totalNum"] <= LOW_TOTAL[lg]:
             warn.append(f"Low total ({ln['totalNum']:g}): one big quarter can bust an under.")
     else:
