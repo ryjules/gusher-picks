@@ -2240,6 +2240,7 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 # NBA: tried 1.25 on Nov 2, but the gap to the lines was a missing home-court edge, not scale (lines = 3.4 + 1.05 x data).
 # Our stat margin put on the betting lines' scale (fit Nov 4: home line = a + b x our margin). Without it the
 # line check saw every big line as too big (NBA, NFL) or too small (college), which a separate points cost used to mask.
+SPREAD_DATA_W_LG = {"nfl": float(os.environ.get("GP_DW_NFL", 0.35))}  # NFL leans more on how lopsided the team data is (Nov 6)
 SPREAD_DATA_W = 0.15  # every sport: share of the spread score from how lopsided the matchup is, so the line is measured a bit less
 FB_DATA_W = 0.0  # (edge over the line only: best of the October backtests, 31-36 -4.6u vs -9.9u at 0.2)  # football spreads: share of the score from raw matchup strength (the rest is edge over the line)
 SPREAD_WILD = {"nfl": 5.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
@@ -2282,7 +2283,7 @@ DEF_TOTAL_W = 1.0  # two top (or bottom) quarter defenses push a football total 
 INJ_TOTAL_W = 0.6  # share of a missing player's scoring a basketball total loses (was 0.6; the price model already subtracts injured players too)
 CTX_CAP = 1.0  # most that defenses + pace together can move a football total
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
-SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 1.1)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
+SM_TOTAL_UNIT = {"cfb": float(os.environ.get("GP_TU_CFB", 0.9)), "nfl": float(os.environ.get("GP_TU_NFL", 0.85)), "nba": 1.0, "cbb": 1.2}  # football totals toned down (were 0.65 / 1.8) after big overs kept missing  # NFL: 3 games is a small sample, so be less sensitive
 
 
 UNIT_PAIRS = {
@@ -2495,7 +2496,7 @@ def stat_matchup(lg, g, nteams):
                 margin_away = sfit * LINE_PTS[lg][0] * strength - hfit  # data's expected margin for the away team, on the lines' scale
                 e_away = margin_away - ln["spreadNum"]          # beat the away line by this many points (home line = spreadNum)
                 line_signed = max(-10.0, min(10.0, e_away / LINE_PTS[lg][1]))
-                dw = SPREAD_DATA_W  # a share for how lopsided the matchup is (the rest is edge over the line)
+                dw = SPREAD_DATA_W_LG.get(lg, SPREAD_DATA_W)  # a share for how lopsided the matchup is (the rest is edge over the line)
                 blended = dw * min(10.0, base) * (1 if side == "away" else -1) + (1 - dw) * line_signed
                 sp_side = "away" if blended > 0 else "home"
                 sp = abs(blended)
@@ -2945,6 +2946,8 @@ def analyze_game(lg, g, kind, nteams):
     if kind == "total" and tm_.get("thin") is not None:
         warn.append(f"Projected scoring is only {tm_['thin']:+.1f} points past the total: a total needs a {NBA_TOTAL_CUSHION:g}-point cushion to bet.")
     TAKE_BAR = (LEAN_BAR.get(lg) or {}).get("bar", LEAN_BAR_BASE)  # set from recent results (see lean_bars)
+    if lg == "nfl":
+        TAKE_BAR = min(TAKE_BAR, 6.0)  # NFL (Nov 6): a clean Lean from 6.0 is a small bet
     # Market signals (Kalshi, line moves) are shown but count lightly: only a clear Kalshi lean the other way
     # (under 45%) holds a pick back, and they don't count in the reasons-for vs reasons-against tally.
     market_no = bool(k and k.get("p") is not None and k["p"] < KALSHI_AGAINST)
