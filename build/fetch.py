@@ -2267,6 +2267,7 @@ SIT_ROWS = {name for name, _k, _hb in SIT}
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
 FB_ML_MAX_FAV = -300  # football moneylines this short or shorter are never bets
 ROAD_FAV_MAX = 14.0  # college: a road favorite laying this many or more is never a bet
+CFB_HOME_DOG = 1.5  # college: added to a home underdog spread read of 4+ (home dogs covered 52-34 in the Oct backtest)
 NBA_TOTAL_CUSHION = 5.0  # NBA totals: projected combined scoring must clear the line by this much to be a bet (JD's rule)
 FB_SIT_W = 0.5  # football situational rows (3rd downs, turnover margin, penalties) count half in the categories-won share
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5, "Fast Break": 0.25}  # weight in the "better in more stat categories" count
@@ -2822,6 +2823,11 @@ def blend_confidence(lg, g, n):
             continue
         if kind == "spread" and SPORT[lg] == "fb" and st and st["side"] == side and (st.get("edgePts") or 0) >= SPREAD_WILD[lg]:
             st["wildFlag"] = True  # football (Nov 5-6): no cap, just the warning: 8.5+ stays a full bet, under that a small one
+        if (kind == "spread" and lg == "cfb" and side == "home" and not g.get("neutral")
+                and (g["lines"].get("spreadNum") or 0) > 0 and score >= 4.0):
+            # College home underdogs covered 52-34 (60%) in the Oct backtest, road dogs 46%: "home short dog" (JD, Nov 5).
+            score = round(min(10.0, score + CFB_HOME_DOG), 1)
+            g["_homeDog"] = True
         if (kind == "spread" and lg == "nfl" and dominant_side(g, n) == side
                 and (g["lines"].get("spreadNum") if side == "home" else -(g["lines"].get("spreadNum") or 0)) >= -DOMINANT_MAX_LAY):
             score = max(score, 7.5)  # the JAX-BAL profile: a full play even at a big number
