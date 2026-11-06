@@ -2681,6 +2681,24 @@ def bad_team(g, side, n):
     return None
 
 
+def dominant_side(g, n):
+    """NFL: the team that out-ranks the other on both sides of the ball by a wide margin -- its scoring offense and
+    scoring defense both in the top third (recent games), the opponent's both in the bottom third. JAX at BAL, Nov 5:
+    offense 4th vs 26th defense, defense 10th vs 31st offense, JAX -8.5 won by 23."""
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    o, d = R.get("PPG"), R.get("PPG/A")
+    if not o or not d or None in (o[1][4], o[2][0], d[1][4], d[2][0]):
+        return None
+    ao, ho, ad, hd = o[1][4], o[2][0], d[1][4], d[2][0]
+    for sd, mo, md, oo, od in (("away", ao, ad, ho, hd), ("home", ho, hd, ao, ad)):
+        if mo <= n / 3 and md <= n / 3 and oo > n * 2 / 3 and od > n * 2 / 3:
+            return sd
+    return None
+
+
+DOMINANT_MAX_LAY = 13.5  # NFL: a dominant team is a full spread play laying up to this many points
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -2753,6 +2771,10 @@ def blend_confidence(lg, g, n):
             continue
         if kind == "spread" and SPORT[lg] == "fb" and st and st["side"] == side and (st.get("edgePts") or 0) >= SPREAD_WILD[lg]:
             st["wildFlag"] = True  # football (Nov 5-6): no cap, just the warning: 8.5+ stays a full bet, under that a small one
+        if (kind == "spread" and lg == "nfl" and dominant_side(g, n) == side
+                and (g["lines"].get("spreadNum") if side == "home" else -(g["lines"].get("spreadNum") or 0)) >= -DOMINANT_MAX_LAY):
+            score = max(score, 7.5)  # the JAX-BAL profile: a full play even at a big number
+            g["_dominant"] = side
         if kind == "spread" and SPORT[lg] == "fb" and bad_team(g, side, n):
             score = min(score, 6.9)  # with the warning below this is a Fade
         if lg == "nfl" and kind == "total" and side == "over":
@@ -2904,6 +2926,8 @@ def analyze_game(lg, g, kind, nteams):
             tips.append("Road favorite: worth knowing, but the data drives this pick.")
         if kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg] and ((g.get("pick") or {}).get("spread") or {}).get("preferSpread"):
             tips.append(f"Big spread ({fsp(line_num)}), but at this moneyline price the spread is the better way to play it.")
+        elif kind == "spread" and g.get("_dominant") == side:
+            why.append(f"{g[side]['abbr']} out-ranks {g['home' if side == 'away' else 'away']['abbr']} on both sides of the ball by a wide margin (top-third offense and defense against bottom-third): the profile that covers big numbers.")
         elif kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
             warn.append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
         if kind == "spread" and SPORT[lg] == "fb" and line_num is not None:
