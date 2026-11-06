@@ -2732,18 +2732,21 @@ def strength_matchups(g, n):
 
 
 def nba_bad_dog(g, side):
-    """NBA: the side is the underdog and ranks worse than its opponent in both scoring offense and scoring defense
-    (last 5). Those dogs covered 11-16 in the rebuilt games (Nov 6). Returns a warning text or None."""
+    """NBA: the side is the underdog getting 4 to 9.5 points and ranks worse than its opponent in both scoring offense
+    and scoring defense (last 5). Those dogs covered 3-11 in the rebuilt games; under 4 points (5-4) or 10+ (3-1) the
+    spread is reasonable and they can be bet (Nov 6). Returns a warning text or None."""
     hs = g["lines"].get("spreadNum")
     if hs is None or (hs < 0) == (side == "home") or hs == 0:
         return None  # not the underdog
+    if not 4 <= abs(hs) < 10:
+        return None  # a reasonable spread: bet it on the numbers
     R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
     o, d = R.get("PPG"), R.get("Opp PPG")
     if not o or not d or None in (o[1][4], o[2][0], d[1][4], d[2][0]):
         return None
     mo, md, oo, od = (o[1][4], d[1][4], o[2][0], d[2][0]) if side == "away" else (o[2][0], d[2][0], o[1][4], d[1][4])
     if mo > oo and md > od:
-        return f"{g[side]['abbr']} is the underdog and worse on both ends (scoring {ordn(mo)} vs {ordn(oo)}, defense {ordn(md)} vs {ordn(od)}): those dogs haven't covered."
+        return f"{g[side]['abbr']} is the underdog and worse on both ends (scoring {ordn(mo)} vs {ordn(oo)}, defense {ordn(md)} vs {ordn(od)}): getting {abs(hs):g} points, those dogs went 3-11."
     return None
 
 
