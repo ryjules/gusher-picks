@@ -2248,9 +2248,9 @@ LINE_PTS = {"cfb": (2.0, 1.0), "nfl": (0.6, 0.7), "nba": (1.0, 1.4), "cbb": (1.0
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
 L3_WEIGHT = float(os.environ.get("GP_L3W", 0.8))  # share of last-3 ranks vs full-season ranks in a matchup
 REC_W = float(os.environ.get("GP_RECW", 1.0))  # record (win % gap) weight, college: a little (was 3.0, then 0)
-REC_W_LG = {"nfl": float(os.environ.get("GP_RECW_NFL", 1.5))}
+REC_W_LG = {"nfl": float(os.environ.get("GP_RECW_NFL", 1.0))}  # NFL uses the college weights (Nov 6; was 1.5)
 POW_W = float(os.environ.get("GP_POWW", 0.0))  # opponent-adjusted power gap weight (cap; college was 2.0: power-vs-line side covered 38%)
-POW_W_LG = {"nfl": float(os.environ.get("GP_POWW_NFL", 1.0))}
+POW_W_LG = {"nfl": float(os.environ.get("GP_POWW_NFL", 0.0))}  # NFL uses the college weights (Nov 6; was 1.0)
 SIDE_DEAD = {"nfl": float(os.environ.get("GP_SD_NFL", 0.15)), "nba": 0.1, "cbb": 0.08}  # rank gaps (share of the league) too small to matter on sides
 POWER_SCALE = {"cfb": 21.0, "nfl": 10.0, "nba": 12.0, "cbb": 15.0}  # power gap that earns the full +3
 SIDE_SCALE = {"cfb": 14, "nfl": float(os.environ.get("GP_SS_NFL", 18)), "nba": 12, "cbb": 12}  # rank-mismatch strength to a 0-10 score
@@ -2273,7 +2273,7 @@ SHORT_ML_CAP = 5.5
 SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
 CFB_OVER_TRIM = 1.0  # college overs
-VALUE_W_LG = {"cfb": 0.0}  # college: the price model has been on the wrong side (Oct backtest)
+VALUE_W_LG = {"cfb": 0.0, "nfl": 0.0}  # NFL follows college (Nov 6; was 5%)  # college: the price model has been on the wrong side (Oct backtest)
 VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
@@ -2298,7 +2298,7 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
             "paint scoring": "paint defense"}
 
 
-SOS_W = {"cfb": 0.25, "nfl": 0.5, "nba": 0.75, "cbb": 0.4}  # most strength the schedule can add or take (football's power rating already credits schedule)
+SOS_W = {"cfb": 0.25, "nfl": 0.25, "nba": 0.75, "cbb": 0.4}  # most strength the schedule can add or take (football's power rating already credits schedule)
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
 
