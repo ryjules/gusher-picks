@@ -2731,6 +2731,22 @@ def strength_matchups(g, n):
     return None
 
 
+def nba_bad_dog(g, side):
+    """NBA: the side is the underdog and ranks worse than its opponent in both scoring offense and scoring defense
+    (last 5). Those dogs covered 11-16 in the rebuilt games (Nov 6). Returns a warning text or None."""
+    hs = g["lines"].get("spreadNum")
+    if hs is None or (hs < 0) == (side == "home") or hs == 0:
+        return None  # not the underdog
+    R = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+    o, d = R.get("PPG"), R.get("Opp PPG")
+    if not o or not d or None in (o[1][4], o[2][0], d[1][4], d[2][0]):
+        return None
+    mo, md, oo, od = (o[1][4], d[1][4], o[2][0], d[2][0]) if side == "away" else (o[2][0], d[2][0], o[1][4], d[1][4])
+    if mo > oo and md > od:
+        return f"{g[side]['abbr']} is the underdog and worse on both ends (scoring {ordn(mo)} vs {ordn(oo)}, defense {ordn(md)} vs {ordn(od)}): those dogs haven't covered."
+    return None
+
+
 def blend_confidence(lg, g, n):
     """Final confidence: the stat matchup sets the base, and the price model adds or subtracts.
 
@@ -2807,6 +2823,8 @@ def blend_confidence(lg, g, n):
                 and (g["lines"].get("spreadNum") if side == "home" else -(g["lines"].get("spreadNum") or 0)) >= -DOMINANT_MAX_LAY):
             score = max(score, 7.5)  # the JAX-BAL profile: a full play even at a big number
             g["_dominant"] = side
+        if kind == "spread" and lg == "nba" and nba_bad_dog(g, side):
+            score = min(score, 6.9)  # with the warning below this is never a bet
         if kind == "spread" and SPORT[lg] == "fb" and bad_team(g, side, n):
             score = min(score, 6.9)  # with the warning below this is a Fade
         if lg == "nfl" and kind == "total" and side == "over":
@@ -2975,7 +2993,7 @@ def analyze_game(lg, g, kind, nteams):
         sp_m = (g.get("matchup") or {}).get("spread") or {}
         if kind == "spread" and sp_m.get("wildFlag") and sp_m.get("side") == side:
             warn.append(f"Our number is {sp_m['edgePts']:g} points from the line: a gap that big usually means the line knows something (a QB change, injuries, a team falling apart).")
-        bt = bad_team(g, side, nteams) if kind == "spread" and SPORT[lg] == "fb" else None
+        bt = bad_team(g, side, nteams) if kind == "spread" and SPORT[lg] == "fb" else nba_bad_dog(g, side) if kind == "spread" and lg == "nba" else None
         if bt:
             warn.append(bt)
         if lg in ("cfb", "cbb") and side == "away" and not g.get("neutral") and line_num is not None and line_num < 0:
