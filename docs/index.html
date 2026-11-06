@@ -647,9 +647,9 @@ function render(g) {
       ${lineCell(`${R.abbr} Line`, ln.homeSpread, op.homeSpread, k.spread?.home)}
     </div>
     ${g.sections.map(s => section(g, L, R, s)).join('')}
-    ${trends(g, L, R)}
     ${c ? `<div class="conf-h"><span><span class="ball"></span>Statistical Confidence Levels</span><small>Model ratings · lines from ${esc(ln.book || 'ESPN')}</small></div>
     <div class="conf">${confCell(g, 'moneyline', 'Moneyline', c.moneyline)}${confCell(g, 'spread', 'Spread', c.spread)}${confCell(g, 'total', 'Total', c.total)}</div>` : ''}
+    ${trends(g, L, R)}
     ${modelText(g, L, R)}
     ${breakdown(league, g)}
     ${dataCheck(g)}
