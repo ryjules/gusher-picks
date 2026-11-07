@@ -293,6 +293,18 @@ table.trend td.now { background: rgba(240, 180, 41, .12); box-shadow: inset 0 0 
 .pick .why { color: var(--muted); font-size: .85rem; min-width: 0; }
 @media (max-width: 760px) { .pick { grid-template-columns: 52px minmax(0, 1fr) auto; } .pick .lgc, .pick .why { display: none; } .pick .who { grid-column: 2 / -1; grid-row: 2; } }
 .pick .add { white-space: nowrap; }
+.parls { border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: 8px; padding: 8px 10px 10px; margin: 8px 0 14px; background: var(--row); }
+.parls-h { font: 800 .95rem var(--f-display); letter-spacing: .04em; text-transform: uppercase; color: var(--cyan); }
+.parls-n { color: var(--muted); font-size: .8rem; margin: 2px 0 8px; }
+.parl { border: 1px solid var(--line); border-radius: 8px; background: #0c1117; padding: 8px 10px; margin-top: 8px; }
+.parl-t { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.parl-t b { font: 800 1.05rem var(--f-display); }
+.parl-t .odds { font: 800 1.05rem var(--f-display); color: var(--cyan); }
+.parl-t small { color: var(--muted); flex: 1 1 200px; }
+.parl ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 3px; }
+.parl li { font-weight: 700; }
+.parl li small { color: var(--muted); font-weight: 600; }
+.parl li .score { display: inline-block; min-width: 0; padding: 0 5px; font-size: .78rem; margin-right: 6px; }
 .mostc { border: 1px solid var(--line); border-left: 3px solid #f2c94c; border-radius: 8px; padding: 8px 10px 4px; margin: 8px 0 14px; background: var(--row); }
 .mostc-h { font: 800 .85rem var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: #f2c94c; margin-bottom: 2px; }
 .bankv .bank-in { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
@@ -907,7 +919,9 @@ function plSince(from) {
   return ps.reduce((s, p) => s + unitsOf(p), 0) * UNIT();
 }
 let homeLg = null;  // the sport tab open on Top Picks
+let suggested = [];  // parlays shown on Top Picks (for the + Track parlay buttons)
 function renderHome() {
+  suggested = [];
   const gamePicks = [], propPicks = [];
   for (const lg of Object.keys(LEAGUES)) for (const g of DATA[lg] || []) {
     if (g.state !== 'pre' || !g.confidence) continue;
@@ -952,6 +966,12 @@ function renderHome() {
     const most = topG.length || topP.length ? `<div class="mostc"><div class="mostc-h">Most confident</div>
       ${topG.length ? `<div class="sub-h">Spreads &amp; totals</div><div class="picklist">${topG.map(([x, i]) => gameRow(x, i)).join('')}</div>` : ''}
       ${topP.length ? `<div class="sub-h">Player props</div><div class="picklist">${topP.map(([x, i]) => propRow(x, i)).join('')}</div>` : ''}</div>` : '';
+    // Suggested parlays: built from this sport's next slate, one leg per game so the legs don't depend on each other.
+    const parls = suggestParlays(lg, gamePicks, propPicks);
+    const parlHtml = parls.length ? `<div class="parls"><div class="parls-h">Suggested parlays</div>
+      <p class="parls-n">${esc(parls[0].day)} · built from the board's own plays, one leg per game. Every leg has to hit, so stake small (0.25–0.5 units).</p>
+      ${parls.map(pl => { const j = suggested.push(pl) - 1; return `<div class="parl"><div class="parl-t"><b>${esc(pl.name)}</b><span class="odds">${pl.price != null ? (pl.price > 0 ? '+' + pl.price : pl.price) : '—'}</span><small>${esc(pl.note)}</small><button type="button" class="add" data-parl="${j}">+ Track parlay</button></div>
+        <ol>${pl.legs.map(l => `<li><span class="score ${scls(l.score)}">${l.score.toFixed(1)}</span>${esc(l.leg.play)} <small>${esc(l.leg.matchup)} · ${esc(l.kind)}${l.leg.price != null ? ` · ${l.leg.price > 0 ? '+' : ''}${l.leg.price}` : ''}</small></li>`).join('')}</ol></div>`; }).join('')}</div>` : '';
     // Units at risk across every bet in this sport (not just the ones listed): small 0.5, regular 1, large 2.
     const SZ = { 'Take small': 0.5, 'Take': 1, 'Take large': 2 };
     const risk = [...gamePicks.filter(x => x.lg === lg && x.kind !== 'moneyline'), ...propPicks.filter(x => x.lg === lg)].reduce((s, x) => s + (SZ[x.a.verdict] || 0), 0);
@@ -959,6 +979,7 @@ function renderHome() {
     return { lg, html: `<section class="sport" id="sport-${lg}">
       <div class="sport-h"><h3>${esc(L.name)}</h3><small>${upcoming} upcoming game${upcoming === 1 ? '' : 's'}${takes ? ` · ${takes} Take${takes === 1 ? '' : 's'}` : ''}${risk ? ` · ${+risk.toFixed(1)} units at risk` : ''}</small><button type="button" class="pbtn" data-golg="${lg}">Open ${esc(L.short)} board</button></div>
       ${most}
+      ${parlHtml}
       <div class="sub-h">Game picks</div>
       <div class="picklist">${gp.map(([x, i]) => gameRow(x, i)).join('') || `<p class="empty">${esc(empty)}</p>`}</div>
       ${L.cats ? `<div class="sub-h">Player props</div><div class="picklist">${pp.map(([x, i]) => propRow(x, i)).join('') || '<p class="empty">No props stand out right now.</p>'}</div>` : ''}
@@ -991,6 +1012,58 @@ function renderHome() {
   $('board').querySelectorAll('[data-goper]').forEach(b => b.onclick = () => { period = b.dataset.goper; pday = todayET(); setMode('plays'); });
   $('board').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => { homeLg = b.dataset.jump; renderHome(); });
   $('board').querySelectorAll('[data-golg]').forEach(b => b.onclick = () => { league = b.dataset.golg; setMode('games'); });
+  $('board').querySelectorAll('[data-parl]').forEach(b => b.onclick = () => {
+    const pl = suggested[+b.dataset.parl];
+    src = 'mine';
+    draft = { type: 'parlay', date: pl.date, book: 'DK', stake: 0.5, legs: pl.legs.map(l => ({ ...l.leg })), price: null, priceManual: false };
+    setMode('plays');
+  });
+}
+
+// Parlay suggestions for one sport, from the picks already on Top Picks. Legs come from the sport's next slate (the
+// earliest day with a play), at most one per game. Spreads/totals and props use full plays only (Take / Take large:
+// small plays carry a warning); the moneyline parlay uses favorites from -300 to -110 that the model backs (its
+// spread or moneyline read on that team is 6+), JD's moneyline-parlay style.
+function suggestParlays(lg, gamePicks, propPicks) {
+  const full = v => v === 'Take' || v === 'Take large';
+  const mk = (x, kind) => ({ leg: (({ stake, book, ...r }) => r)(fromGame(x.g, kind, lg)), score: shown(x.score, kind, lg, x.g), kind: { spread: 'Spread', total: 'Total', moneyline: 'Moneyline' }[kind], gid: x.g.id, day: gameDay(x.g), g: x.g });
+  const sides = gamePicks.filter(x => x.lg === lg && x.kind !== 'moneyline' && full(x.a.verdict)).map(x => mk(x, x.kind));
+  const props = propPicks.filter(x => x.lg === lg && full(x.a.verdict)).map(x => ({ leg: (({ stake, book, ...r }) => r)(fromProp(x.p, lg)), score: x.p.score, kind: 'Prop', gid: x.g.id, day: gameDay(x.g), g: x.g }));
+  // Moneyline legs: the team our spread or moneyline read backs, when it is a -300 to -110 favorite.
+  const mlBy = {};
+  for (const x of gamePicks) {
+    if (x.lg !== lg || x.kind === 'total' || x.score < 6 || x.a.verdict === 'Pass') continue;
+    const pk = (x.g.pick || {})[x.kind]; if (!pk || !pk.call) continue;
+    const side = pk.call.startsWith(x.g.home.abbr + ' ') ? 'home' : 'away';
+    const price = priceNum(side === 'home' ? x.g.lines.homeML : x.g.lines.awayML);
+    if (!isFinite(price) || price < -300 || price > -110) continue;
+    const sc = shown(x.score, x.kind, lg, x.g), prev = mlBy[x.g.id];
+    if (prev && prev.score >= sc) continue;
+    mlBy[x.g.id] = { leg: { date: gameDay(x.g), time: gameTime(x.g), league: lg, matchup: `${x.g.away.abbr} @ ${x.g.home.abbr}`, play: `${x.g[side].abbr} ML`, price, grade: { league: lg, game: x.g.id, kind: 'ml', side } },
+      score: sc, kind: 'Moneyline', gid: x.g.id, day: gameDay(x.g), g: x.g };
+  }
+  const mls = Object.values(mlBy);
+  const all = [...sides, ...props, ...mls];
+  if (!all.length) return [];
+  const day = all.map(l => l.day).sort()[0];
+  const pickLegs = (pool, n) => {
+    const seen = new Set(), out = [];
+    for (const l of pool.filter(l => l.day === day).sort((a, b) => b.score - a.score)) {
+      if (seen.has(l.gid)) continue;
+      seen.add(l.gid); out.push(l);
+      if (out.length === n) break;
+    }
+    return out;
+  };
+  const dayTxt = (() => { const g = all.find(l => l.day === day).g; return g.date.split(' · ')[0]; })();
+  const res = [];
+  const add = (name, legs, note) => { if (legs.length >= 2) res.push({ name, legs, note, day: dayTxt, date: day, price: parlayPrice(legs.map(l => l.leg)) }); };
+  const s2 = pickLegs(sides, 2), s3 = pickLegs(sides, 3);
+  add('Best 2-leg', s2, 'The two highest-rated spread and total plays.');
+  if (s3.length === 3) add('3-leg', s3, 'Adds the next-best play: a bigger payout, a lower chance every leg hits.');
+  add('Moneyline parlay', pickLegs(mls, 3), 'Favorites the model backs, priced -300 to -110.');
+  if (LEAGUES[lg].cats) add('Props parlay', pickLegs(props, 3), 'The top-rated player props, one per game.');
+  return res;
 }
 
 /* ---------------- player props ---------------- */
