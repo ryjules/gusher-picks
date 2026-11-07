@@ -3334,6 +3334,7 @@ def attach_analysis():
             one_prop_per_player(g)
             cap_threes(g)
             apply_pick_overrides(key, g)
+            same_game_cap(key, g)
         if SPORT[key] == "fb":
             top_large(key)
 
@@ -3362,6 +3363,30 @@ def top_large(key, big_slate=20):
         if games.get(day, 0) >= big_slate and day not in has_large:
             rows.sort(key=lambda r: r[:4])
             rows[0][-1]["verdict"] = "Take large"
+
+
+def same_game_cap(key, g):
+    """A spread and a total in one game that ride the same idea (the favorite plus the under: the underdog's offense is
+    held down; the underdog plus the over: it shows up) win or lose together. Keep the stronger play (fewer warnings,
+    the price model on its side, then the higher score) and make the other a small bet (Nov 7)."""
+    an, pk = g.get("analysis") or {}, g.get("pick") or {}
+    sp, tt = an.get("spread"), an.get("total")
+    if not sp or not tt or not str(sp.get("verdict", "")).startswith("Take") or not str(tt.get("verdict", "")).startswith("Take"):
+        return
+    hs = g["lines"].get("spreadNum")
+    if hs is None or hs == 0:
+        return
+    fav = "home" if hs < 0 else "away"
+    if not ((sp.get("side") == fav and tt.get("side") == "under") or (sp.get("side") != fav and tt.get("side") == "over")):
+        return
+    def strength(kind, a):
+        p_ = pk.get(kind) or {}
+        price_against = p_.get("valueSide") not in (None, a.get("side")) and (p_.get("value") or 0) >= 1
+        return (len(a.get("warn") or []), price_against, -(a.get("score") or 0))
+    keep, cut = ("spread", "total") if strength("spread", sp) <= strength("total", tt) else ("total", "spread")
+    a = an[cut]
+    a["verdict"] = "Take small"
+    a.setdefault("warn", []).append(f"Same game as the {an[keep].get('call') or keep} play, and both need the same thing to happen: a half stake keeps one game from swinging the day.")
 
 
 def apply_pick_overrides(key, g):
