@@ -3090,7 +3090,7 @@ def analyze_game(lg, g, kind, nteams):
         verdict = "Take small" if ((warn and not strong) or oppose or score < (SMALL_BELOW_FB if fb_ else SMALL_BELOW)) else "Take"
         pk = (g.get("pick") or {}).get(kind) or {}
         pk_raw = ((g.get("pick") or {}).get(kind) or {}).get("raw", score)  # the unshifted read (basketball scores are eased toward JD's scale)
-        big = score if SPORT[lg] == "fb" else max(score, pk_raw)  # football: the final score (after the over trim)
+        big = score  # every sport: the score shown on the card has to clear the Large bar (Nov 7: the WSH-ATL under went Large at 8.7 on a 9+ raw read)
         fb_ok = SPORT[lg] == "fb" and (big >= LARGE_BAR_FB and not warn or big >= LARGE_BAR and len(warn) <= 1)
         if (verdict == "Take" and kind != "moneyline" and (fb_ok or big >= LARGE_BAR and not warn) and not against
                 and pk.get("statSide") == side and (pk.get("stat") or 0) >= LARGE_STAT
