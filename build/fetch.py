@@ -2277,6 +2277,7 @@ SHORT_ML_LIFT = 0.75
 KALSHI_AGAINST = 0.45  # Kalshi has to clearly lean the other way (under 45%) to hold a pick back
 ELITE_D_RANK = 6  # NFL: a top-6 scoring defense (last 3 games) can carry an Under on its own (see one_elite_defense)
 ELITE_D_PROJ = 2.0  # ...when the projection is at least this far under the total
+STRENGTH_OVER_PROJ = 2.0  # college strength-matchup over: the projection must clear the total by this much (Nov 7: CLEM-SYR at +0.4; Oct overs 21-9 at 2+)
 CFB_OVER_TRIM = 1.0  # college overs
 VALUE_W_LG = {"cfb": 0.0, "nfl": 0.0}  # NFL follows college (Nov 6; was 5%)  # college: the price model has been on the wrong side (Oct backtest)
 VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
@@ -2878,7 +2879,7 @@ def blend_confidence(lg, g, n):
         if sm_ and sm_[0] == "over" and (lambda w_: not w_["indoor"] and w_["rain"] >= 40)(weather_of(g)):
             sm_ = None  # rain still rules out the over
         if sm_ and sm_[0] == side and st and st.get("side") == side and st.get("proj") is not None and g["lines"].get("totalNum") is not None \
-                and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > 0:
+                and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > (STRENGTH_OVER_PROJ if side == "over" else 0):
             score = max(score, 7.0)  # college: a strength matchup with the projection on the same side is a play (Nov 6)
             g["_strength"] = sm_
         if lg != "cfb" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
