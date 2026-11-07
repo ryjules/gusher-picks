@@ -43,5 +43,15 @@
   "verdict": "Take small",
   "until": "2026-11-07",
   "why": "Under 228.5 small by request (Nov 6)."
+ },
+ {
+  "league": "cfb",
+  "game": "TA&M@SC",
+  "kind": "total",
+  "side": "under",
+  "verdict": "Pass",
+  "score": 0.9,
+  "until": "2026-11-07",
+  "why": "Under 52.5 not a play by request (Nov 7): only the strength-matchup floor made it one."
  }
 ]

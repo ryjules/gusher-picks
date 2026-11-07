@@ -3389,6 +3389,10 @@ def apply_pick_overrides(key, g):
             c[0] = min(c[0], 6.9)
             a["score"] = min(a.get("score") or 0, 6.9)
             c[1] = "Lean " + c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else c[1]
+        if c and o.get("score") is not None:  # a set score (e.g. a Pass shown at its data read)
+            c[0] = a["score"] = float(o["score"])
+            if o["verdict"] == "Pass":
+                c[1] = "Pass"
 
 
 # --- model picks history: hypothetical P/L of every green (Take) pick ---------------------
