@@ -53,15 +53,5 @@
   "score": 0.9,
   "until": "2026-11-07",
   "why": "Under 52.5 not a play by request (Nov 7): only the strength-matchup floor made it one."
- },
- {
-  "league": "cfb",
-  "game": "CLEM@SYR",
-  "kind": "total",
-  "side": "over",
-  "verdict": "Pass",
-  "score": 1.7,
-  "until": "2026-11-07",
-  "why": "Over 49.5 removed by request (Nov 7): only the strength-matchup floor made it a play."
  }
 ]
