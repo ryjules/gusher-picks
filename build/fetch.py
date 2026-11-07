@@ -2739,7 +2739,7 @@ def strength_matchups(g, n):
     good_bad = [p_ for p_ in pairs if p_[1] <= n / 3 and p_[3] > 2 * n / 3]
     if good_good and not good_bad:
         t, orr, dt, dr = good_good[0]
-        return "under", f"{t}'s offense ({ordn(orr)} in scoring) runs into {dt}'s defense ({ordn(dr)}): a good offense meeting a good defense goes under (31-18 in our October data)."
+        return "under", f"{t}'s offense ({ordn(orr)} in scoring) runs into {dt}'s defense ({ordn(dr)}): a good offense meeting a good defense leans under."
     if good_bad and not good_good:
         t, orr, dt, dr = good_bad[0]
         return "over", f"{t}'s offense ({ordn(orr)} in scoring) faces {dt}'s defense ({ordn(dr)}): a good offense against a bad defense goes over (27-13 in our October data)."
@@ -2879,7 +2879,9 @@ def blend_confidence(lg, g, n):
             sm_ = None  # rain still rules out the over
         if sm_ and sm_[0] == side and st and st.get("side") == side and st.get("proj") is not None and g["lines"].get("totalNum") is not None \
                 and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > 0:
-            score = max(score, 7.0)  # college: a strength matchup with the projection on the same side is a play (Nov 6)
+            if side == "over":
+                score = max(score, 7.0)  # college: a strength over with the projection agreeing is a play (Oct: 21-10)
+            # Nov 7: the under version no longer sets a floor (11-11 in October when the projection agreed); it stays a reason.
             g["_strength"] = sm_
         if lg != "cfb" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
                 and g["lines"].get("totalNum") is not None and st["proj"] < g["lines"]["totalNum"] and defense_battle(g, n):
