@@ -919,9 +919,7 @@ function plSince(from) {
   return ps.reduce((s, p) => s + unitsOf(p), 0) * UNIT();
 }
 let homeLg = null;  // the sport tab open on Top Picks
-let suggested = [];  // parlays shown on Top Picks (for the + Track parlay buttons)
 function renderHome() {
-  suggested = [];
   const gamePicks = [], propPicks = [];
   for (const lg of Object.keys(LEAGUES)) for (const g of DATA[lg] || []) {
     if (g.state !== 'pre' || !g.confidence) continue;
@@ -969,9 +967,9 @@ function renderHome() {
     // Suggested parlays: built from this sport's next slate, one leg per game so the legs don't depend on each other.
     const parls = suggestParlays(lg, gamePicks, propPicks);
     const parlHtml = parls.length ? `<div class="parls"><div class="parls-h">Suggested parlays</div>
-      <p class="parls-n">${esc(parls[0].day)} · built from the board's own plays, one leg per game. Every leg has to hit, so stake small (0.25–0.5 units).</p>
-      ${parls.map(pl => { const j = suggested.push(pl) - 1; return `<div class="parl"><div class="parl-t"><b>${esc(pl.name)}</b><span class="odds">${pl.price != null ? (pl.price > 0 ? '+' + pl.price : pl.price) : '—'}</span><small>${esc(pl.note)}</small><button type="button" class="add" data-parl="${j}">+ Track parlay</button></div>
-        <ol>${pl.legs.map(l => `<li><span class="score ${scls(l.score)}">${l.score.toFixed(1)}</span>${esc(l.leg.play)} <small>${esc(l.leg.matchup)} · ${esc(l.kind)}${l.leg.price != null ? ` · ${l.leg.price > 0 ? '+' : ''}${l.leg.price}` : ''}</small></li>`).join('')}</ol></div>`; }).join('')}</div>` : '';
+      <p class="parls-n">${esc(parls[0].day)} · built from the board's own plays, one leg per game. Suggestions only: they are not tracked and never count toward the P&amp;L or the model record.</p>
+      ${parls.map(pl => `<div class="parl"><div class="parl-t"><b>${esc(pl.name)}</b><span class="odds">${pl.price != null ? (pl.price > 0 ? '+' + pl.price : pl.price) : '—'}</span><small>${esc(pl.note)}</small></div>
+        <ol>${pl.legs.map(l => `<li><span class="score ${scls(l.score)}">${l.score.toFixed(1)}</span>${esc(l.leg.play)} <small>${esc(l.leg.matchup)} · ${esc(l.kind)}${l.leg.price != null ? ` · ${l.leg.price > 0 ? '+' : ''}${l.leg.price}` : ''}</small></li>`).join('')}</ol></div>`).join('')}</div>` : '';
     // Units at risk across every bet in this sport (not just the ones listed): small 0.5, regular 1, large 2.
     const SZ = { 'Take small': 0.5, 'Take': 1, 'Take large': 2 };
     const risk = [...gamePicks.filter(x => x.lg === lg && x.kind !== 'moneyline'), ...propPicks.filter(x => x.lg === lg)].reduce((s, x) => s + (SZ[x.a.verdict] || 0), 0);
@@ -1012,12 +1010,6 @@ function renderHome() {
   $('board').querySelectorAll('[data-goper]').forEach(b => b.onclick = () => { period = b.dataset.goper; pday = todayET(); setMode('plays'); });
   $('board').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => { homeLg = b.dataset.jump; renderHome(); });
   $('board').querySelectorAll('[data-golg]').forEach(b => b.onclick = () => { league = b.dataset.golg; setMode('games'); });
-  $('board').querySelectorAll('[data-parl]').forEach(b => b.onclick = () => {
-    const pl = suggested[+b.dataset.parl];
-    src = 'mine';
-    draft = { type: 'parlay', date: pl.date, book: 'DK', stake: 0.5, legs: pl.legs.map(l => ({ ...l.leg })), price: null, priceManual: false };
-    setMode('plays');
-  });
 }
 
 // Parlay suggestions for one sport, from the picks already on Top Picks. Legs come from the sport's next slate (the
@@ -1045,7 +1037,10 @@ function suggestParlays(lg, gamePicks, propPicks) {
   const mls = Object.values(mlBy);
   const all = [...sides, ...props, ...mls];
   if (!all.length) return [];
-  const day = all.map(l => l.day).sort()[0];
+  // The next slate that can make a parlay: the earliest day with plays in at least two games.
+  const days = [...new Set(all.map(l => l.day))].sort();
+  const day = days.find(d => new Set(all.filter(l => l.day === d).map(l => l.gid)).size >= 2);
+  if (!day) return [];
   const pickLegs = (pool, n) => {
     const seen = new Set(), out = [];
     for (const l of pool.filter(l => l.day === day).sort((a, b) => b.score - a.score)) {
