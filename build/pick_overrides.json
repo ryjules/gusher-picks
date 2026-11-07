@@ -53,5 +53,23 @@
   "score": 0.9,
   "until": "2026-11-07",
   "why": "Under 52.5 not a play by request (Nov 7): only the strength-matchup floor made it one."
+ },
+ {
+  "league": "cfb",
+  "game": "LOU@GT",
+  "kind": "spread",
+  "side": "away",
+  "verdict": "Take",
+  "until": "2026-11-07",
+  "why": "LOU -14.5 a full play by request (Nov 7)."
+ },
+ {
+  "league": "cfb",
+  "game": "LOU@GT",
+  "kind": "total",
+  "side": "over",
+  "verdict": "Fade",
+  "until": "2026-11-07",
+  "why": "Over 62.5 not a play by request (Nov 7): swapped for the LOU spread."
  }
 ]
