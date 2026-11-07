@@ -25,5 +25,23 @@
   "verdict": "Take",
   "until": "2026-11-09",
   "why": "CIN -3 a full play, by request (Nov 5)."
+ },
+ {
+  "league": "nba",
+  "game": "WSH@ATL",
+  "kind": "spread",
+  "side": "away",
+  "verdict": "Take large",
+  "until": "2026-11-07",
+  "why": "WSH +8.5 Large by request (Nov 6)."
+ },
+ {
+  "league": "nba",
+  "game": "WSH@ATL",
+  "kind": "total",
+  "side": "under",
+  "verdict": "Take small",
+  "until": "2026-11-07",
+  "why": "Under 228.5 small by request (Nov 6)."
  }
 ]
