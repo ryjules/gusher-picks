@@ -3332,6 +3332,27 @@ def cap_threes(g):
             teams.add(p["team"])
 
 
+REC_OVER_CATS = ("Receiving", "Receptions")
+
+
+def cap_receiving(key, g):
+    """Football: pass-catching overs on one team all need the same thing (that team throwing a lot and completing it),
+    and they split the same targets. Only the strongest stays a play per team; the rest are not bets (Nov 8: DET-MIA,
+    Dulcich and Washington overs lost together when Miami threw for little)."""
+    if SPORT.get(key) != "fb":
+        return
+    best = {}
+    for p in g.get("props") or []:
+        a = p.get("analysis") or {}
+        if p.get("cat") in REC_OVER_CATS and p.get("side") == "Over" and str(a.get("verdict", "")).startswith("Take"):
+            best.setdefault(p["team"], []).append(p)
+    for team, ps in best.items():
+        ps.sort(key=lambda p: -(p.get("score") or 0))
+        for p in ps[1:]:
+            p["analysis"]["verdict"] = "Fade"
+            p["analysis"]["against"].append(f"Already a receiving over on {team} ({ps[0]['player']}): they need the same passing day and split the same targets.")
+
+
 def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
@@ -3345,6 +3366,7 @@ def attach_analysis():
                 p["analysis"] = analyze_prop(p, g, key)
             one_prop_per_player(g)
             cap_threes(g)
+            cap_receiving(key, g)
             apply_pick_overrides(key, g)
             same_game_cap(key, g)
         if SPORT[key] == "fb":
