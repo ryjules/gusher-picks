@@ -3411,7 +3411,8 @@ def same_game_cap(key, g):
     if hs is None or hs == 0:
         return
     fav = "home" if hs < 0 else "away"
-    if not ((sp.get("side") == fav and tt.get("side") == "under") or (sp.get("side") != fav and tt.get("side") == "over")):
+    # NBA (Nov 8): any spread and total in the same game, whichever way they point, keep only one full play.
+    if key != "nba" and not ((sp.get("side") == fav and tt.get("side") == "under") or (sp.get("side") != fav and tt.get("side") == "over")):
         return
     def strength(kind, a):
         p_ = pk.get(kind) or {}
@@ -3420,7 +3421,8 @@ def same_game_cap(key, g):
     keep, cut = ("spread", "total") if strength("spread", sp) <= strength("total", tt) else ("total", "spread")
     a = an[cut]
     a["verdict"] = "Take small"
-    a.setdefault("warn", []).append(f"Same game as the {an[keep].get('call') or keep} play, and both need the same thing to happen: a half stake keeps one game from swinging the day.")
+    a.setdefault("warn", []).append(f"Same game as the {an[keep].get('call') or keep} play"
+                                    + (": a half stake keeps one game from swinging the day." if key == "nba" else ", and both need the same thing to happen: a half stake keeps one game from swinging the day."))
 
 
 def apply_pick_overrides(key, g):
