@@ -3269,6 +3269,10 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
+    if p["cat"] == "Touchdowns" and verdict.startswith("Take"):
+        # Nov 8: anytime touchdowns are too volatile to bet (one goal-line carry decides them); still rated, never a play.
+        verdict = "Fade"
+        against.append("Anytime touchdowns aren't bets on this board: one goal-line carry decides them, so they're too volatile.")
     if lg in ("nba", "cbb") and g is not None and p.get("side") == "Over" and verdict in ("Take", "Take large"):
         hs = (g.get("lines") or {}).get("spreadNum")
         team_line = None if hs is None else (hs if p.get("home") else -hs)
