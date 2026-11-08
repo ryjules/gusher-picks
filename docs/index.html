@@ -1239,6 +1239,13 @@ function gradeOf(p) {
     if (v > gr.line) return gr.side === 'over' ? 'W' : 'L';
     return null;
   }
+  // A total that's already decided mid-game grades right away too: once the combined score passes the line, the over
+  // has won (and the under lost), since points only go up.
+  if (!g.final && gr.kind === 'total' && g.state === 'in' && g.score) {
+    const a = +g.score.away, h = +g.score.home;
+    if (isFinite(a) && isFinite(h) && a + h > gr.line) return gr.side === 'over' ? 'W' : 'L';
+    return null;
+  }
   if (!g.final) return null;
   const f = g.final, cmp = x => x > 0 ? 'W' : x < 0 ? 'L' : 'P';
   if (gr.kind === 'ml') return cmp(gr.side === 'home' ? f.home - f.away : f.away - f.home);
