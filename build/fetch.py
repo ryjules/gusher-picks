@@ -3413,6 +3413,11 @@ def apply_pick_overrides(key, g):
     for o in rows:
         if o.get("league") != key or o.get("game") != gm or o.get("until", "9999") < today:
             continue
+        if o["kind"] == "prop":  # a player prop: matched by player id and category; only the verdict changes
+            for p_ in g.get("props") or []:
+                if str(p_.get("pid")) == str(o.get("pid")) and p_.get("cat") == o.get("cat") and p_.get("analysis"):
+                    p_["analysis"]["verdict"] = o["verdict"]
+            continue
         a = (g.get("analysis") or {}).get(o["kind"])
         if not a or a.get("side") != o.get("side"):
             continue  # the model is on the other side now: leave it alone

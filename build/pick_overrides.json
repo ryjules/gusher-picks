@@ -71,5 +71,15 @@
   "verdict": "Fade",
   "until": "2026-11-07",
   "why": "Over 62.5 not a play by request (Nov 7): swapped for the LOU spread."
+ },
+ {
+  "league": "nfl",
+  "game": "DET@MIA",
+  "kind": "prop",
+  "pid": "4367209",
+  "cat": "Receptions",
+  "verdict": "Take",
+  "until": "2026-11-08",
+  "why": "Dulcich o3.5 receptions: a full play, not Large, by request (Nov 8)."
  }
 ]
