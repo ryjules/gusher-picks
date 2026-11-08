@@ -3269,6 +3269,13 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
+    if lg in ("nba", "cbb") and g is not None and p.get("side") == "Over" and verdict in ("Take", "Take large"):
+        hs = (g.get("lines") or {}).get("spreadNum")
+        team_line = None if hs is None else (hs if p.get("home") else -hs)
+        if team_line is not None and team_line <= -BLOWOUT_FAV:
+            # Nov 8 backtest: overs on a team favored by 10+ went 7-10 (starters sit in blowouts: SGA, 29 minutes in a 39-point win).
+            verdict = "Take small"
+            warn.append(f"His team is favored by {abs(team_line):g}: in a blowout the starters sit, which cuts into an over.")
     if lg in ("nba", "cbb") and verdict in ("Take", "Take large") and (PROP_TUNE.get(lg) or {}).get("half", True):
         # NBA props hit 48% over the first 87 graded (Oct 31-Nov 2): half-unit stakes until they show an edge
         # (30+ graded bets at 55%+ and in profit, checked every morning).
@@ -3277,6 +3284,7 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
+BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
 LOW_AST_LINE = 2.5  # assist overs at or below this line are not bets
 PROP_WARN_BAR = 8.5  # a prop with a warning stays a (small) Take only from here up
