@@ -1647,6 +1647,8 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
             unit = 0.5 if key == "nfl" else 1.0  # points of weighted edge per confidence point
             # Edges count only as much as the model is trusted with this many games of evidence.
             w = trust(min(len(per_team.get(away["id"], [])), len(per_team.get(home["id"], []))), key)
+            if key == "cbb":
+                w = max(w, 0.15)  # conference-based ratings carry some weight even before a team's first D1 game
             model["trust"] = round(w, 2)
             cs = {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
             if spread is not None:
@@ -2101,6 +2103,8 @@ def run_basketball(lg, key, start, groups):
             margin, p_home = ph - pa, phi((ph - pa) / sigma)
             model = {"away": round(pa, 1), "home": round(ph, 1), "pHome": round(p_home, 3)}
             w = trust(min(len(per_team.get(away["id"], [])), len(per_team.get(home["id"], []))), key)
+            if key == "cbb":
+                w = max(w, 0.15)  # conference-based ratings carry some weight even before a team's first D1 game
             model["trust"] = round(w, 2)
             cs = {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
             if spread is not None:
