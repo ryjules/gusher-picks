@@ -2260,6 +2260,7 @@ SPREAD_DATA_W_LG = {}  # (NFL had 0.35)  # NFL leans more on how lopsided the te
 SPREAD_DATA_W = float(os.environ.get("GP_DATAW_ALL", 0.6))  # Nov 6: spreads rate the teams first (60%) and the line second (40%); was 0.15 # every sport: share of the spread score from how lopsided the matchup is, so the line is measured a bit less
 FB_DATA_W = 0.0  # (edge over the line only: best of the October backtests, 31-36 -4.6u vs -9.9u at 0.2)  # football spreads: share of the score from raw matchup strength (the rest is edge over the line)
 SPREAD_WILD = {"nfl": 5.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
+CBB_VALUE_FIT = None  # set each build by fit_cbb_margins
 MARGIN_FIT = {"cfb": (0.94, 0.75), "nfl": (0.38, 2.33), "nba": (0.0, 1.55), "cbb": (0.0, 1.0)}  # spread-matched (SD ratio), not a regression slope, which shrinks real disagreements
 LINE_PTS = {"cfb": (2.0, 1.0), "nfl": (0.6, 0.7), "nba": (1.0, 1.4), "cbb": (1.0, 0.8)}  # (points per unit of strength, points of edge per score point)
 SHARE_W = float(os.environ.get("GP_SHAREW", 4.0))  # weight of the row-by-row count (the board's ADV column)
@@ -2528,7 +2529,7 @@ def stat_matchup(lg, g, nteams):
                                  f"{abs(e_away):.1f} points of edge for {g['away']['abbr'] if e_away > 0 else g['home']['abbr']}",
                                  "away" if e_away > 0 else "home"))
             sl = ln["spreadNum"] if sp_side == "home" else -ln["spreadNum"]
-            out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": sp_side, "call": f"{g[sp_side]['abbr']} {fsp(sl)}",
+            out["spread"] = {"score": round(max(0.0, min(10.0, sp)), 1), "side": sp_side, "call": f"{g[sp_side]['abbr']} {fsp(sl)}", "strength": strength,
                              "notes": sp_notes, "edgePts": round(abs(e_away), 1) if lg in LINE_PTS else None}
     off, dfn = R.get("PPG"), R.get("PPG/A") or R.get("Opp PPG")
     if off and dfn and ln.get("totalNum") is not None and None not in (off[1][3], off[2][1], dfn[1][3], dfn[2][1]):
@@ -3400,12 +3401,39 @@ def hold_early(g):
             a.setdefault("against", []).append(note)
 
 
+def fit_cbb_margins(n):
+    """College basketball: spread-match the price model's and the stat read's margins to the day's betting lines
+    (slope = SD ratio, intercept = the average gap: mostly home court the ratings miss early in the season)."""
+    global CBB_VALUE_FIT
+    games = [g for g in OUT_DATA.get("cbb") or [] if g.get("state") == "pre" and g.get("model") and g["lines"].get("spreadNum") is not None]
+    if len(games) < 20:
+        return
+    Y = np.array([-g["lines"]["spreadNum"] for g in games])  # market's expected home margin
+    X = np.array([g["model"]["home"] - g["model"]["away"] for g in games])
+    if X.std() > 0:
+        b_ = float(Y.std() / X.std()); CBB_VALUE_FIT = (float(Y.mean() - b_ * X.mean()), b_)
+    st_ = []
+    for g in games:
+        o = stat_matchup("cbb", g, n)
+        sp_ = (o.get("spread") or {}).get("strength")
+        if sp_ is not None:
+            st_.append((g["lines"]["spreadNum"], sp_))
+    if len(st_) >= 20:
+        Ys, Xs = np.array([y for y, _ in st_]), np.array([x for _, x in st_])  # away line vs away strength
+        if Xs.std() > 0:
+            sf = float(Ys.std() / (LINE_PTS["cbb"][0] * Xs.std()))
+            MARGIN_FIT["cbb"] = (float(-(Ys.mean() - sf * LINE_PTS["cbb"][0] * Xs.mean())), sf)
+    print("cbb margin fit: value", CBB_VALUE_FIT, "stat", MARGIN_FIT["cbb"], file=sys.stderr)
+
+
 def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
+        if key == "cbb":
+            fit_cbb_margins(n)
         for g in OUT_DATA.get(key) or []:
-            if g["lines"].get("filled") and SPORT[key] == "bb":
-                value_conf_bb(key, g)  # lines arrived after the slate was built (Kalshi or another book)
+            if (g["lines"].get("filled") and SPORT[key] == "bb") or (key == "cbb" and CBB_VALUE_FIT):
+                value_conf_bb(key, g)  # lines arrived after the slate was built, or college margins re-fit to the market
             blend_confidence(key, g, n)
             a = {kind: analyze_game(key, g, kind, n) for kind in ("moneyline", "spread", "total")}
             g["analysis"] = {k2: v for k2, v in a.items() if v}
@@ -4038,6 +4066,12 @@ def value_conf_bb(lg, g):
     unit = 0.45 if lg == "nba" else 0.6
     w, pa, ph = m.get("trust", 0.2), m["away"], m["home"]
     margin = ph - pa
+    if lg == "cbb" and CBB_VALUE_FIT:
+        # Nov 9: early-season college ratings squeeze margins (lines of -19 read as -8), so every read leaned underdog.
+        # The margin is put on the market's scale for the day's slate; what's left is real disagreement with the line.
+        a_, b_ = CBB_VALUE_FIT
+        margin = a_ + b_ * margin
+        m["pHome"] = round(phi(margin / 11.0), 3)
     cs = g.get("confidence") or {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
     spread, total = ln.get("spreadNum"), ln.get("totalNum")
     if spread is not None:
