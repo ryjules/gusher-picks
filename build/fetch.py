@@ -374,7 +374,10 @@ def fit_ratings(games, lg, universe=None, conf=None):
         beta = np.linalg.solve(X.T @ X + np.diag(reg), X.T @ y)
         cb = lambda t, k: beta[1 + 2 * n + k * m + cidx[conf.get(t, "?")]]
         rat = {t: (beta[1 + i] + cb(t, 0), beta[1 + n + i] + cb(t, 1)) for t, i in idx.items()}
-        return beta[0], hfa, {t: rat[key(t)] for g in games for t in g["teams"]}
+        out_ = {t: rat[key(t)] for g in games for t in g["teams"]}
+        for c_, i_ in cidx.items():  # a team with no games yet starts at its conference's strength
+            out_["conf:" + c_] = (beta[1 + 2 * n + i_], beta[1 + 2 * n + m + i_])
+        return beta[0], hfa, out_
     reg = np.full(2 * n + 1, lam); reg[0] = 1e-6
     beta = np.linalg.solve(X.T @ X + np.diag(reg), X.T @ y)
     rat = {t: (beta[1 + i], beta[1 + n + i]) for t, i in idx.items()}
@@ -2076,10 +2079,18 @@ def run_basketball(lg, key, start, groups):
         inj_adj = ({"away": injury_impact_bb(inj["away"], away["id"], per_team), "home": injury_impact_bb(inj["home"], home["id"], per_team)}
                    if inj and key == "nba" else None)
         model, confidence = None, None
+        if key == "cbb":
+            for x_ in ((summ.get("header") or {}).get("competitions") or [{}])[0].get("competitors", []):
+                gr_ = (x_.get("team") or {}).get("groups") or {}
+                if gr_.get("isConference") and gr_.get("id"):
+                    CBB_CONF.setdefault(x_["team"]["id"], gr_["id"])
         ra, rh = rat.get(away["id"]), rat.get(home["id"])
+        if key == "cbb":  # no Division I games yet: the team's conference rating (every lined college game gets a price)
+            ra = ra or rat.get("conf:" + str(CBB_CONF.get(away["id"])))
+            rh = rh or rat.get("conf:" + str(CBB_CONF.get(home["id"])))
         gp_min = min(counts.get(away["id"], 0), counts.get(home["id"], 0))
         # College (Nov 8): a confidence read as soon as both teams have played; plays wait for CBB_MIN_GAMES each.
-        enough = key != "cbb" or gp_min >= 1
+        enough = True  # college: plays still wait for CBB_MIN_GAMES (hold_early); the read shows for every rated game
         early = key == "cbb" and gp_min < CBB_MIN_GAMES
         tvp = torvik_game(tvk, away, home, c.get("neutralSite")) if tvk else None
         if ra and rh and enough:
