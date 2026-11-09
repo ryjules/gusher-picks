@@ -1467,8 +1467,14 @@ for lg, key in [("college-football", "cfb"), ("nfl", "nfl")]:
     season_rank["overall"] = rank_map({t: rat[t][0] + rat[t][1] for t in fbs if t in rat}, True)
     sigma = 13.5 if key == "nfl" else 15.5
 
+    slate_events = cur["events"]
+    if key == "cfb" and not BACKFILL and slate_events and all((e.get("status") or {}).get("type", {}).get("completed") for e in slate_events):
+        # Nov 8: ESPN keeps showing a finished week until midweek; move the board to next week's games (MAC Tuesday on).
+        nxt = get(f"{BASE}/{lg}/scoreboard?groups=80&limit=400&week={CUR[lg] + 1}&seasontype=2") or {}
+        if nxt.get("events"):
+            slate_events = nxt["events"]
     slate = []
-    for e in sorted(events.values() if BACKFILL and key == "cfb" else cur["events"], key=lambda e: e["date"]):
+    for e in sorted(events.values() if BACKFILL and key == "cfb" else slate_events, key=lambda e: e["date"]):
         c = e["competitions"][0]
         comp = {x["homeAway"]: x for x in c["competitors"]}
         if "home" not in comp or "away" not in comp:
