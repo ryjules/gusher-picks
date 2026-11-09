@@ -23,6 +23,12 @@ Make the change in `build/`, rebuild, then publish to **both** places in the sam
 
 Don't tell the user a change is live until both publishes succeed.
 
+## Hockey page
+
+- `build/nhl_build.py` (board), `build/nhl_track.py` (pick log + grading) and `build/nhl.template.html` build
+  `docs/nhl.html` (https://ryjules.github.io/gusher-picks/nhl.html) in the same refresh run; picks log to
+  `docs/data/nhlpicks.json` (entries marked `backtest` are the Oct 20 - Nov 8 rebuild).
+
 ## Notes
 
 - My Plays: on claude.ai the artifact's private database; on GitHub Pages the browser's localStorage.

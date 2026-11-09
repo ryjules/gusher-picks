@@ -41,6 +41,14 @@ jobs:
           python build/fetch.py cache games.json docs/data/modelpicks.json docs/data/modelpicks.json
           python build/inject.py build/board.template.html games.json docs/index.html
 
+      - name: Build the hockey page
+        # Separate step: a hockey failure never blocks the main board.
+        continue-on-error: true
+        run: |
+          python build/nhl_build.py cache nhl.json
+          python build/nhl_track.py nhl.json docs/data/nhlpicks.json nhl_page.json
+          python build/inject.py build/nhl.template.html nhl_page.json docs/nhl.html
+
       - name: Publish
         run: |
           git config user.name "gushers-picks-bot"

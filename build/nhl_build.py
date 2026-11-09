@@ -189,6 +189,15 @@ SV_RANK = {round(x["svpct"], 4): i + 1 for i, x in enumerate(sorted(gl_all, key=
 LG_SV = sum(x["svpct"] for x in gl_all) / len(gl_all) if gl_all else 0.9
 
 
+ML_FAV_CAP = -200  # moneylines this short or shorter are never straight plays
+TOT_PASS_GAP = 0.3  # goals: a projection this close to the total is a pass
+WORST_O = 8  # "worst offense": bottom 8 in goals per game over the last 5
+
+
+def ordn_(n):
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
 def american(p):
     p = min(0.99, max(0.01, p))
     return f"-{round(100 * p / (1 - p))}" if p >= 0.5 else f"+{round(100 * (1 - p) / p)}"
@@ -272,8 +281,8 @@ for e in (sb or {}).get("events", []):
     fav = "away" if strength > 0 else "home"
     ml_price = num(lines["awayML"] if fav == "away" else lines["homeML"])
     ml_call = f"{(A if fav == 'away' else H)['team']['abbreviation']} {lines['awayML'] if fav == 'away' else lines['homeML'] or 'ML'}"
-    if ml_price is not None and ml_price <= -250:
-        ml_raw = min(ml_raw, 6.9)  # heavy favorite: never a bet on the moneyline
+    if ml_price is not None and ml_price <= ML_FAV_CAP:
+        ml_raw = min(ml_raw, 6.9)  # heavy favorite: JD puts these in moneyline parlays, not straight bets (Nov 9: -200)
     # puck line: the better team has to win by 2; a coin-flip matchup can't get there
     pl_raw = max(0.0, ml_raw - 3.0)
     pl_call = f"{(A if fav == 'away' else H)['team']['abbreviation']} -1.5"
@@ -286,6 +295,7 @@ for e in (sb or {}).get("events", []):
     proj = (g_sum + o_sum + d_sum) / 3
     tl = num(lines["total"])
     tot_raw, tot_call = 0.0, "Pass"
+    jd_under = None
     if tl is not None:
         gap = proj - tl
         agree = sum(1 for v in (g_sum, o_sum, d_sum) if (v - tl) * gap > 0)
@@ -293,6 +303,15 @@ for e in (sb or {}).get("events", []):
         if agree < 3:
             tot_raw = min(tot_raw, 6.9)  # JD passes when one sum disagrees (VAN-WPG Nov 5: goalies say over, offenses don't)
         tot_call = f"{'Over' if gap > 0 else 'Under'} {tl:g}"
+        if abs(gap) < TOT_PASS_GAP:
+            tot_raw = min(tot_raw, 3.9)  # JD passes when the projection sits a few tenths from the line (CHI-FLA 5.4 vs 5.5)
+        # JD's under rule (Nov 4-5 videos): one of the worst offenses lately against a top-10 goalie goes under.
+        for o_t, g_x in ((aid, gh), (hid, ga)):
+            if (ranks["gf"].get(o_t) or 0) > NT - WORST_O and g_x.get("svRank") and g_x["svRank"] <= 10 and gap <= 0.2:
+                # At least a Lean (tracked; as a play it went 6-8 in the Oct 20-Nov 8 backtest); an Under already rated higher keeps its score.
+                tot_raw = max(tot_raw, 5.5) if tot_call.startswith("Under") else 5.5
+                tot_call = f"Under {tl:g}"
+                jd_under = (o_t, g_x)
     tot_parts = {"goalies": round(g_sum, 2), "offenses": round(o_sum, 2), "defenses": round(d_sum, 2)}
     # notes for the case
     def rname(k):
@@ -302,6 +321,9 @@ for e in (sb or {}).get("events", []):
             gap_ = rk(dfn, d_t) - rk(off, o_t)
             if gap_ >= NT * 0.4:
                 notes.append(f"{O['team']['abbreviation']} {rname(off)} ({rk(off, o_t)}th) vs {D['team']['abbreviation']} {rname(dfn)} ({rk(dfn, d_t)}th)")
+    if jd_under:
+        o_abbr = (A if jd_under[0] == aid else H)["team"]["abbreviation"]
+        notes.insert(0, f"Under rule: {o_abbr}'s offense ranks {ordn_(ranks['gf'][jd_under[0]])} in goals lately against {jd_under[1]['name']} ({ordn_(jd_under[1]['svRank'])} in save %)")
     if ga.get("svpct") and gh.get("svpct") and abs(g_edge) >= 1.0:
         bg = ga if g_edge > 0 else gh
         notes.append(f"Goalie edge: {bg['name']} saves {100 * (bg.get('sv5') or bg['svpct']):.1f}% lately")

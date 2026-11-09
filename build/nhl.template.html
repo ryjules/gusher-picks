@@ -59,6 +59,12 @@ td.stat { font-weight: 800; } td.stat.l { text-align: right; } td.stat.r { text-
 .how { margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: .86rem; }
 .how h2 { font: 1.3rem var(--f-display); margin: 0 0 6px; color: var(--cyan); }
 .how li { margin: 3px 0; }
+.rec { margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.rec h2 { font: 1.3rem var(--f-display); margin: 0 0 4px; color: var(--cyan); }
+.rec p { color: var(--muted); font-size: .84rem; margin: 0 0 10px; }
+.rec table { min-width: 520px; } .rec td.l { text-align: left; font-weight: 700; }
+.rec .pos { color: var(--win); font-weight: 800; } .rec .neg { color: var(--loss); font-weight: 800; }
+.rec details { margin-top: 10px; } .rec summary { cursor: pointer; color: var(--cyan); font-weight: 700; }
 @media (max-width: 720px) {
   .top { grid-template-columns: 1fr 1fr; } .mid { grid-column: 1 / -1; order: 3; }
   .goalies, .conf { grid-template-columns: 1fr; } .conf > div { border-left: 0; border-top: 1px solid var(--line); }
@@ -74,12 +80,14 @@ td.stat { font-weight: 800; } td.stat.l { text-align: right; } td.stat.r { text-
 <main>
   <div class="chips" id="chips" role="group" aria-label="Games"></div>
   <div id="board"></div>
+  <section class="rec" id="rec"></section>
   <section class="how">
     <h2>How the confidence levels work</h2>
     <ul>
       <li><b>Scale:</b> under 5 is a Pass, 5 to 6.9 a Lean, 7 and up a Play.</li>
       <li><b>Total:</b> three last-5 sums against the line: the two goalies' goals allowed, the two offenses' goals scored, and the two defenses' goals allowed. Their average is the projection; about one goal away from the line reads as a 9, a tenth of a goal is a Pass. All three on the same side counts in full; two of three counts less.</li>
-      <li><b>Moneyline:</b> how lopsided the matchup is: each offense against the other defense (goals, shots on goal, power play vs penalty kill, shot attempts), categories won, and the goalie edge in recent save %. Favorites of -250 or shorter stay a Lean at most.</li>
+      <li><b>JD's rules:</b> one of the worst offenses lately (bottom 8 in goals) against a top-10 goalie leans Under (shown as a Lean while it's tracked); a projection within 0.3 goals of the total is a Pass; moneyline favorites of -200 or shorter stay a Lean at most (parlay material, not a straight bet).</li>
+      <li><b>Moneyline:</b> how lopsided the matchup is: each offense against the other defense (goals, shots on goal, power play vs penalty kill, shot attempts), categories won, and the goalie edge in recent save %. Favorites of -200 or shorter stay a Lean at most.</li>
       <li><b>Puck line:</b> the moneyline read minus 3: the better team has to win by two, so only a clear mismatch gets there.</li>
       <li><b>Goalie table:</b> each probable starter's goals allowed, saves, save %, shots against and win % per start, by season, road or home, last 10 and last 5; the rank is his last 5 among every goalie with 2+ starts.</li>
       <li><b>Goalies:</b> P = probable, C = confirmed. Starters usually confirm around 1 to 2 PM ET; a change can move the total a lot.</li>
@@ -159,6 +167,31 @@ function render() {
   </div>`;
 }
 render();
+// Track record: every Play and Lean is logged and graded. Backtest = Oct 20-Nov 8 rebuilt with only the stats known
+// before each day; live = picks logged from the board as it updates.
+function record() {
+  const L = D.log || [];
+  if (!L.length) { $('rec').innerHTML = ''; return; }
+  const pay = e => { const p = parseFloat(String(e.price).replace('+', '')); return isFinite(p) ? (p > 0 ? p / 100 : 100 / -p) : 100 / 110; };
+  const u = e => e.result === 'W' ? pay(e) : e.result === 'L' ? -1 : 0;
+  const row = (lab, xs) => {
+    const g = xs.filter(e => e.result), w = g.filter(e => e.result === 'W').length, l = g.filter(e => e.result === 'L').length;
+    const un = g.reduce((s, e) => s + u(e), 0), pend = xs.length - g.length;
+    return `<tr><td class="l">${lab}</td><td>${w}-${l}${pend ? ` <small>(${pend} pending)</small>` : ''}</td><td>${w + l ? Math.round(100 * w / (w + l)) + '%' : '–'}</td><td class="${un > 0 ? 'pos' : un < 0 ? 'neg' : ''}">${w + l ? (un > 0 ? '+' : '') + un.toFixed(2) + 'u' : '–'}</td></tr>`;
+  };
+  const sect = (src, title) => {
+    const xs = L.filter(e => e.source === src && e.tier === 'Play');
+    const ls = L.filter(e => e.source === src && e.tier === 'Lean');
+    return `<tr class="sec"><td colspan="4">${title}</td></tr>${row('All plays', xs)}${row('Moneyline', xs.filter(e => e.kind === 'moneyline'))}${row('Puck line', xs.filter(e => e.kind === 'puckline'))}
+      ${row('Totals: Over', xs.filter(e => e.kind === 'total' && e.side === 'over'))}${row('Totals: Under', xs.filter(e => e.kind === 'total' && e.side === 'under'))}${row('Leans (not bets)', ls)}`;
+  };
+  const recent = L.filter(e => e.source === 'live').slice(-40).reverse();
+  $('rec').innerHTML = `<h2>Track record</h2><p>Plays at 1 unit each at the logged price; Leans are tracked but not bets. Live picks lock when the puck drops and grade from final scores.</p>
+    <div class="scroll"><table><thead><tr><th style="text-align:left">Bet type</th><th>Record</th><th>Win %</th><th>Units</th></tr></thead><tbody>
+    ${sect('live', 'Live (since Nov 9)')}${sect('backtest', 'Backtest (Oct 20 - Nov 8)')}</tbody></table></div>
+    ${recent.length ? `<details><summary>Live picks (${recent.length})</summary><div class="scroll"><table><tbody>${recent.map(e => `<tr><td>${esc(e.date)}</td><td class="l">${esc(e.matchup)}</td><td>${esc(e.tier)} ${esc(e.call)}</td><td>${esc(e.price || '')}</td><td class="${e.result === 'W' ? 'pos' : e.result === 'L' ? 'neg' : ''}">${e.result || 'pending'}</td></tr>`).join('')}</tbody></table></div></details>` : ''}`;
+}
+record();
 </script>
 </body>
 </html>
