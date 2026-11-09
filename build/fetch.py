@@ -1958,7 +1958,10 @@ def run_basketball(lg, key, start, groups):
                    if inj and key == "nba" else None)
         model, confidence = None, None
         ra, rh = rat.get(away["id"]), rat.get(home["id"])
-        enough = key != "cbb" or min(counts.get(away["id"], 0), counts.get(home["id"], 0)) >= CBB_MIN_GAMES
+        gp_min = min(counts.get(away["id"], 0), counts.get(home["id"], 0))
+        # College (Nov 8): a confidence read as soon as both teams have played; plays wait for CBB_MIN_GAMES each.
+        enough = key != "cbb" or gp_min >= 1
+        early = key == "cbb" and gp_min < CBB_MIN_GAMES
         if ra and rh and enough:
             adj = 0 if c.get("neutralSite") else hfa / 2
             pa, ph = mu - adj + ra[0] - rh[1], mu + adj + rh[0] - ra[1]
@@ -2013,7 +2016,7 @@ def run_basketball(lg, key, start, groups):
         slate.append({
             "id": e["id"], "iso": e["date"], "away": away, "home": home, "date": when.strftime("%b %-d · %-I:%M %p ET"),
             "location": ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or venue.get("fullName", "—"),
-            "neutral": c.get("neutralSite", False),
+            "neutral": c.get("neutralSite", False), "early": gp_min if early else None,
             "strip": [["Date / Time", when.strftime("%b %-d · %-I:%M %p ET")],
                       ["Location", ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or "—"],
                       ["L5 SOS", [r(srank["sos"], away["id"]), r(srank["sos"], home["id"])]],
@@ -3359,6 +3362,25 @@ def cap_receiving(key, g):
             p["analysis"]["against"].append(f"Already a receiving over on {team} ({ps[0]['player']}): they need the same passing day and split the same targets.")
 
 
+def hold_early(g):
+    """College basketball before both teams have played CBB_MIN_GAMES: the confidence read shows, but nothing is a play."""
+    n_ = g["early"]
+    note = f"Early season: a team here has played {n_} game{'s' if n_ != 1 else ''}. Plays start once both teams have {CBB_MIN_GAMES}."
+    for k, a in (g.get("analysis") or {}).items():
+        if a and str(a.get("verdict", "")).startswith("Take"):
+            a["verdict"] = "Fade"
+        if a and a.get("verdict") in ("Fade", "Pass") and note not in a.get("against", []):
+            a.setdefault("against", []).append(note)
+        c = (g.get("confidence") or {}).get(k)
+        if c and c[1].startswith("Play "):
+            c[1] = "Lean " + c[1].split(" ", 1)[1]
+    for p in g.get("props") or []:
+        a = p.get("analysis")
+        if a and str(a.get("verdict", "")).startswith("Take"):
+            a["verdict"] = "Fade"
+            a.setdefault("against", []).append(note)
+
+
 def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
@@ -3373,6 +3395,8 @@ def attach_analysis():
             one_prop_per_player(g)
             cap_threes(g)
             cap_receiving(key, g)
+            if g.get("early") is not None:
+                hold_early(g)
             apply_pick_overrides(key, g)
             same_game_cap(key, g)
         if SPORT[key] == "fb":
