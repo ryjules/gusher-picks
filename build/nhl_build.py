@@ -225,6 +225,17 @@ for e in (sb or {}).get("events", []):
              "homePL": pick_(ps, "home").get("line"), "homePLOdds": pick_(ps, "home").get("odds"), "details": o.get("details")}
     if lines["total"] is None:
         lines["total"] = o.get("overUnder")
+    if lines["awayML"] is None and lines["homeML"] is None:
+        # No odds on the scoreboard (finished games, or a slate rebuilt for a past day): ESPN's game summary has them.
+        pc = ((get(f"{B}/summary?event={e['id']}", f"nhl_sum_pc_{e['id']}.json") or {}).get("pickcenter") or [{}])[0]
+        at, ht = pc.get("awayTeamOdds") or {}, pc.get("homeTeamOdds") or {}
+        fmt_ = lambda v: None if v is None else (f"+{int(v)}" if float(v) > 0 else str(int(v)))
+        sp_ = pc.get("spread")
+        lines.update(awayML=fmt_(at.get("moneyLine")), homeML=fmt_(ht.get("moneyLine")), total=pc.get("overUnder"),
+                     overOdds=fmt_(pc.get("overOdds")), underOdds=fmt_(pc.get("underOdds")),
+                     homePL=None if sp_ is None else (f"+{sp_:g}" if sp_ > 0 else f"{sp_:g}"), homePLOdds=fmt_(ht.get("spreadOdds")),
+                     awayPL=None if sp_ is None else (f"+{-sp_:g}" if -sp_ > 0 else f"{-sp_:g}"), awayPLOdds=fmt_(at.get("spreadOdds")),
+                     details=pc.get("details"))
     goalies = {}
     for sd, x in (("away", A), ("home", H)):
         pr = (x.get("probables") or [{}])[0]
