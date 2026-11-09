@@ -1843,7 +1843,7 @@ def torvik_ratings():
         import csv, io
         rows = [x for x in csv.DictReader(io.StringIO(text)) if x.get("adjoe") and x.get("adjde") and x.get("adjt")]
     except Exception as e:  # network or format change: run without it
-        print("torvik unavailable:", type(e).__name__, file=sys.stderr)
+        print("torvik unavailable:", type(e).__name__, getattr(e, "code", ""), file=sys.stderr)
         return None
     if len(rows) < 300:
         return None
