@@ -3288,6 +3288,10 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
+    if lg in ("nba", "cbb") and p["cat"] == "3PT Made" and p.get("side") == "Under" and verdict in ("Take", "Take large"):
+        # Nov 9: 3-pointer unders are 8-11 live (-6.3u): one extra make decides them, so they're small bets for now.
+        verdict = "Take small"
+        warn.append("3-pointer unders swing on one made shot (8-11 live so far), so they're small bets for now.")
     if three_of_five and won < need and verdict.startswith("Take"):
         # Nov 9: strong reads held back only by a 3-of-5 hit rate went 13-5 as leans; they're small bets now.
         verdict = "Take small"
