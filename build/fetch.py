@@ -1874,6 +1874,22 @@ def torvik_game(tv, away, home, neutral):
     return {"away": round(pa, 1), "home": round(ph, 1), "margin": round(ph - pa, 1), "total": round(pa + ph, 1)}
 
 
+def rest_spot(gl, when, tid):
+    """Played yesterday (ET)? None if rested, else 'road' or 'home' for where that game was (shown on the card only:
+    Nov 9 backtest, tired teams went 15-9 against the spread, so the market already prices it)."""
+    y = (when.astimezone(ET).date() - timedelta(days=1))
+    for g_ in gl[::-1]:
+        try:
+            d_ = datetime.fromisoformat(g_["date"].replace("Z", "+00:00")).astimezone(ET).date()
+        except Exception:
+            continue
+        if d_ == y:
+            return "road" if (g_["teams"].get(tid) or {}).get("ha") == "away" else "home"
+        if d_ < y:
+            break
+    return None
+
+
 def run_basketball(lg, key, start, groups):
     today = datetime.now(ET).date()
     q = f"&groups={groups}&limit=400" if groups else ""
@@ -2095,6 +2111,7 @@ def run_basketball(lg, key, start, groups):
             "id": e["id"], "iso": e["date"], "away": away, "home": home, "date": when.strftime("%b %-d · %-I:%M %p ET"),
             "location": ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or venue.get("fullName", "—"),
             "neutral": c.get("neutralSite", False), "early": gp_min if early else None, "torvik": tvp,
+            "b2b": {sd_: rest_spot(per_team.get(t_["id"], []), when, t_["id"]) for sd_, t_ in (("away", away), ("home", home))},
             "strip": [["Date / Time", when.strftime("%b %-d · %-I:%M %p ET")],
                       ["Location", ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or "—"],
                       ["L5 SOS", [r(srank["sos"], away["id"]), r(srank["sos"], home["id"])]],
@@ -3515,6 +3532,14 @@ def attach_analysis():
             one_prop_per_player(g)
             cap_threes(g)
             cap_receiving(key, g)
+            for sd_, spot_ in ((g.get("b2b") or {}).items() if SPORT[key] == "bb" else []):
+                if spot_:
+                    tonight_ = "on the road" if sd_ == "away" else "at home"
+                    for k_ in ("spread", "moneyline", "total"):
+                        a_ = (g.get("analysis") or {}).get(k_)
+                        if a_ is not None:
+                            a_.setdefault("tips", []).append(
+                                f"{g[sd_]['abbr']} played yesterday ({'on the road' if spot_ == 'road' else 'at home'}) and plays {tonight_} tonight: second night of a back-to-back (shown for information; the lines already price it).")
             tv_ = g.get("torvik")
             if tv_:
                 fav_ = g["home"] if tv_["margin"] >= 0 else g["away"]
