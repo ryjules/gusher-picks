@@ -327,7 +327,11 @@ def rank_map(values, higher_better):
 HFA = {"cfb": 2.5, "nfl": 1.5, "nba": 2.5, "cbb": 3.5}  # home edge in points (standard values)
 
 
-def fit_ratings(games, lg, universe=None):
+CBB_CONF = {}  # college basketball team id -> conference id (from ESPN summaries)
+CONF_LAM = 2.0  # ridge weight on conference strength (team ratings shrink toward their conference, not toward average)
+
+
+def fit_ratings(games, lg, universe=None, conf=None):
     """Ridge least squares: points = mu + off[team] - def[opp], with a fixed home edge.
 
     Opponents outside the universe (FCS teams on an FBS schedule) share one pooled rating,
@@ -350,6 +354,27 @@ def fit_ratings(games, lg, universe=None):
             rows.append(r); y.append(g["teams"][a]["pts"] - home * hfa)
     X, y = np.array(rows), np.array(y)
     lam = {"nfl": 3.0, "cfb": 2.0, "nba": 10.0, "cbb": 4.0}.get(lg, 2.0)
+    if conf:
+        # Nov 9 (college basketball): each team = its conference's strength + its own difference. Early in the season
+        # teams share few opponents, and plain ratings squeezed a 30-point line to 10; through conferences one
+        # SEC-vs-Big South game informs both leagues (correlation with the lines 0.59 -> 0.83, no home-team bias).
+        confs = sorted({conf.get(t, "?") for t in teams})
+        cidx = {c: i for i, c in enumerate(confs)}
+        m = len(confs)
+        Xc = np.zeros((len(rows), 2 * m))
+        r_ = 0
+        for g in games:
+            ids = list(g["teams"])
+            for a, b in [(ids[0], ids[1]), (ids[1], ids[0])]:
+                Xc[r_, cidx[conf.get(key(a), "?")]] = 1
+                Xc[r_, m + cidx[conf.get(key(b), "?")]] = -1
+                r_ += 1
+        X = np.hstack([X, Xc])
+        reg = np.r_[np.full(2 * n + 1, lam), np.full(2 * m, CONF_LAM)]; reg[0] = 1e-6
+        beta = np.linalg.solve(X.T @ X + np.diag(reg), X.T @ y)
+        cb = lambda t, k: beta[1 + 2 * n + k * m + cidx[conf.get(t, "?")]]
+        rat = {t: (beta[1 + i] + cb(t, 0), beta[1 + n + i] + cb(t, 1)) for t, i in idx.items()}
+        return beta[0], hfa, {t: rat[key(t)] for g in games for t in g["teams"]}
     reg = np.full(2 * n + 1, lam); reg[0] = 1e-6
     beta = np.linalg.solve(X.T @ X + np.diag(reg), X.T @ y)
     rat = {t: (beta[1 + i], beta[1 + n + i]) for t, i in idx.items()}
@@ -1906,6 +1931,11 @@ def run_basketball(lg, key, start, groups):
 
     def load(eid):
         d = get(f"{BB}/{lg}/summary?event={eid}", f"bsum_{lg}_{eid}.json")
+        if d and key == "cbb":
+            for x in ((d.get("header") or {}).get("competitions") or [{}])[0].get("competitors", []):
+                gr = (x.get("team") or {}).get("groups") or {}
+                if gr.get("isConference") and gr.get("id"):
+                    CBB_CONF[x["team"]["id"]] = gr["id"]
         return parse_bb(d) if d else None
 
     with ThreadPoolExecutor(24) as ex:
@@ -1942,7 +1972,7 @@ def run_basketball(lg, key, start, groups):
         rk_agg = agg
     ranks = {k: rank_map({t: a["l5"].get(k) for t, a in rk_agg.items()}, hb) for _, _, k, hb, _ in BB_ROWS}
     nteams = len(rk_agg)
-    mu, hfa, rat = fit_ratings(games, key, teams_in) if games else (0, 0, {})
+    mu, hfa, rat = fit_ratings(games, key, teams_in, CBB_CONF if key == "cbb" else None) if games else (0, 0, {})
     net = {t: rat[t][0] + rat[t][1] for t in agg if t in rat}
     srank = {"off": rank_map({t: a["season"].get("ortg") for t, a in rk_agg.items()}, True),
              "def": rank_map({t: a["season"].get("drtg") for t, a in rk_agg.items()}, False),
