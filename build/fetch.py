@@ -1879,6 +1879,12 @@ def run_basketball(lg, key, start, groups):
             today["events"] += [e for e in (cur or {}).get("events", []) if e["id"] not in seen
                                 and ((e.get("status") or {}).get("type") or {}).get("state") != "post"]
             cur = today
+            if key == "cbb":
+                # College basketball (Nov 8): the next day's slate goes on the board too, so its picks are out the night before.
+                nxt_ = (datetime.strptime(day_, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+                nx = get(f"{BB}/{lg}/scoreboard?dates={nxt_}&{q.lstrip('&')}") or {}
+                seen = {e["id"] for e in cur["events"]}
+                cur["events"] += [e for e in nx.get("events", []) if e["id"] not in seen]
     evs = (cur or {}).get("events", [])
     with ThreadPoolExecutor(16) as ex:  # fetch summaries in parallel: big college slates have 150+ games
         summaries = dict(zip([e["id"] for e in evs], ex.map(lambda e: get(f"{BB}/{lg}/summary?event={e['id']}"), evs)))
