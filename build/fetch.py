@@ -1885,8 +1885,8 @@ def run_basketball(lg, key, start, groups):
             today["events"] += [e for e in (cur or {}).get("events", []) if e["id"] not in seen
                                 and ((e.get("status") or {}).get("type") or {}).get("state") != "post"]
             cur = today
-            if key == "cbb":
-                # College basketball (Nov 8): the next day's slate goes on the board too, so its picks are out the night before.
+            if key in ("cbb", "nba"):
+                # Basketball (Nov 8): the next day's slate goes on the board too, so its picks are out the night before.
                 nxt_ = (datetime.strptime(day_, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
                 nx = get(f"{BB}/{lg}/scoreboard?dates={nxt_}&{q.lstrip('&')}") or {}
                 seen = {e["id"] for e in cur["events"]}
