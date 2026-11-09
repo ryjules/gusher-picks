@@ -3186,7 +3186,8 @@ def analyze_game(lg, g, kind, nteams):
         elif kind == "spread" and g.get("_dominant") == side:
             why.append(f"{g[side]['abbr']} out-ranks {g['home' if side == 'away' else 'away']['abbr']} on both sides of the ball by a wide margin (top-third offense and defense against bottom-third): the profile that covers big numbers.")
         elif kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
-            warn.append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
+            # NBA (Nov 9): big-spread leans held back by this warning went 5-0, so in the NBA it's a note, not a warning.
+            (tips if lg == "nba" else warn).append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
         if kind == "spread" and SPORT[lg] == "fb" and line_num is not None:
             kn = next((x for x in (3, 7, 10) if abs(abs(line_num) - x) <= 0.5), None)
             if kn:
@@ -3386,7 +3387,8 @@ def analyze_prop(p, g=None, lg=None):
     elif (pnum(p.get("kalshiOdds")) or 0) <= PROP_MAX_JUICE:
         against.append(f"Price is too heavy ({p['kalshiOdds']}): laying that much juice eats the edge.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif lg in ("nba", "cbb") and p.get("teamOut") and p.get("side") == "Under" and p["cat"] != "3PT Made":
+    elif lg == "cbb" and p.get("teamOut") and p.get("side") == "Under" and p["cat"] != "3PT Made":
+        # NBA (Nov 9): these unders went 9-4 as leans, so in the NBA they're bet on their own read (see the note below).
         to = p["teamOut"]
         against.append(f"{', '.join(to['names'][:2]) or 'Teammates'} out: about {to['share']:.0%} of the team's {p['cat'].lower()} is missing, "
                        "so more of it runs through him and unders are off (SGA, Dosunmu, Clingan on Nov 2).")
@@ -3574,8 +3576,9 @@ def attach_analysis():
             g["analysis"] = {k2: v for k2, v in a.items() if v}
             for p in g.get("props") or []:
                 p["analysis"] = analyze_prop(p, g, key)
-            one_prop_per_player(g)
-            cap_threes(g)
+            if key != "nba":  # NBA (Nov 9): leans held back by these caps went 5-2, so the NBA has no per-player or per-team cap
+                one_prop_per_player(g)
+                cap_threes(g)
             cap_receiving(key, g)
             for sd_, spot_ in ((g.get("b2b") or {}).items() if SPORT[key] == "bb" else []):
                 if spot_:
