@@ -1898,6 +1898,14 @@ def run_basketball(lg, key, start, groups):
     if BACKFILL and key == "nba":
         games = [g for g in games if et_day(g["date"]) < BACKFILL]  # pregame view of that day: earlier games only
     print(lg, "completed", len(games), file=sys.stderr)
+    if key == "cbb":
+        # Nov 9: games against non-Division I schools (40-point wins over NAIA teams) inflated early ratings and stats,
+        # so college numbers use Division I opponents only (closer to the market: 0.49 -> 0.58 correlation with lines).
+        d1_ = get(f"{BB}/{lg}/teams?groups=50&limit=500", "cbb_d1_teams.json") or {}
+        d1_set = {t["team"]["id"] for sp in d1_.get("sports", []) for l_ in sp.get("leagues", []) for t in l_.get("teams", [])}
+        if len(d1_set) > 300:
+            games = [g for g in games if all(t in d1_set for t in g["teams"])]
+            print(lg, "D1-vs-D1 games", len(games), file=sys.stderr)
     counts = {}
     for g in games:
         for t in g["teams"]:
@@ -1927,7 +1935,7 @@ def run_basketball(lg, key, start, groups):
              "sos": rank_map({t: sum(net.get(next(k for k in g["teams"] if k != t), 0) for g in gl[-5:]) / max(1, len(gl[-5:]))
                               for t, gl in per_team.items() if gl and t in rk_agg}, True)}
     sigma, unit = (12.0, 0.45) if key == "nba" else (11.0, 0.6)
-    tvk = torvik_ratings() if key == "cbb" and not BACKFILL else None
+    tvk = None  # Torvik blocks automated downloads from GitHub's servers (403, Nov 9), so it's off; see torvik_ratings
 
     cur = get(f"{BB}/{lg}/scoreboard?{q.lstrip('&')}")
     if not (BACKFILL and key == "nba"):
