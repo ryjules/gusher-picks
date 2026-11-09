@@ -1816,6 +1816,64 @@ def bb_window(gl, tid, per_game_pct=False):
     }
 
 
+TORVIK_ALIAS = {"2026": "Appalachian St.", "2856": "Cal Baptist", "2755": "Grambling St.", "140": "UMKC", "2443": "New Orleans",
+                "112358": "LIU", "2377": "McNeese St.", "2390": "Miami FL", "2447": "Nicholls St.", "145": "Mississippi",
+                "2437": "Nebraska Omaha", "2545": "Southeastern Louisiana", "2534": "Sam Houston St.", "23": "San Jose St.",
+                "2547": "Seattle", "2908": "USC Upstate", "357": "Texas A&M Corpus Chris", "399": "Albany", "41": "Connecticut",
+                "82": "Illinois Chicago", "2433": "Louisiana Monroe", "2630": "Tennessee Martin"}  # ESPN team id -> Torvik name
+TORVIK_HCA = 3.0  # home-court points on top of Torvik's neutral-court efficiencies
+
+
+def _tnorm(s_):
+    s_ = (s_ or "").lower().replace("&", "and").replace("'", "").replace(".", "")
+    s_ = re.sub(r"\bstate\b", "st", s_)
+    s_ = re.sub(r"\bsaint\b", "st", s_)
+    return re.sub(r"[^a-z0-9]", "", s_)
+
+
+def torvik_ratings():
+    """Bart Torvik's public T-Rank team file (adjusted offense/defense per 100 possessions and tempo). A tool for the
+    college price model; our own confidence math stays in charge. None if the file can't be read."""
+    now = datetime.now(ET)
+    season = now.year + 1 if now.month >= 8 else now.year
+    try:
+        req = urllib.request.Request(f"https://barttorvik.com/{season}_team_results.csv", headers={"User-Agent": "gushers-picks/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            text = r.read().decode("utf-8", "replace")
+        import csv, io
+        rows = [x for x in csv.DictReader(io.StringIO(text)) if x.get("adjoe") and x.get("adjde") and x.get("adjt")]
+    except Exception as e:  # network or format change: run without it
+        print("torvik unavailable:", type(e).__name__, file=sys.stderr)
+        return None
+    if len(rows) < 300:
+        return None
+    by = {_tnorm(x["team"]): {"oe": float(x["adjoe"]), "de": float(x["adjde"]), "t": float(x["adjt"]), "name": x["team"]} for x in rows}
+    oe = sum(v["oe"] for v in by.values()) / len(by)
+    te = sum(v["t"] for v in by.values()) / len(by)
+    return {"by": by, "oe": oe, "te": te}
+
+
+def torvik_game(tv, away, home, neutral):
+    """Torvik projection for one game: points each side, margin (home) and total."""
+    if not tv:
+        return None
+    def find(t):
+        if str(t.get("id")) in TORVIK_ALIAS:
+            return tv["by"].get(_tnorm(TORVIK_ALIAS[str(t["id"])]))
+        for c in (t.get("loc"), t.get("name")):
+            if c and _tnorm(c) in tv["by"]:
+                return tv["by"][_tnorm(c)]
+        return None
+    a, h = find(away), find(home)
+    if not a or not h:
+        return None
+    poss = a["t"] * h["t"] / tv["te"]
+    hca = 0.0 if neutral else TORVIK_HCA
+    ph = h["oe"] * a["de"] / tv["oe"] * poss / 100 + hca / 2
+    pa = a["oe"] * h["de"] / tv["oe"] * poss / 100 - hca / 2
+    return {"away": round(pa, 1), "home": round(ph, 1), "margin": round(ph - pa, 1), "total": round(pa + ph, 1)}
+
+
 def run_basketball(lg, key, start, groups):
     today = datetime.now(ET).date()
     q = f"&groups={groups}&limit=400" if groups else ""
@@ -1869,6 +1927,7 @@ def run_basketball(lg, key, start, groups):
              "sos": rank_map({t: sum(net.get(next(k for k in g["teams"] if k != t), 0) for g in gl[-5:]) / max(1, len(gl[-5:]))
                               for t, gl in per_team.items() if gl and t in rk_agg}, True)}
     sigma, unit = (12.0, 0.45) if key == "nba" else (11.0, 0.6)
+    tvk = torvik_ratings() if key == "cbb" and not BACKFILL else None
 
     cur = get(f"{BB}/{lg}/scoreboard?{q.lstrip('&')}")
     if not (BACKFILL and key == "nba"):
@@ -1968,6 +2027,7 @@ def run_basketball(lg, key, start, groups):
         # College (Nov 8): a confidence read as soon as both teams have played; plays wait for CBB_MIN_GAMES each.
         enough = key != "cbb" or gp_min >= 1
         early = key == "cbb" and gp_min < CBB_MIN_GAMES
+        tvp = torvik_game(tvk, away, home, c.get("neutralSite")) if tvk else None
         if ra and rh and enough:
             adj = 0 if c.get("neutralSite") else hfa / 2
             pa, ph = mu - adj + ra[0] - rh[1], mu + adj + rh[0] - ra[1]
@@ -2019,10 +2079,14 @@ def run_basketball(lg, key, start, groups):
                                      for t in fg["teams"].values() for pid, pl in t.get("players", {}).items()} if key == "nba" else {}}
         ab, hb_ = away["abbr"], home["abbr"]
         r = lambda tbl, tid: tbl.get(tid)
+        if key == "cbb" and model is None and tvp:
+            # A team with no games yet: Torvik's preseason-based ratings carry the read (never a play while early).
+            model = {"away": tvp["away"], "home": tvp["home"], "pHome": round(phi(tvp["margin"] / sigma), 3), "trust": 0.6, "src": "torvik"}
+            confidence = {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
         slate.append({
             "id": e["id"], "iso": e["date"], "away": away, "home": home, "date": when.strftime("%b %-d · %-I:%M %p ET"),
             "location": ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or venue.get("fullName", "—"),
-            "neutral": c.get("neutralSite", False), "early": gp_min if early else None,
+            "neutral": c.get("neutralSite", False), "early": gp_min if early else None, "torvik": tvp,
             "strip": [["Date / Time", when.strftime("%b %-d · %-I:%M %p ET")],
                       ["Location", ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or "—"],
                       ["L5 SOS", [r(srank["sos"], away["id"]), r(srank["sos"], home["id"])]],
@@ -3405,7 +3469,8 @@ def fit_cbb_margins(n):
     """College basketball: spread-match the price model's and the stat read's margins to the day's betting lines
     (slope = SD ratio, intercept = the average gap: mostly home court the ratings miss early in the season)."""
     global CBB_VALUE_FIT
-    games = [g for g in OUT_DATA.get("cbb") or [] if g.get("state") == "pre" and g.get("model") and g["lines"].get("spreadNum") is not None]
+    games = [g for g in OUT_DATA.get("cbb") or [] if g.get("state") == "pre" and g.get("model") and g["model"].get("src") != "torvik"
+             and g["lines"].get("spreadNum") is not None]
     if len(games) < 20:
         return
     Y = np.array([-g["lines"]["spreadNum"] for g in games])  # market's expected home margin
@@ -3432,7 +3497,7 @@ def attach_analysis():
         if key == "cbb":
             fit_cbb_margins(n)
         for g in OUT_DATA.get(key) or []:
-            if (g["lines"].get("filled") and SPORT[key] == "bb") or (key == "cbb" and CBB_VALUE_FIT):
+            if (g["lines"].get("filled") and SPORT[key] == "bb") or key == "cbb":
                 value_conf_bb(key, g)  # lines arrived after the slate was built, or college margins re-fit to the market
             blend_confidence(key, g, n)
             a = {kind: analyze_game(key, g, kind, n) for kind in ("moneyline", "spread", "total")}
@@ -3442,6 +3507,14 @@ def attach_analysis():
             one_prop_per_player(g)
             cap_threes(g)
             cap_receiving(key, g)
+            tv_ = g.get("torvik")
+            if tv_:
+                fav_ = g["home"] if tv_["margin"] >= 0 else g["away"]
+                for k_, txt_ in (("spread", f"Torvik's ratings: {fav_['abbr']} by {abs(tv_['margin']):.1f}."),
+                                 ("total", f"Torvik's ratings project {tv_['total']:.0f} points.")):
+                    a_ = (g.get("analysis") or {}).get(k_)
+                    if a_ is not None:
+                        a_.setdefault("tips", []).append(txt_)
             if g.get("early") is not None:
                 hold_early(g)
             ts_ = (g.get("analysis") or {}).get("total")
@@ -4066,11 +4139,20 @@ def value_conf_bb(lg, g):
     unit = 0.45 if lg == "nba" else 0.6
     w, pa, ph = m.get("trust", 0.2), m["away"], m["home"]
     margin = ph - pa
-    if lg == "cbb" and CBB_VALUE_FIT:
+    tot_proj = pa + ph
+    if lg == "cbb" and CBB_VALUE_FIT and m.get("src") != "torvik":
         # Nov 9: early-season college ratings squeeze margins (lines of -19 read as -8), so every read leaned underdog.
         # The margin is put on the market's scale for the day's slate; what's left is real disagreement with the line.
         a_, b_ = CBB_VALUE_FIT
         margin = a_ + b_ * margin
+    tv_ = g.get("torvik") if lg == "cbb" else None
+    if tv_:
+        # Torvik as a tool (Nov 9): his ratings carry most of the margin and total early in the season, ours more later.
+        wt = 0.7 if g.get("early") is not None else 0.5
+        margin = wt * tv_["margin"] + (1 - wt) * margin
+        tot_proj = wt * tv_["total"] + (1 - wt) * tot_proj
+        w = max(w, 0.6)
+    if lg == "cbb":
         m["pHome"] = round(phi(margin / 11.0), 3)
     cs = g.get("confidence") or {"moneyline": [0.0, "Pass"], "spread": [0.0, "Pass"], "total": [0.0, "Pass"]}
     spread, total = ln.get("spreadNum"), ln.get("totalNum")
@@ -4080,7 +4162,7 @@ def value_conf_bb(lg, g):
         side = f"{g['home']['abbr']} {fmt_spread(spread)}" if edge > 0 else f"{g['away']['abbr']} {fmt_spread(-spread)}"
         cs["spread"] = [sc, label(sc, side)]; m.update(spreadEdge=round(abs(edge), 1), spreadSide=side)
     if total is not None:
-        edge = w * (pa + ph - total)
+        edge = w * (tot_proj - total)
         sc = conf(abs(edge) / (unit * 1.5))
         side = ("Over " if edge > 0 else "Under ") + f"{total:g}"
         cs["total"] = [sc, label(sc, side)]; m.update(totalEdge=round(abs(edge), 1), totalSide=side)
