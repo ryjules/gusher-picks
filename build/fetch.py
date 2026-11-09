@@ -3576,8 +3576,8 @@ def attach_analysis():
             g["analysis"] = {k2: v for k2, v in a.items() if v}
             for p in g.get("props") or []:
                 p["analysis"] = analyze_prop(p, g, key)
-            if key != "nba":  # NBA (Nov 9): leans held back by these caps went 5-2, so the NBA has no per-player or per-team cap
-                one_prop_per_player(g)
+            one_prop_per_player(g)  # one prop per player in every sport
+            if key != "nba":  # NBA (Nov 9): no per-team cap on 3-pointer props (leans held back by the caps went 5-2)
                 cap_threes(g)
             cap_receiving(key, g)
             for sd_, spot_ in ((g.get("b2b") or {}).items() if SPORT[key] == "bb" else []):
