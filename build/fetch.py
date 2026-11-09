@@ -2282,6 +2282,7 @@ SIT_ROWS = {name for name, _k, _hb in SIT}
 NEUTRAL_ROWS = {"Pace", "Team Pace"}
 FB_ML_MAX_FAV = -300  # football moneylines this short or shorter are never bets
 ROAD_FAV_MAX = 14.0  # college: a road favorite laying this many or more is never a bet
+NBA_TOTAL_SMALL_CUSHION = 3.0  # ...from 3 to 5 points of cushion an NBA total can still be a small bet (Nov 9)
 NBA_TOTAL_CUSHION = 5.0  # NBA totals: projected combined scoring must clear the line by this much to be a bet (JD's rule)
 FB_SIT_W = 0.5  # football situational rows (3rd downs, turnover margin, penalties) count half in the categories-won share
 ROW_W = {"Penalties": 0.25, "Opp FT%": 0.25, "FT%": 0.5, "Fast Break": 0.25}  # weight in the "better in more stat categories" count
@@ -2887,9 +2888,11 @@ def blend_confidence(lg, g, n):
                 score = min(score, 6.4)
         if lg == "nba" and kind == "total" and st and st.get("proj") is not None and g["lines"].get("totalNum") is not None:
             cush = (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1)
-            if cush < NBA_TOTAL_CUSHION:
+            if cush < NBA_TOTAL_SMALL_CUSHION:
                 score = min(score, 6.9)  # a Lean at most; the warning below keeps it from being promoted
                 st["thin"] = round(cush, 1)
+            elif cush < NBA_TOTAL_CUSHION:
+                g["_thinSmall"] = round(cush, 1)  # Nov 9: 3-5 points of cushion is a small bet (these leans went 5-1)
         sm_ = strength_matchups(g, n) if lg == "cfb" and kind == "total" else None
         if sm_ and sm_[0] == "over" and (lambda w_: not w_["indoor"] and w_["rain"] >= 40)(weather_of(g)):
             sm_ = None  # rain still rules out the over
@@ -3233,7 +3236,8 @@ def analyze_prop(p, g=None, lg=None):
         if q:
             warn.append(f"{p['player']} is listed {q['status'].lower()}.")
     need = len(p["l5"]) - 1 if len(p["l5"]) >= 3 else len(p["l5"])  # 4 of 5 (3 of 4, 2 of 3)
-    if p["cat"] != "Touchdowns" and p.get("line") is not None and p["l5"] and won < need:
+    three_of_five = (lg in ("nba", "cbb") and len(p["l5"]) >= 5 and won == need - 1 and p["score"] >= HIT_SMALL_SCORE)
+    if p["cat"] != "Touchdowns" and p.get("line") is not None and p["l5"] and won < need and not three_of_five:
         against.append(f"Beat this line in only {won} of his last {len(p['l5'])} games: a bet needs {need} of {len(p['l5'])}.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else PROP_EDGE_MIN) and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
@@ -3284,6 +3288,10 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
+    if three_of_five and won < need and verdict.startswith("Take"):
+        # Nov 9: strong reads held back only by a 3-of-5 hit rate went 13-5 as leans; they're small bets now.
+        verdict = "Take small"
+        warn.append(f"Beat this line in {won} of his last {len(p['l5'])} games (a full bet needs {need}): a small bet.")
     if p["cat"] == "Touchdowns" and verdict.startswith("Take"):
         # Nov 8: anytime touchdowns are too volatile to bet (one goal-line carry decides them); still rated, never a play.
         verdict = "Fade"
@@ -3304,6 +3312,7 @@ def analyze_prop(p, g=None, lg=None):
 
 
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
+HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
 PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
 LOW_AST_LINE = 2.5  # assist overs at or below this line are not bets
 PROP_WARN_BAR = 8.5  # a prop with a warning stays a (small) Take only from here up
@@ -3403,6 +3412,10 @@ def attach_analysis():
             cap_receiving(key, g)
             if g.get("early") is not None:
                 hold_early(g)
+            ts_ = (g.get("analysis") or {}).get("total")
+            if g.get("_thinSmall") is not None and ts_ and str(ts_.get("verdict", "")).startswith("Take"):
+                ts_["verdict"] = "Take small"
+                ts_.setdefault("warn", []).append(f"Projected scoring is {g['_thinSmall']:+.1f} points past the total: under the 5-point cushion, so a small bet.")
             apply_pick_overrides(key, g)
             same_game_cap(key, g)
         if SPORT[key] == "fb":
