@@ -2329,7 +2329,7 @@ ALIGN_BB = {lg: {"side": (4.41, 0.30), "total": (2.81, 0.50)} for lg in ("nba", 
 # Our stat margin put on the betting lines' scale (fit Nov 4: home line = a + b x our margin). Without it the
 # line check saw every big line as too big (NBA, NFL) or too small (college), which a separate points cost used to mask.
 SPREAD_DATA_W_LG = {}  # (NFL had 0.35)  # NFL leans more on how lopsided the team data is (Nov 6)
-SPREAD_DATA_W = float(os.environ.get("GP_DATAW_ALL", 0.6))  # Nov 6: spreads rate the teams first (60%) and the line second (40%); was 0.15 # every sport: share of the spread score from how lopsided the matchup is, so the line is measured a bit less
+SPREAD_DATA_W = float(os.environ.get("GP_DATAW_ALL", 0.7))  # Nov 9: spreads rate the teams first (70%) and the line second (30%); was 60/40 (Nov 6); was 0.15 # every sport: share of the spread score from how lopsided the matchup is, so the line is measured a bit less
 FB_DATA_W = 0.0  # (edge over the line only: best of the October backtests, 31-36 -4.6u vs -9.9u at 0.2)  # football spreads: share of the score from raw matchup strength (the rest is edge over the line)
 SPREAD_WILD = {"nfl": 5.0, "cfb": 14.0}  # football: spread edges this big (points) are held to a Lean
 CBB_VALUE_FIT = None  # set each build by fit_cbb_margins
