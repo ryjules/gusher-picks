@@ -3316,7 +3316,13 @@ def analyze_prop(p, g=None, lg=None):
     bb_back = p.get("bbBack")
     if bb_back and lg in ("nba", "cbb"):
         txt = f"{' and '.join(bb_back['names'])} {'is' if len(bb_back['names']) == 1 else 'are'} back: about {bb_back['share']:.0%} of the team's {p['cat'].lower()} returns, so his share shrinks"
-        (why if under else warn).append(txt + ".")
+        if under:
+            why.append(txt + ".")
+        else:
+            # Nov 9: a gentler hit on overs: half a point off the score instead of a warning (a warning needed 8.5 to bet;
+            # Kessler 8.0 and Williamson 8.1 were held back on Nov 9 and both cleared easily).
+            p["score"] = round(max(0.0, p["score"] - BACK_OVER_TRIM), 1)
+            against.append(txt + f", so the score is trimmed {BACK_OVER_TRIM:g}.")
     bv = p.get("bbVac")
     if bv and lg in ("nba", "cbb"):
         who = " and ".join(bv["names"][:2]) or "Teammates"
@@ -3461,6 +3467,7 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
+BACK_OVER_TRIM = 0.5  # basketball over props when a teammate returns: score trim (was a warning)
 PROP_LARGE_PERFECT = 8.5  # props: Large from here when he beat the line in 5 of his last 5 (plus 5+ points of edge)
 BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose middle game is 15%+ above it skips the blowout rule
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
