@@ -2302,8 +2302,8 @@ DOG_ML_GAP = 99.0  # (off) ...to within this much
 INJ_MOVE = 999.0  # (off) line movement doesn't influence picks in any sport
 PACE1_UNDER = 0.0  # (warning only) trim on an under against the #1 pace team
 STRONG_READ_FB, SMALL_BELOW_FB = 8.0, 7.0  # football (Nov 6): a clean 7.0 is a full bet, and from 8.0 one warning keeps it full
-STRONG_READ = 8.5  # from here up a single warning keeps a full-unit bet
-SMALL_BELOW = 7.5  # game picks under this are half-unit Small bets: stake follows confidence
+STRONG_READ = 8.0  # from here up a single warning keeps a full-unit bet (Nov 10: was 8.5; fewer half-unit bets)
+SMALL_BELOW = 7.0  # game picks under this are half-unit Small bets (Nov 10: was 7.5; a clean 7.0 is a full bet, as in football)
 BB_PROP_SMALL_BELOW = 7.5  # basketball props: 7.0-7.4 small, 7.5+ regular (the 7-8 band backtested best)
 PROP_SMALL_BELOW = 8.0  # props from the 7.5 bar up to this are Small bets
 def ordn(n):
@@ -3018,6 +3018,18 @@ def blend_confidence(lg, g, n):
         if (lg == "cfb" and kind == "spread" and side == "away" and g["lines"].get("spreadNum") is not None
                 and g["lines"]["spreadNum"] >= ROAD_FAV_MAX and not g.get("neutral")):
             g["_bigRoadFav"] = True  # big college road favorite: the upset spot, so a warning (a small bet unless the read is strong)
+        if lg == "cbb" and kind == "total" and side == "under":
+            # Nov 10, the mirror of the over rule: two good offenses (top half lately in scoring AND 2-point shooting,
+            # both teams) make an under a Lean at most (KU-UK: Kansas 3rd and Kentucky 16th inside).
+            R_ = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+            good_ = []
+            for nm_ in ("PPG", "2PT%"):
+                r_ = R_.get(nm_)
+                if r_ and None not in (r_[1][4], r_[2][0]):
+                    good_.append(max(r_[1][4], r_[2][0]) <= n / 2)
+            if len(good_) == 2 and all(good_):
+                score = min(score, 6.4)
+                g["_goodO"] = True
         if lg == "cbb" and kind == "total" and side == "over":
             # College basketball (Nov 10), the football rule: an over needs both offenses to be good, top half lately in
             # scoring AND 2-point shooting (UTM-ARST: two bad defenses, but Arkansas St shoots 44% inside, 276th).
@@ -3154,6 +3166,8 @@ def analyze_game(lg, g, kind, nteams):
         elif side == "under" and g.get("_dBattle"):
             da_, dh_ = g["_dBattle"]
             why.insert(0, f"Two top-third defenses ({ordn(da_)} and {ordn(dh_)} in points allowed lately) and our projection is under the line: the data points to a low score.")
+        elif side == "under" and g.get("_goodO"):
+            warn.append("Both offenses have been good lately (top half in scoring and 2-point shooting): an under needs at least one to struggle.")
         elif side == "over" and g.get("_weakO"):
             warn.append("Both offenses need to be good for an over: " + ", ".join(g["_weakO"][:3]) + " lately.")
         elif side == "under" and g.get("_eliteD"):
@@ -3722,7 +3736,17 @@ def apply_pick_overrides(key, g):
         c = (g.get("confidence") or {}).get(o["kind"])
         if c and o["verdict"].startswith("Take"):
             c[0] = max(c[0], 7.0)
-            c[1] = "Play " + (c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else (a.get("call") or ""))
+            if c[1].startswith(("Lean ", "Play ")):
+                c[1] = "Play " + c[1].split(" ", 1)[1]
+            else:  # the model passed: build the call from the override's side
+                ln_, sd_ = g["lines"], o.get("side")
+                if o["kind"] == "total" and ln_.get("totalNum") is not None:
+                    c[1] = f"Play {'Over' if sd_ == 'over' else 'Under'} {ln_['totalNum']:g}"
+                elif o["kind"] == "spread" and ln_.get("spreadNum") is not None and sd_ in ("home", "away"):
+                    c[1] = f"Play {g[sd_]['abbr']} {fsp(ln_['spreadNum'] if sd_ == 'home' else -ln_['spreadNum'])}"
+                elif sd_ in ("home", "away"):
+                    c[1] = f"Play {g[sd_]['abbr']} {ln_.get('homeML' if sd_ == 'home' else 'awayML') or 'ML'}"
+                a["call"] = c[1][5:]
         elif c:  # not a bet: shown as a Lean at most
             c[0] = min(c[0], 6.9)
             a["score"] = min(a.get("score") or 0, 6.9)
