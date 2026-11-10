@@ -1265,6 +1265,7 @@ REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
 LOW_PASS_LINE = 215.5  # QB passing unders below this carry a warning
 LOW_SKILL_LINE = {"Rushing": 40.5, "Receiving": 35.5, "Rush + Rec": 50.5, "Receptions": 3.5}  # unders below these lose 0.5
 NFL_PROP_FLOOR = {"Passing": 150.5, "Rushing": 30.5, "Receiving": 25.5, "Receptions": 2.5, "Rush + Rec": 35.5}  # smaller lines are backups  # basketball props: Take from here up
+CBB_PLAYS_FROM = "2026-11-10"  # college basketball plays start with this day's games (both teams with 1+ D1 game)
 CBB_MIN_GAMES = 3  # college teams need this many games before the model scores their games
 BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
 KIND_OF = {"ml": "moneyline", "spread": "spread", "total": "total"}
@@ -3539,7 +3540,8 @@ def cap_receiving(key, g):
 def hold_early(g):
     """College basketball before both teams have played CBB_MIN_GAMES: the confidence read shows, but nothing is a play."""
     n_ = g["early"]
-    note = f"Early season: a team here has played {n_} game{'s' if n_ != 1 else ''}. Plays start once both teams have {CBB_MIN_GAMES}."
+    note = (f"Early season: a team here has played {n_} game{'s' if n_ != 1 else ''}. Plays start once both teams have {CBB_MIN_GAMES}."
+            if n_ else "A team here hasn't played a Division I game yet, so this is a read, not a play.")
     for k, a in (g.get("analysis") or {}).items():
         if a and str(a.get("verdict", "")).startswith("Take"):
             a["verdict"] = "Fade"
@@ -3614,8 +3616,8 @@ def attach_analysis():
                     a_ = (g.get("analysis") or {}).get(k_)
                     if a_ is not None:
                         a_.setdefault("tips", []).append(txt_)
-            if g.get("early") is not None:
-                hold_early(g)
+            if g.get("early") is not None and (g["early"] == 0 or game_day(g) < CBB_PLAYS_FROM):
+                hold_early(g)  # Nov 9: from Nov 10's games, plays need only one Division I game per team
             ts_ = (g.get("analysis") or {}).get("total")
             if g.get("_thinSmall") is not None and ts_ and str(ts_.get("verdict", "")).startswith("Take"):
                 ts_["verdict"] = "Take small"
