@@ -3067,7 +3067,8 @@ def blend_confidence(lg, g, n):
             score = max(score, 7.0 if side == "over" else DEF_UNDER_FLOOR)  # college: a strength matchup with the projection on the same side (Nov 6; unders toned down Nov 10)
             g["_strength"] = sm_
         if lg != "cfb" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
-                and g["lines"].get("totalNum") is not None and st["proj"] < g["lines"]["totalNum"] and defense_battle(g, n):
+                and g["lines"].get("totalNum") is not None and st["proj"] < g["lines"]["totalNum"] and defense_battle(g, n) \
+                and not g.get("_goodO"):  # two good offenses outweigh two good defenses (college basketball, Nov 10)
             score = max(score, DEF_UNDER_FLOOR)  # two top-third defenses and a projection under the line (Nov 6; 6.8 from Nov 10)
             g["_dBattle"] = defense_battle(g, n)
             st.pop("thin", None)  # the defenses carry it: no NBA cushion warning
