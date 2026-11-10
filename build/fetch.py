@@ -3283,7 +3283,7 @@ def analyze_game(lg, g, kind, nteams):
         # Heavy football favorites (-300 or shorter): risking 3+ to win 1 isn't a bet; the spread is the play.
         verdict = "Fade"
         against.append(f"Priced {ln.get('homeML' if side == 'home' else 'awayML')}: we don't bet football moneylines at -300 or shorter. Look at the spread instead.")
-    if lg == "cbb" and verdict in ("Take", "Take large"):
+    if False and lg == "cbb" and verdict in ("Take", "Take large"):  # Nov 10: off by request; plays size like every other sport
         # College basketball starts at half stakes until its bets show an edge (30+ graded at 55%+ and in profit).
         n_, h_, u_ = (LEAN_BAR.get("cbb") or {}).get("takes", [0, None, 0])
         if not (n_ >= 30 and h_ is not None and h_ >= 0.55 and u_ > 0):
