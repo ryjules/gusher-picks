@@ -2264,12 +2264,19 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                 if len(hist) < 3 or sum(mins[-5:]) / len(mins[-5:]) < BB_MIN_MPG:
                     continue
                 l5 = hist[-5:]
-                avg5, season = sum(l5) / len(l5), sum(hist) / len(hist)
+                hs = hist
+                if label == "3PT Made":
+                    # Nov 10: one hot night (Acuff's 9) shouldn't carry a threes read: each game counts at most
+                    # 2 more than his typical (median) game in the averages and the projection. The game log stays as is.
+                    med_ = sorted(hist)[len(hist) // 2]
+                    hs = [min(v, med_ + THREES_CAP) for v in hist]
+                l5s = hs[-5:]
+                avg5, season = sum(l5s) / len(l5s), sum(hs) / len(hs)
                 if season < min_avg:
                     continue
                 proj = (0.5 * avg5 + 0.5 * season) * factor
                 line, opn = lines.get((market, pid)) or (None, None)
-                score, side, prob = prop_score(label, proj, line, hist, BB_COUNT, BB_FLOOR)
+                score, side, prob = prop_score(label, proj, line, hs, BB_COUNT, BB_FLOOR)
                 player_log("bb", gl, tid, pid)
                 rows.append({"pid": pid, "open": opn, "cat": label, "player": p["name"], "full": p.get("full"), "team": team["abbr"],
                              "mpg": round(sum(mins[-5:]) / len(mins[-5:]), 1), "pos": p.get("pos") or "",
@@ -2277,7 +2284,7 @@ def bb_props(eid, away, home, per_team, agg, injured, nteams):
                              "matchup": round(10 * (orank - 1) / (nteams - 1), 1) if orank and nteams > 1 else None,
                              "l5": [round(x, 1) for x in reversed(l5)], "avg5": round(avg5, 1), "season": round(season, 1),
                              "games": len(hist), "proj": round(proj, 1), "game": eid, "line": line, "score": score,
-                             "side": side, "prob": prob, "_hist": hist,
+                             "side": side, "prob": prob, "_hist": hs,
                              **({"teamOut": {"share": round(out_share, 2), "names": out_names[:3]}} if out_share >= TEAM_OUT else {}),
                              # Teammates returning (never the player himself: his own return doesn't shrink his share).
                              **({"bbBack": {"names": [n for i, n, _ in back if i != pid][:2], "share": round(sum(sh for i, _, sh in back if i != pid), 2)}}
@@ -3504,6 +3511,7 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
+THREES_CAP = 2  # 3-pointer props: a game counts at most this many above the player's median
 BACK_OVER_TRIM = 0.5  # basketball over props when a teammate returns: score trim (was a warning)
 PROP_LARGE_PERFECT = 8.5  # props: Large from here when he beat the line in 5 of his last 5 (plus 5+ points of edge)
 BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose middle game is 15%+ above it skips the blowout rule
