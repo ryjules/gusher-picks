@@ -3422,8 +3422,10 @@ def analyze_prop(p, g=None, lg=None):
         verdict = "Fade"  # a warning (bench role, injury tag, tough defense) needs a really strong read to still bet
     elif p["score"] >= 7:
         verdict = "Take small" if warn or p["score"] < (BB_PROP_SMALL_BELOW if lg in ("nba", "cbb") else PROP_SMALL_BELOW) else "Take"  # just over the bar: half a unit
-        if verdict == "Take" and p["score"] >= 9 and won >= 4 and not against and (p.get("edge") or 0) >= 0.05:
-            verdict = "Take large"  # strong form, a good matchup and a real edge over the price
+        perfect = bool(p["l5"]) and len(p["l5"]) >= 5 and won == len(p["l5"])
+        if verdict == "Take" and not against and (p.get("edge") or 0) >= 0.05 and (
+                (p["score"] >= 9 and won >= 4) or (p["score"] >= PROP_LARGE_PERFECT and perfect)):
+            verdict = "Take large"  # strong form, a good matchup and a real edge (Nov 9: 8.5+ is enough at 5 of 5)
     elif p["score"] >= 4:
         verdict = "Fade"  # props need a 7.0+ read to be a play
     else:
@@ -3444,7 +3446,10 @@ def analyze_prop(p, g=None, lg=None):
     if lg in ("nba", "cbb") and g is not None and p.get("side") == "Over" and verdict in ("Take", "Take large"):
         hs = (g.get("lines") or {}).get("spreadNum")
         team_line = None if hs is None else (hs if p.get("home") else -hs)
-        if team_line is not None and team_line <= -BLOWOUT_FAV:
+        med_ = sorted(p["l5"])[len(p["l5"]) // 2] if p.get("l5") else None
+        cleared_ = (p.get("l5") and len(p["l5"]) >= 5 and all(v > p["line"] for v in p["l5"]) and med_ is not None
+                    and med_ >= BLOWOUT_EXEMPT_CUSHION * p["line"])
+        if team_line is not None and team_line <= -BLOWOUT_FAV and not cleared_:
             # Nov 8 backtest: overs on a team favored by 10+ went 7-10 (starters sit in blowouts: SGA, 29 minutes in a 39-point win).
             verdict = "Take small"
             warn.append(f"His team is favored by {abs(team_line):g}: in a blowout the starters sit, which cuts into an over.")
@@ -3456,6 +3461,8 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
+PROP_LARGE_PERFECT = 8.5  # props: Large from here when he beat the line in 5 of his last 5 (plus 5+ points of edge)
+BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose middle game is 15%+ above it skips the blowout rule
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
 PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
