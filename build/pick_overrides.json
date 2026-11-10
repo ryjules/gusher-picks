@@ -81,5 +81,23 @@
   "verdict": "Take",
   "until": "2026-11-08",
   "why": "Dulcich o3.5 receptions: a full play, not Large, by request (Nov 8)."
+ },
+ {
+  "league": "cbb",
+  "game": "ILL@TTU",
+  "kind": "spread",
+  "side": "away",
+  "verdict": "Take",
+  "until": "2026-11-10",
+  "why": "ILL -1.5 the play instead of the under (by request, Nov 10)."
+ },
+ {
+  "league": "cbb",
+  "game": "ILL@TTU",
+  "kind": "total",
+  "side": "under",
+  "verdict": "Fade",
+  "until": "2026-11-10",
+  "why": "Under 164.5 swapped for ILL -1.5 (by request, Nov 10)."
  }
 ]
