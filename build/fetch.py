@@ -3722,7 +3722,7 @@ def apply_pick_overrides(key, g):
         c = (g.get("confidence") or {}).get(o["kind"])
         if c and o["verdict"].startswith("Take"):
             c[0] = max(c[0], 7.0)
-            c[1] = "Play " + c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else c[1]
+            c[1] = "Play " + (c[1].split(" ", 1)[1] if c[1].startswith(("Lean ", "Play ")) else (a.get("call") or ""))
         elif c:  # not a bet: shown as a Lean at most
             c[0] = min(c[0], 6.9)
             a["score"] = min(a.get("score") or 0, 6.9)
