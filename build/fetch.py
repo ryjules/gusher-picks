@@ -3018,6 +3018,20 @@ def blend_confidence(lg, g, n):
         if (lg == "cfb" and kind == "spread" and side == "away" and g["lines"].get("spreadNum") is not None
                 and g["lines"]["spreadNum"] >= ROAD_FAV_MAX and not g.get("neutral")):
             g["_bigRoadFav"] = True  # big college road favorite: the upset spot, so a warning (a small bet unless the read is strong)
+        if lg == "cbb" and kind == "total" and side == "over":
+            # College basketball (Nov 10), the football rule: an over needs both offenses to be good, top half lately in
+            # scoring AND 2-point shooting (UTM-ARST: two bad defenses, but Arkansas St shoots 44% inside, 276th).
+            R_ = {r[0]: r for sec in g.get("sections") or [] for r in sec["rows"]}
+            weak_ = []
+            for nm_ in ("PPG", "2PT%"):
+                r_ = R_.get(nm_)
+                if r_:
+                    for sd_, rk_ in (("away", r_[1][4]), ("home", r_[2][0])):
+                        if rk_ is not None and rk_ > n / 2:
+                            weak_.append(f"{g[sd_]['abbr']} {nm_} {ordn(rk_)}")
+            if weak_:
+                score = min(score, 6.4)  # a Lean at most
+                g["_weakO"] = weak_
         if lg == "cfb" and kind == "total" and side == "over":
             # College overs (Oct backtest 4-10 at 7+): a 1.0 trim from 6 up, and both offenses must rank in the top
             # half in recent scoring to be a bet.
@@ -3140,6 +3154,8 @@ def analyze_game(lg, g, kind, nteams):
         elif side == "under" and g.get("_dBattle"):
             da_, dh_ = g["_dBattle"]
             why.insert(0, f"Two top-third defenses ({ordn(da_)} and {ordn(dh_)} in points allowed lately) and our projection is under the line: the data points to a low score.")
+        elif side == "over" and g.get("_weakO"):
+            warn.append("Both offenses need to be good for an over: " + ", ".join(g["_weakO"][:3]) + " lately.")
         elif side == "under" and g.get("_eliteD"):
             t_, r_ = g["_eliteD"]
             why.insert(0, f"{t_} has a top scoring defense ({ordn(r_)} in points allowed lately) against an ordinary offense, and our projection is 2+ points under the line.")
