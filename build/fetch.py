@@ -2435,7 +2435,11 @@ VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the sc
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
 LOW_TOTAL_FLOOR = 0.75  # sides shrink with the total (a 34.5 NFL total keeps 75%)
-DEF_TOTAL_W = 1.0  # two top (or bottom) quarter defenses push a football total this much
+# Nov 9: defense was priced in a bit heavily; from Nov 10 (ET) the defense-led Under floors drop from 7.0 to 6.8 (a Lean,
+# so a small bet at most) and two top-quarter football defenses push a total 0.85 instead of 1.0.
+DEF_TONE = datetime.now(ZoneInfo("America/New_York")).date() >= date(2026, 11, 10)
+DEF_UNDER_FLOOR = 6.8 if DEF_TONE else 7.0
+DEF_TOTAL_W = 0.85 if DEF_TONE else 1.0  # two top (or bottom) quarter defenses push a football total this much
 INJ_TOTAL_W = 0.6  # share of a missing player's scoring a basketball total loses (was 0.6; the price model already subtracts injured players too)
 CTX_CAP = 1.0  # most that defenses + pace together can move a football total
 PACE_W = 0.6  # most pace can move a football total  # stat rows that are style, not quality
@@ -3033,11 +3037,11 @@ def blend_confidence(lg, g, n):
             sm_ = None  # rain still rules out the over
         if sm_ and sm_[0] == side and st and st.get("side") == side and st.get("proj") is not None and g["lines"].get("totalNum") is not None \
                 and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > (STRENGTH_OVER_PROJ if side == "over" else 0):
-            score = max(score, 7.0)  # college: a strength matchup with the projection on the same side is a play (Nov 6)
+            score = max(score, 7.0 if side == "over" else DEF_UNDER_FLOOR)  # college: a strength matchup with the projection on the same side (Nov 6; unders toned down Nov 10)
             g["_strength"] = sm_
         if lg != "cfb" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
                 and g["lines"].get("totalNum") is not None and st["proj"] < g["lines"]["totalNum"] and defense_battle(g, n):
-            score = max(score, 7.0)  # two top-third defenses and a projection under the line: the Under is a play (Nov 6)
+            score = max(score, DEF_UNDER_FLOOR)  # two top-third defenses and a projection under the line (Nov 6; 6.8 from Nov 10)
             g["_dBattle"] = defense_battle(g, n)
             st.pop("thin", None)  # the defenses carry it: no NBA cushion warning
         if lg == "nfl" and kind == "total" and side == "under" and st and st.get("side") == "under" and st.get("proj") is not None \
