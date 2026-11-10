@@ -979,10 +979,10 @@ def rescore_prop(pr, key=None):
         avg = 0.5 * avg + 0.5 * (pr.get("season") if pr.get("season") is not None else avg)
         cushion = (pr["line"] - avg if under else avg - pr["line"]) / max(pr["line"], 1.0)
         cushion = max(-1.0, min(1.0, cushion))
-        if not under:
+        if not under and key != "nba":
             hit_adj = OVER_TAX  # books shade over prices (the public bets overs), so an over needs a bit more
         else:
-            hit_adj = 0.0
+            hit_adj = 0.0  # NBA (Nov 9): no over penalty; live over props 14-15 +1.9u vs unders 22-20 -2.0u
         vac_bump = 0.0
         if pr.get("bbVac"):  # a teammate's shots, boards or assists are up for grabs (JD: Durant out helps Miller's rebounds)
             vac_bump = min(0.8, 0.2 + 2 * pr["bbVac"]["share"]) * (-1 if under else 1)
