@@ -1260,6 +1260,7 @@ BB_PROP_BAR_LOWMIN = 7.5
 BB_GOOD_PROPS = {("Assists", "Over"), ("Assists", "Under"), ("Reb+Ast", "Over"), ("Reb+Ast", "Under"),
                  ("3PT Made", "Under"), ("3PT Made", "Over"), ("Rebounds", "Over")} | {(c, sd) for c in ("Points", "Pts+Reb", "Pts+Ast", "PRA") for sd in ("Over", "Under")}
 # Nov 10: 3-pointer overs allowed again (4-2 live)
+THREES_CAP = 2  # 3-pointer props: a game counts at most this many above the player's median
 REB_PROP_BAR = 8.0  # basketball rebounds props: Takes went 1-4 over the first two slates
 REB_BIG_LINE = 6.5  # rebound lines from here up are big men
 REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
@@ -3511,7 +3512,6 @@ def analyze_prop(p, g=None, lg=None):
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
-THREES_CAP = 2  # 3-pointer props: a game counts at most this many above the player's median
 BACK_OVER_TRIM = 0.5  # basketball over props when a teammate returns: score trim (was a warning)
 PROP_LARGE_PERFECT = 8.5  # props: Large from here when he beat the line in 5 of his last 5 (plus 5+ points of edge)
 BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose middle game is 15%+ above it skips the blowout rule
