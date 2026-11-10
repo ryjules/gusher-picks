@@ -1265,6 +1265,7 @@ REC_PROP_BAR = 8.0  # football receptions props (small counts, high variance)
 LOW_PASS_LINE = 215.5  # QB passing unders below this carry a warning
 LOW_SKILL_LINE = {"Rushing": 40.5, "Receiving": 35.5, "Rush + Rec": 50.5, "Receptions": 3.5}  # unders below these lose 0.5
 NFL_PROP_FLOOR = {"Passing": 150.5, "Rushing": 30.5, "Receiving": 25.5, "Receptions": 2.5, "Rush + Rec": 35.5}  # smaller lines are backups  # basketball props: Take from here up
+CBB_PLAY_MIN_GAMES = 2  # Nov 10: one Division I game is a read, not a play (MTSU's one game was a 45-point night at a top team)
 CBB_PLAYS_FROM = "2026-11-10"  # college basketball plays start with this day's games (both teams with 1+ D1 game)
 CBB_MIN_GAMES = 3  # college teams need this many games before the model scores their games
 BB_MIN_MPG = 20  # basketball props need this many minutes a game (last 5)
@@ -2486,9 +2487,12 @@ def stat_matchup(lg, g, nteams):
     tot_gaps, tot_notes = {}, []
     edges = []  # (net, text, side)
     a_better = h_better = 0
+    support_ = {r[0] for sec in g.get("sections") or [] if sec.get("title") == "Supporting Statistics" for r in sec["rows"]}
     for r in R.values():
         if r[0] in NEUTRAL_ROWS:
             continue  # playing fast or slow isn't better or worse
+        if SPORT[lg] == "bb" and r[0] in support_:
+            continue  # Nov 10: basketball's supporting rows (rebounds, assists, turnovers...) don't count as categories won
         w = ROW_W.get(r[0], 1.0)  # penalties swing week to week, so they count for less
         if SPORT[lg] == "fb" and r[0] in SIT_ROWS:
             w *= FB_SIT_W
@@ -3647,7 +3651,7 @@ def attach_analysis():
                     a_ = (g.get("analysis") or {}).get(k_)
                     if a_ is not None:
                         a_.setdefault("tips", []).append(txt_)
-            if g.get("early") is not None and (g["early"] == 0 or game_day(g) < CBB_PLAYS_FROM):
+            if g.get("early") is not None and (g["early"] < CBB_PLAY_MIN_GAMES or game_day(g) < CBB_PLAYS_FROM):
                 hold_early(g)  # Nov 9: from Nov 10's games, plays need only one Division I game per team
             ts_ = (g.get("analysis") or {}).get("total")
             if g.get("_thinSmall") is not None and ts_ and str(ts_.get("verdict", "")).startswith("Take"):
