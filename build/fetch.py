@@ -3502,9 +3502,9 @@ def analyze_prop(p, g=None, lg=None):
                     and med_ >= BLOWOUT_EXEMPT_CUSHION * p["line"])
         if team_line is not None and team_line <= -BLOWOUT_NO_BET:
             # Nov 10: at 14+ points the starters usually sit the 4th quarter (Knicks -15.5: up 20 at the half), so an
-            # over isn't a bet at all, whatever his recent form.
-            verdict = "Fade"
-            against.append(f"His team is favored by {abs(team_line):g}: a likely blowout means fewer minutes for the starters, so no over.")
+            # over is a small bet at most, whatever his recent form.
+            verdict = "Take small"  # Nov 10: a small bet (not a Fade), and the 5-of-5 exemption doesn't apply
+            warn.append(f"His team is favored by {abs(team_line):g}: a likely blowout means fewer minutes for the starters, so a small bet at most.")
         elif team_line is not None and team_line <= -BLOWOUT_FAV and not cleared_:
             # Nov 8 backtest: overs on a team favored by 10+ went 7-10 (starters sit in blowouts: SGA, 29 minutes in a 39-point win).
             verdict = "Take small"
@@ -3520,7 +3520,7 @@ def analyze_prop(p, g=None, lg=None):
 BACK_OVER_TRIM = 0.5  # basketball over props when a teammate returns: score trim (was a warning)
 PROP_LARGE_PERFECT = 8.5  # props: Large from here when he beat the line in 5 of his last 5 (plus 5+ points of edge)
 BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose middle game is 15%+ above it skips the blowout rule
-BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are not bets (Nov 10)
+BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are small bets at most, no exemption (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
 PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
