@@ -3500,7 +3500,12 @@ def analyze_prop(p, g=None, lg=None):
         med_ = sorted(p["l5"])[len(p["l5"]) // 2] if p.get("l5") else None
         cleared_ = (p.get("l5") and len(p["l5"]) >= 5 and all(v > p["line"] for v in p["l5"]) and med_ is not None
                     and med_ >= BLOWOUT_EXEMPT_CUSHION * p["line"])
-        if team_line is not None and team_line <= -BLOWOUT_FAV and not cleared_:
+        if team_line is not None and team_line <= -BLOWOUT_NO_BET:
+            # Nov 10: at 14+ points the starters usually sit the 4th quarter (Knicks -15.5: up 20 at the half), so an
+            # over isn't a bet at all, whatever his recent form.
+            verdict = "Fade"
+            against.append(f"His team is favored by {abs(team_line):g}: a likely blowout means fewer minutes for the starters, so no over.")
+        elif team_line is not None and team_line <= -BLOWOUT_FAV and not cleared_:
             # Nov 8 backtest: overs on a team favored by 10+ went 7-10 (starters sit in blowouts: SGA, 29 minutes in a 39-point win).
             verdict = "Take small"
             warn.append(f"His team is favored by {abs(team_line):g}: in a blowout the starters sit, which cuts into an over.")
@@ -3515,6 +3520,7 @@ def analyze_prop(p, g=None, lg=None):
 BACK_OVER_TRIM = 0.5  # basketball over props when a teammate returns: score trim (was a warning)
 PROP_LARGE_PERFECT = 8.5  # props: Large from here when he beat the line in 5 of his last 5 (plus 5+ points of edge)
 BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose middle game is 15%+ above it skips the blowout rule
+BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are not bets (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
 PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
