@@ -1251,6 +1251,7 @@ LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
+NBA_PROP_EDGE_MIN = 0.04  # NBA props need 4+ points of edge over the price (Nov 11: 2-4 went 6-7, 4+ went 27-20)
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 BB_PROP_MATCHUP_W = 0.25  # basketball props (not threes): weight per point of matchup (0-10); was 0.03
 BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
@@ -3432,7 +3433,8 @@ def analyze_prop(p, g=None, lg=None):
     if p["cat"] != "Touchdowns" and p.get("line") is not None and p["l5"] and won < need and not three_of_five:
         against.append(f"Beat this line in only {won} of his last {len(p['l5'])} games: a bet needs {need} of {len(p['l5'])}.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else PROP_EDGE_MIN) and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
+    elif (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else NBA_PROP_EDGE_MIN if lg == "nba" else PROP_EDGE_MIN) \
+            and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
         # The data likes it, but the price already says so: no value in betting it.
         against.append("The price already reflects what the data shows, so there's no value at this number."
                        if p["cat"] != "Touchdowns" else "The price already reflects the chance he scores, so there's no value at this number.")
