@@ -3524,7 +3524,7 @@ BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose m
 BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are small bets at most, no exemption (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
-PROP_MAX_JUICE = -150  # props priced at -150 or shorter are not bets
+PROP_MAX_JUICE = -140  # props priced at -140 or shorter are not bets (Nov 10: was -150; Carter o0.5 threes at -147)
 LOW_AST_LINE = 2.5  # assist overs at or below this line are not bets
 PROP_WARN_BAR = 8.5  # a prop with a warning stays a (small) Take only from here up
 
