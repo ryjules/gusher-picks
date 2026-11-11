@@ -3427,7 +3427,8 @@ def analyze_prop(p, g=None, lg=None):
         if q:
             warn.append(f"{p['player']} is listed {q['status'].lower()}.")
     need = len(p["l5"]) - 1 if len(p["l5"]) >= 3 else len(p["l5"])  # 4 of 5 (3 of 4, 2 of 3)
-    three_of_five = (lg in ("nba", "cbb") and len(p["l5"]) >= 5 and won == need - 1 and p["score"] >= HIT_SMALL_SCORE)
+    three_of_five = (lg in ("nba", "cbb") and len(p["l5"]) >= 5 and won == need - 1 and p["score"] >= HIT_SMALL_SCORE
+                     and p["cat"] != "3PT Made")  # Nov 10: threes need 4 of 5 (one shooting night decides them)
     if p["cat"] != "Touchdowns" and p.get("line") is not None and p["l5"] and won < need and not three_of_five:
         against.append(f"Beat this line in only {won} of his last {len(p['l5'])} games: a bet needs {need} of {len(p['l5'])}.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
