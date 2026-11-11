@@ -3706,7 +3706,7 @@ def top_large(key, big_slate=20):
             rows[0][-1]["verdict"] = "Take large"
 
 
-SMALL_KEEP_GAME = 7.0  # game picks below this stay small bets
+SMALL_KEEP_GAME = 6.7  # game picks below this stay small bets (only the truly marginal ones)
 SMALL_KEEP_PROP = 7.2  # props below this stay small bets
 SMALL_TO_FULL = {"nba", "cbb", "cfb", "nfl"}  # Nov 11: small bets are full 1-unit plays (small bets went 36-27, +3.3u at half stakes)
 
