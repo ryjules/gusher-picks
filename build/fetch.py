@@ -3713,7 +3713,7 @@ def small_to_full(key, g):
     """Nov 11 (by request): small bets become full plays, except blowout and same-game cases, which keep the half stake."""
     if key not in SMALL_TO_FULL:
         return
-    keep = ("blowout", "Same game as")
+    keep = ("starters sit", "fewer minutes for the starters", "Same game as")  # blowout over props and same-game pairs only
     for a in (g.get("analysis") or {}).values():
         if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep):
             a["verdict"] = "Take"
