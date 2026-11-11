@@ -3591,7 +3591,7 @@ def cap_receiving(key, g):
 def hold_early(g):
     """College basketball before both teams have played CBB_MIN_GAMES: the confidence read shows, but nothing is a play."""
     n_ = g["early"]
-    note = (f"Early season: a team here has played {n_} game{'s' if n_ != 1 else ''}. Plays start once both teams have {CBB_MIN_GAMES}."
+    note = (f"Early season: a team here has played {n_} Division I game{'s' if n_ != 1 else ''}. Plays start once both teams have {CBB_PLAY_MIN_GAMES}, so this strong read is a Lean for now."
             if n_ else "A team here hasn't played a Division I game yet, so this is a read, not a play.")
     for k, a in (g.get("analysis") or {}).items():
         if a and str(a.get("verdict", "")).startswith("Take"):
