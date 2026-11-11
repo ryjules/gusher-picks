@@ -3675,6 +3675,7 @@ def attach_analysis():
                 ts_.setdefault("warn", []).append(f"Projected scoring is {g['_thinSmall']:+.1f} points past the total: under the 5-point cushion, so a small bet.")
             apply_pick_overrides(key, g)
             same_game_cap(key, g)
+            small_to_full(key, g)
         if SPORT[key] == "fb":
             top_large(key)
 
@@ -3703,6 +3704,23 @@ def top_large(key, big_slate=20):
         if games.get(day, 0) >= big_slate and day not in has_large:
             rows.sort(key=lambda r: r[:4])
             rows[0][-1]["verdict"] = "Take large"
+
+
+SMALL_TO_FULL = {"nba", "cbb", "cfb", "nfl"}  # Nov 11: small bets are full 1-unit plays (small bets went 36-27, +3.3u at half stakes)
+
+
+def small_to_full(key, g):
+    """Nov 11 (by request): small bets become full plays, except blowout and same-game cases, which keep the half stake."""
+    if key not in SMALL_TO_FULL:
+        return
+    keep = ("blowout", "Same game as")
+    for a in (g.get("analysis") or {}).values():
+        if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep):
+            a["verdict"] = "Take"
+    for p in g.get("props") or []:
+        a = p.get("analysis")
+        if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep):
+            a["verdict"] = "Take"
 
 
 def same_game_cap(key, g):
