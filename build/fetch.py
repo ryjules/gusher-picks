@@ -2160,7 +2160,7 @@ def run_basketball(lg, key, start, groups):
         slate.append({
             "id": e["id"], "iso": e["date"], "away": away, "home": home, "date": when.strftime("%b %-d · %-I:%M %p ET"),
             "location": ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or venue.get("fullName", "—"),
-            "neutral": c.get("neutralSite", False), "early": gp_min if early else None, "torvik": tvp,
+            "neutral": c.get("neutralSite", False), "early": gp_min if early else None, "torvik": tvp, "gpMin": gp_min if key == "cbb" else None,
             "b2b": {sd_: rest_spot(per_team.get(t_["id"], []), when, t_["id"]) for sd_, t_ in (("away", away), ("home", home))},
             "strip": [["Date / Time", when.strftime("%b %-d · %-I:%M %p ET")],
                       ["Location", ", ".join(v for v in [addr.get("city"), addr.get("state")] if v) or "—"],
@@ -2443,6 +2443,9 @@ ELITE_D_PROJ = 2.0  # ...when the projection is at least this far under the tota
 STRENGTH_OVER_PROJ = 2.0  # college strength-matchup over: the projection must clear the total by this much (Nov 7: CLEM-SYR at +0.4; Oct overs 21-9 at 2+)
 CFB_OVER_TRIM = 1.0  # college overs
 VALUE_W_LG = {"cfb": 0.0, "nfl": 0.0}  # NFL follows college (Nov 6; was 5%)  # college: the price model has been on the wrong side (Oct backtest)
+CBB_EARLY_GAMES = 5  # college basketball: until both teams have this many D1 games...
+CBB_EARLY_STAT_W, CBB_EARLY_VALUE_W = 0.4, 0.6  # ...the read is 40% stats, 60% price model
+CBB_VALUE_SCALE = 2.0  # college price-model scores top out near 4-5 (fit to the lines), so doubled onto the stats' 0-10 scale
 VALUE_W = 0.05  # price model (was 0.1, then halved again Nov 4) share of the score (was 0.2; Nov 3 backtest: 10% beat 20% in football and tied in basketball)
 BB_MATCH_W = 6.0  # basketball totals: offense-vs-defense matchup, in score points per unit of gap
 DEF_BATTLE = 0.8  # side strength kept when both scoring defenses are top quarter
@@ -2471,8 +2474,9 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
             "paint scoring": "paint defense"}
 
 
-SOS_W = {"cfb": 0.25, "nfl": 0.25, "nba": 0.75, "cbb": 0.4}  # most strength the schedule can add or take (football's power rating already credits schedule)
+SOS_W = {"cfb": 0.25, "nfl": 0.25, "nba": 0.75, "cbb": 1.5}  # cbb 0.4 -> 1.5 (Nov 11): early college schedules swing the stats  # most strength the schedule can add or take (football's power rating already credits schedule)
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
+SOS_CAP_CBB = 0.8  # college basketball: the schedule can move the read much more (Nov 11)
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
 
 
@@ -2578,7 +2582,8 @@ def stat_matchup(lg, g, nteams):
             # the stat read but can never be more than SOS_CAP of it, so the data still leads.
             diff = sv[0] - sv[1]  # > 0: the away team's recent opponents were tougher
             adj = SOS_W[lg] * max(-1.0, min(1.0, diff / SOS_SCALE[lg]))
-            adj = max(-SOS_CAP * abs(strength), min(SOS_CAP * abs(strength), adj))
+            cap_ = SOS_CAP_CBB if lg == "cbb" else SOS_CAP
+            adj = max(-cap_ * abs(strength), min(cap_ * abs(strength), adj))
             if abs(adj) >= 0.05:
                 strength += adj
                 parts["schedule"] = round(adj, 2)
@@ -2957,10 +2962,13 @@ def blend_confidence(lg, g, n):
         st = sm.get(kind)
         pos = "away" if kind != "total" else "over"
         sig = 0.0
+        cbb_early = lg == "cbb" and g.get("gpMin") is not None and g["gpMin"] < CBB_EARLY_GAMES
         if st:
-            sig += st["score"] * (1 if st["side"] == pos else -1)
+            sig += (CBB_EARLY_STAT_W if cbb_early else 1.0) * st["score"] * (1 if st["side"] == pos else -1)
         if vs:
-            sig += VALUE_W_LG.get(lg, VALUE_W) * v * (1 if vs == pos else -1)
+            # Nov 11: college basketball with under 5 Division I games per team: raw stats are mostly schedule (FDU
+            # "allowed" 109.5 after a blowout at a top team), so the conference-based price model carries 60% of the read.
+            sig += ((CBB_EARLY_VALUE_W * CBB_VALUE_SCALE) if cbb_early else VALUE_W_LG.get(lg, VALUE_W)) * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: shown for information only, they don't move the score
         mv = line_move(lg, g, kind)  # a big move from the open: news or sharp money the stats can't see
         if mv:
