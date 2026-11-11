@@ -3667,7 +3667,7 @@ def attach_analysis():
                     a_ = (g.get("analysis") or {}).get(k_)
                     if a_ is not None:
                         a_.setdefault("tips", []).append(txt_)
-            if g.get("early") is not None and (g["early"] < CBB_PLAY_MIN_GAMES or game_day(g) < CBB_PLAYS_FROM):
+            if g.get("early") is not None and game_day(g) < CBB_PLAYS_FROM:  # Nov 11: college plays no matter how many games played
                 hold_early(g)  # Nov 9: from Nov 10's games, plays need only one Division I game per team
             ts_ = (g.get("analysis") or {}).get("total")
             if g.get("_thinSmall") is not None and ts_ and str(ts_.get("verdict", "")).startswith("Take"):
