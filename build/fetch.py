@@ -3636,6 +3636,24 @@ def fit_cbb_margins(n):
     print("cbb margin fit: value", CBB_VALUE_FIT, "stat", MARGIN_FIT["cbb"], file=sys.stderr)
 
 
+SHARED_POOL_CATS = ("Rebounds", "Assists", "Reb+Ast")
+
+
+def cap_shared_pool(g):
+    """Basketball: two overs on one team in a stat they split (rebounds, assists) ride the same idea and take from each
+    other, so only the bigger edge stays a play per team and category (Nov 11: Sarr and Dybantsa rebounds overs)."""
+    best = {}
+    for p in g.get("props") or []:
+        a = p.get("analysis") or {}
+        if p.get("cat") in SHARED_POOL_CATS and p.get("side") == "Over" and str(a.get("verdict", "")).startswith("Take"):
+            best.setdefault((p["team"], p["cat"]), []).append(p)
+    for (team, cat), ps in best.items():
+        ps.sort(key=lambda p: -(p.get("edge") or 0))
+        for p in ps[1:]:
+            p["analysis"]["verdict"] = "Fade"
+            p["analysis"]["against"].append(f"Already a {cat.lower()} over on {team} ({ps[0]['player']}): teammates split the same boards and assists.")
+
+
 def attach_analysis():
     for key in ("cfb", "nfl", "nba", "cbb"):
         n = (OUT_DATA.get(key + "_meta") or {}).get("teams") or 1
@@ -3650,6 +3668,8 @@ def attach_analysis():
             for p in g.get("props") or []:
                 p["analysis"] = analyze_prop(p, g, key)
             one_prop_per_player(g)  # one prop per player in every sport
+            if SPORT[key] == "bb":
+                cap_shared_pool(g)
             if key != "nba":  # NBA (Nov 9): no per-team cap on 3-pointer props (leans held back by the caps went 5-2)
                 cap_threes(g)
             cap_receiving(key, g)
