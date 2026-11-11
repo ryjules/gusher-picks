@@ -85,15 +85,6 @@
  {
   "league": "cbb",
   "game": "ILL@TTU",
-  "kind": "spread",
-  "side": "away",
-  "verdict": "Take large",
-  "until": "2026-11-10",
-  "why": "ILL spread a Large bet (by request, Nov 10)."
- },
- {
-  "league": "cbb",
-  "game": "ILL@TTU",
   "kind": "total",
   "side": "under",
   "verdict": "Fade",
