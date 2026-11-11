@@ -3676,6 +3676,7 @@ def attach_analysis():
             apply_pick_overrides(key, g)
             same_game_cap(key, g)
             small_to_full(key, g)
+        cap_small_bets(key)
         if SPORT[key] == "fb":
             top_large(key)
 
@@ -3706,8 +3707,9 @@ def top_large(key, big_slate=20):
             rows[0][-1]["verdict"] = "Take large"
 
 
-SMALL_KEEP_GAME = 6.7  # game picks below this stay small bets (only the truly marginal ones)
+SMALL_KEEP_GAME = 7.0  # game picks below this can stay small bets
 SMALL_KEEP_PROP = 7.2  # props below this stay small bets
+MAX_SMALL_PER_DAY = 3  # Nov 11: at most this many small bets per sport per day; the rest are full plays
 SMALL_TO_FULL = {"nba", "cbb", "cfb", "nfl"}  # Nov 11: small bets are full 1-unit plays (small bets went 36-27, +3.3u at half stakes)
 
 
@@ -3726,6 +3728,30 @@ def small_to_full(key, g):
         a = p.get("analysis")
         if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep) \
                 and (p.get("score") or 0) >= SMALL_KEEP_PROP:
+            a["verdict"] = "Take"
+
+
+def cap_small_bets(key):
+    """At most MAX_SMALL_PER_DAY small bets per sport per day: same-game pairs and blowout props first, then the lowest
+    scores; every other small bet becomes a full play (Nov 11)."""
+    if key not in SMALL_TO_FULL:
+        return
+    keep = ("starters sit", "fewer minutes for the starters", "Same game as")
+    by_day = {}
+    for g in OUT_DATA.get(key) or []:
+        if g.get("state") != "pre":
+            continue
+        for kind, a in (g.get("analysis") or {}).items():
+            if a and a.get("verdict") == "Take small":
+                sc = ((g.get("confidence") or {}).get(kind) or [10])[0]
+                by_day.setdefault(game_day(g), []).append((a, sc))
+        for p in g.get("props") or []:
+            a = p.get("analysis")
+            if a and a.get("verdict") == "Take small":
+                by_day.setdefault(game_day(g), []).append((a, p.get("score") or 10))
+    for rows in by_day.values():
+        rows.sort(key=lambda r: (not any(k in w for w in r[0].get("warn") or [] for k in keep), r[1]))
+        for a, _ in rows[MAX_SMALL_PER_DAY:]:
             a["verdict"] = "Take"
 
 
