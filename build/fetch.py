@@ -3706,6 +3706,8 @@ def top_large(key, big_slate=20):
             rows[0][-1]["verdict"] = "Take large"
 
 
+SMALL_KEEP_GAME = 7.0  # game picks below this stay small bets
+SMALL_KEEP_PROP = 7.2  # props below this stay small bets
 SMALL_TO_FULL = {"nba", "cbb", "cfb", "nfl"}  # Nov 11: small bets are full 1-unit plays (small bets went 36-27, +3.3u at half stakes)
 
 
@@ -3714,12 +3716,16 @@ def small_to_full(key, g):
     if key not in SMALL_TO_FULL:
         return
     keep = ("starters sit", "fewer minutes for the starters", "Same game as")  # blowout over props and same-game pairs only
-    for a in (g.get("analysis") or {}).values():
-        if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep):
+    # The lowest-confidence bets stay small too: game picks under 7.0 (a Lean that cleared the bar) and props under 7.2.
+    for kind, a in (g.get("analysis") or {}).items():
+        sc = ((g.get("confidence") or {}).get(kind) or [None])[0]
+        if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep) \
+                and (sc is None or sc >= SMALL_KEEP_GAME):
             a["verdict"] = "Take"
     for p in g.get("props") or []:
         a = p.get("analysis")
-        if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep):
+        if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep) \
+                and (p.get("score") or 0) >= SMALL_KEEP_PROP:
             a["verdict"] = "Take"
 
 
