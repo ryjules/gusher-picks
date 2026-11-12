@@ -3253,7 +3253,12 @@ def analyze_game(lg, g, kind, nteams):
             why.append(f"{g[side]['abbr']} out-ranks {g['home' if side == 'away' else 'away']['abbr']} on both sides of the ball by a wide margin (top-third offense and defense against bottom-third): the profile that covers big numbers.")
         elif kind == "spread" and line_num is not None and abs(line_num) >= BIG_SPREAD[lg]:
             # NBA (Nov 9): big-spread leans held back by this warning went 5-0, so in the NBA it's a note, not a warning.
-            (tips if lg == "nba" else warn).append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
+            if lg == "cbb" and line_num < 0:
+                # College basketball (Nov 12): big spreads are normal (better teams blow out bad ones more often), and
+                # favorites of 15-25 covered 62% in our check, so laying a big number is a note, not a warning.
+                tips.append(f"Big spread ({fsp(line_num)}), but in college big spreads are common: favorites of 15-25 points covered 62% in our games so far.")
+            else:
+                (tips if lg == "nba" else warn).append(f"Big spread ({fsp(line_num)}): blowout margins are hard to predict, and the trailing team can cover late.")
         if kind == "spread" and SPORT[lg] == "fb" and line_num is not None:
             kn = next((x for x in (3, 7, 10) if abs(abs(line_num) - x) <= 0.5), None)
             if kn:
