@@ -592,7 +592,7 @@ function confCell(g, kind, label, c) {
   const an = score >= 4 ? analyze(league, g, kind) : null;
   const pk = (g.pick || {})[kind], sideName = sd => sd === 'over' ? 'Over' : sd === 'under' ? 'Under' : sd ? g[sd].abbr : '';
   const parts = pk ? `<small class="cparts">Stats ${pk.stat != null ? pk.stat.toFixed(1) + ' ' + sideName(pk.statSide) : '—'} · Price ${pk.value.toFixed(1)}${pk.value >= 0.5 && pk.valueSide ? (pk.valueSide === pk.side ? ' agrees' : ' disagrees') : ''}${pk.tooShort ? ' · price too short to bet (−1000 or more)' : ''}${pk.cal && Math.abs(pk.cal - 1) >= 0.01 ? ` · Calibrated ×${pk.cal.toFixed(2)}` : ''}</small>` : '';
-  return `<div><span>${label}</span><b class="${cls}">${shown(score, kind, league, g).toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchip(an.verdict) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
+  return `<div><span>${label}</span><b class="${cls}">${shown(score, kind, league, g).toFixed(1)}</b><em class="${cls}">${esc(call)}</em>${an ? vchipA(an) : ''}${parts}${canAdd ? `<button type="button" class="add" data-add="${kind}" data-g="${esc(g.id)}">+ Track</button>` : ''}</div>`;
 }
 
 function lineCell(label, cur, open, kal) {
@@ -793,6 +793,8 @@ function propWhyNot(p, pa) {
   return 'Hover for why';
 }
 const vchip = v => `<span class="vchip ${VCLS[v]}" title="${esc(VTIP[v])}">${esc(VLABEL[v] || v)}</span>`;
+// College basketball early season: what the play would be with enough games, not bet or counted yet.
+const vchipA = a => a && a.earlyHold ? `<span class="vchip v-small" title="Would be a play once both teams have 5 Division I games. Not bet or counted on the record yet.">Early: not bet</span>` : vchip(a.verdict);
 function reasonList(a) {
   return [...a.why.map(t => `<li class="r-yes">${esc(t)}</li>`), ...a.against.map(t => `<li class="r-no">${esc(t)}</li>`),
     ...a.warn.map(t => `<li class="r-warn">${esc(t)}</li>`), ...a.tips.map(t => `<li class="r-tip">${esc(t)}</li>`)].join('');
@@ -899,7 +901,7 @@ function breakdown(lg, g) {
   const cols = [['moneyline', 'Moneyline'], ['spread', 'Spread'], ['total', 'Total']].map(([k, lbl]) => {
     const a = analyze(lg, g, k);
     if (!a) return '';
-    return `<div class="bd-col"><div class="bd-h"><span>${lbl}</span>${vchip(a.verdict)}</div><b>${esc(a.call === 'Pass' ? ((g.pick || {})[k] || {}).call || '' : a.call)}</b>${whyScore(g, k, a)}<ul>${reasonList(a)}</ul></div>`;
+    return `<div class="bd-col"><div class="bd-h"><span>${lbl}</span>${vchipA(a)}</div><b>${esc(a.call === 'Pass' ? ((g.pick || {})[k] || {}).call || '' : a.call)}</b>${whyScore(g, k, a)}<ul>${reasonList(a)}</ul></div>`;
   }).join('');
   return cols ? `<div class="conf-h"><span><span class="ball"></span>Take or fade?</span><small>${g.state !== 'pre' ? 'Pregame analysis, locked at tip-off · ' : ''}✓ supports the pick · ✗ works against it · ⚠ warning</small></div><div class="bd">${cols}</div>` : '';
 }
@@ -940,7 +942,7 @@ function renderHome() {
     return `<div class="pick" data-gi="${i}" role="button" tabindex="0">${badge(shown(x.score, x.kind, x.lg, x.g))}
       <span class="what">${esc(x.call)}<small>${label}${k && k.odds ? ` · Kalshi ${Math.round(k.p * 100)}% (${esc(k.odds)})` : ''}</small></span>
       <span class="who">${mini(x.g.away, x.lg)}${esc(tl(x.g.away))} @ ${mini(x.g.home, x.lg)}${esc(tl(x.g.home))}<small>${esc(x.g.date)}</small></span>
-      <span class="why">${vchip(x.a.verdict)}</span>
+      <span class="why">${vchipA(x.a)}</span>
       <button type="button" class="add" data-gadd="${i}">+ Track</button>${shortWhy(x.a)}</div>`;
   };
   const propRow = (x, i) => {
@@ -949,7 +951,7 @@ function renderHome() {
     return `<div class="pick" data-pi="${i}" role="button" tabindex="0">${badge(p.score)}
       <span class="what">${esc(p.player)}<small>${esc(pick)}${p.kalshiOdds ? ` · Kalshi ${esc(p.kalshiOdds)}` : ''}</small></span>
       <span class="who">${mini(p.home ? x.g.home : x.g.away, x.lg)}${esc(p.team)} ${p.home ? 'vs' : '@'} ${mini(p.home ? x.g.away : x.g.home, x.lg)}${esc(p.oppName)}<small>${esc(x.g.date)}</small></span>
-      <span class="why">${vchip(x.a.verdict)}</span>
+      <span class="why">${vchipA(x.a)}</span>
       <button type="button" class="add" data-padd="${i}">+ Track</button>${shortWhy(x.a)}</div>`;
   };
   // One section per sport, in board order; indexes point back into the full lists for the click handlers.

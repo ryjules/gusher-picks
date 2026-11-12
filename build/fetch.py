@@ -3627,7 +3627,8 @@ def hold_early(g):
 
 
 def hold_early_read(g):
-    """College basketball, under CBB_EARLY_GAMES D1 games: the full confidence shows, but a play needs the 40/60 read at 7+."""
+    """College basketball, under CBB_EARLY_GAMES D1 games: the full confidence and label show (what it would be with enough
+    games), but it's only bet and logged when the 40/60 read is 7+."""
     er = g.get("_earlyRead") or {}
     for k, a in (g.get("analysis") or {}).items():
         e_ = er.get(k)
@@ -3636,10 +3637,10 @@ def hold_early_read(g):
         c = (g.get("confidence") or {}).get(k)
         if str(a.get("verdict", "")).startswith("Take") or (c and c[1].startswith("Play ")):
             a["verdict"] = "Fade"
+            a["earlyHold"] = True
             a.setdefault("against", []).append(
-                f"Early season (a team has under {CBB_EARLY_GAMES} Division I games): weighted 40% stats / 60% price model this reads {e_:.1f}, under the 7.0 a play needs, so it stays a Lean.")
-            if c and c[1].startswith("Play "):
-                c[1] = "Lean " + c[1].split(" ", 1)[1]
+                f"Early season (a team has under {CBB_EARLY_GAMES} Division I games): this is what the play would be with enough games, "
+                f"but weighted 40% stats / 60% price model it reads {e_:.1f}, under 7.0, so it isn't bet or counted yet.")
 
 
 def fit_cbb_margins(n):
