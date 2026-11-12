@@ -2963,12 +2963,16 @@ def blend_confidence(lg, g, n):
         pos = "away" if kind != "total" else "over"
         sig = 0.0
         cbb_early = lg == "cbb" and g.get("gpMin") is not None and g["gpMin"] < CBB_EARLY_GAMES
+        sig_e = 0.0
         if st:
-            sig += (CBB_EARLY_STAT_W if cbb_early else 1.0) * st["score"] * (1 if st["side"] == pos else -1)
+            sig += st["score"] * (1 if st["side"] == pos else -1)
+            sig_e += CBB_EARLY_STAT_W * st["score"] * (1 if st["side"] == pos else -1)
         if vs:
+            sig += VALUE_W_LG.get(lg, VALUE_W) * v * (1 if vs == pos else -1)
             # Nov 11: college basketball with under 5 Division I games per team: raw stats are mostly schedule (FDU
-            # "allowed" 109.5 after a blowout at a top team), so the conference-based price model carries 60% of the read.
-            sig += ((CBB_EARLY_VALUE_W * CBB_VALUE_SCALE) if cbb_early else VALUE_W_LG.get(lg, VALUE_W)) * v * (1 if vs == pos else -1)
+            # "allowed" 109.5 after a blowout at a top team), so whether it's a PLAY uses a 40% stats / 60% price model
+            # read. The confidence shown stays the full read (Nov 12).
+            sig_e += CBB_EARLY_VALUE_W * CBB_VALUE_SCALE * v * (1 if vs == pos else -1)
         tr = trend_nudge(g, kind)  # betting trends: shown for information only, they don't move the score
         mv = line_move(lg, g, kind)  # a big move from the open: news or sharp money the stats can't see
         if mv:
@@ -2981,6 +2985,10 @@ def blend_confidence(lg, g, n):
             sig = math.copysign(st["score"] + TOT_EXTRA[lg], sig)
         cal = CAL.get((lg, kind), 1.0)  # learned from this league's graded picks of this bet type
         sig *= cal
+        if cbb_early:
+            xe = abs(sig_e * cal)
+            g.setdefault("_earlyRead", {})[kind] = (round(xe if xe <= 7 else min(10.0, 7 + 3 * (1 - math.exp(-(xe - 7) / 3))), 1)
+                                                     if (sig_e > 0) == (sig > 0) else 0.0)
         side = pos if sig > 0 else ("home" if kind != "total" else "under")
         x = abs(sig)
         # Soft ceiling above 7: stacked signals still read as a strong Play, but 10.0 means nearly everything agrees.
@@ -3618,6 +3626,22 @@ def hold_early(g):
             a.setdefault("against", []).append(note)
 
 
+def hold_early_read(g):
+    """College basketball, under CBB_EARLY_GAMES D1 games: the full confidence shows, but a play needs the 40/60 read at 7+."""
+    er = g.get("_earlyRead") or {}
+    for k, a in (g.get("analysis") or {}).items():
+        e_ = er.get(k)
+        if e_ is None or e_ >= 7 or not a:
+            continue
+        c = (g.get("confidence") or {}).get(k)
+        if str(a.get("verdict", "")).startswith("Take") or (c and c[1].startswith("Play ")):
+            a["verdict"] = "Fade"
+            a.setdefault("against", []).append(
+                f"Early season (a team has under {CBB_EARLY_GAMES} Division I games): weighted 40% stats / 60% price model this reads {e_:.1f}, under the 7.0 a play needs, so it stays a Lean.")
+            if c and c[1].startswith("Play "):
+                c[1] = "Lean " + c[1].split(" ", 1)[1]
+
+
 def fit_cbb_margins(n):
     """College basketball: spread-match the price model's and the stat read's margins to the day's betting lines
     (slope = SD ratio, intercept = the average gap: mostly home court the ratings miss early in the season)."""
@@ -3699,6 +3723,8 @@ def attach_analysis():
                         a_.setdefault("tips", []).append(txt_)
             if g.get("early") is not None and game_day(g) < CBB_PLAYS_FROM:  # Nov 11: college plays no matter how many games played
                 hold_early(g)  # Nov 9: from Nov 10's games, plays need only one Division I game per team
+            if key == "cbb":
+                hold_early_read(g)  # Nov 12: shows the full read, plays need the 40/60 early read
             ts_ = (g.get("analysis") or {}).get("total")
             if g.get("_thinSmall") is not None and ts_ and str(ts_.get("verdict", "")).startswith("Take"):
                 ts_["verdict"] = "Take small"
