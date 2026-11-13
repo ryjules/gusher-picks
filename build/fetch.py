@@ -3082,6 +3082,7 @@ def blend_confidence(lg, g, n):
             r_ = next((r for sec in g.get("sections") or [] for r in sec["rows"] if r[0] == "PPG"), None)
             if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
                 score = min(score, 6.4)
+                g["_cfbWeakO"] = max(r_[1][4], r_[2][0])
         if lg == "nba" and kind == "total" and st and st.get("proj") is not None and g["lines"].get("totalNum") is not None:
             cush = (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1)
             if cush < NBA_TOTAL_SMALL_CUSHION:
@@ -3092,6 +3093,8 @@ def blend_confidence(lg, g, n):
         sm_ = strength_matchups(g, n) if lg == "cfb" and kind == "total" else None
         if sm_ and sm_[0] == "over" and (lambda w_: not w_["indoor"] and w_["rain"] >= 40)(weather_of(g)):
             sm_ = None  # rain still rules out the over
+        if sm_ and sm_[0] == "over" and g.get("_cfbWeakO"):
+            sm_ = None  # Nov 13: a bottom-half offense still caps the over (it was lifting TULN-RICE, FIU-DEL to 7.0; such overs 8-11)
         if sm_ and sm_[0] == side and st and st.get("side") == side and st.get("proj") is not None and g["lines"].get("totalNum") is not None \
                 and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > (STRENGTH_OVER_PROJ if side == "over" else 0):
             score = max(score, 7.0 if side == "over" else DEF_UNDER_FLOOR)  # college: a strength matchup with the projection on the same side (Nov 6; unders toned down Nov 10)
@@ -3294,8 +3297,8 @@ def analyze_game(lg, g, kind, nteams):
     if kind == "spread" and side == "away" and g.get("_bigRoadFav"):
         warn.append(f"Big road favorite ({fsp(-g['lines']['spreadNum'])}): college home teams pull these upsets, so the stake is smaller.")
     tm_ = (g.get("matchup") or {}).get("total") or {}
-    if kind == "total" and side == "over" and g.get("_overWeakO"):
-        warn.append(f"One offense ranks {ordn(g['_overWeakO'])} in recent scoring: an over needs both offenses in the top half.")
+    if kind == "total" and side == "over" and (g.get("_overWeakO") or g.get("_cfbWeakO")):
+        warn.append(f"One offense ranks {ordn(g.get('_overWeakO') or g['_cfbWeakO'])} in recent scoring: an over needs both offenses in the top half.")
     if kind == "total" and g.get("_farTotal"):
         warn.append(f"Our number is {g['_farTotal']} points from the market: a gap that big can mean news the stats don't show.")
     if kind == "total" and tm_.get("thin") is not None:
