@@ -3466,7 +3466,12 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nfl", "cfb") and p["cat"] == "Receptions" and p["score"] < REC_PROP_BAR:
         against.append("Catch counts swing on one or two targets, so receptions need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif (pnum(p.get("kalshiOdds")) or 0) <= PROP_MAX_JUICE:
+    elif (lg == "nba" and p.get("side") == "Over" and p["cat"] in NBA_THIN_OVER_CATS and p.get("kalshiP") is not None
+          and (p.get("edge") or 0) < NBA_THIN_OVER_EDGE):
+        # Nov 14: NBA rebound and assist overs went 11-20 (-7.5u); they need a bigger edge than other props.
+        against.append(f"{p['cat']} overs need a {NBA_THIN_OVER_EDGE:.0%}+ edge over the price (these overs have gone 11-20); this one is {(p.get('edge') or 0):.1%}.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif (pnum(p.get("kalshiOdds")) or 0) <= (NBA_PROP_MAX_JUICE if lg == "nba" else PROP_MAX_JUICE):
         against.append(f"Price is too heavy ({p['kalshiOdds']}): laying that much juice eats the edge.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg == "cbb" and p.get("teamOut") and p.get("side") == "Under" and p["cat"] != "3PT Made":
@@ -3550,6 +3555,9 @@ BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose m
 BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are small bets at most, no exemption (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
+NBA_PROP_MAX_JUICE = -126  # NBA (Nov 14): props at -126 or shorter went 5-9 (-4.6u); -125 is the longest price bet
+NBA_THIN_OVER_CATS = ("Rebounds", "Assists", "Reb+Ast", "PRA")
+NBA_THIN_OVER_EDGE = 0.06  # NBA rebound/assist overs need a 6%+ edge (Nov 14)
 PROP_MAX_JUICE = -140  # props priced at -140 or shorter are not bets (Nov 10: was -150; Carter o0.5 threes at -147)
 LOW_AST_LINE = 2.5  # assist overs at or below this line are not bets
 PROP_WARN_BAR = 8.5  # a prop with a warning stays a (small) Take only from here up
