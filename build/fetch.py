@@ -3575,13 +3575,14 @@ def one_prop_per_player(g):
 MAX_3PT_TAKES = 2  # per game: threes rise and fall together on a hot or cold shooting night
 
 
-def cap_threes(g):
-    """3-pointer props in one game move together (pace, shooting luck, a blowout): only the best two stay Takes, and at most one per team."""
+def cap_threes(g, per_team=True):
+    """3-pointer props in one game move together (pace, shooting luck, a blowout): only the best two stay Takes, and at most one per team
+    (NBA, Nov 13: teammates allowed, still two per game)."""
     tk = sorted([p for p in g.get("props") or [] if p["cat"] == "3PT Made" and (p.get("analysis") or {}).get("verdict", "").startswith("Take")],
                 key=lambda p: -p["score"])
     kept, teams = 0, set()
     for p in tk:
-        if p["team"] in teams:
+        if per_team and p["team"] in teams:
             # Two shooters on one team ride the same shooting night, pace and perimeter defense: one bet, not two.
             p["analysis"]["verdict"] = "Fade"
             p["analysis"]["against"].append(f"Already a 3-pointer play on {p['team']}: teammates' threes rise and fall together.")
@@ -3711,8 +3712,7 @@ def attach_analysis():
             one_prop_per_player(g)  # one prop per player in every sport
             if SPORT[key] == "bb":
                 cap_shared_pool(g)
-            if key != "nba":  # NBA (Nov 9): no per-team cap on 3-pointer props (leans held back by the caps went 5-2)
-                cap_threes(g)
+            cap_threes(g, per_team=key != "nba")  # NBA: teammates allowed (Nov 9), but at most two 3-pointer bets a game (Nov 13, ATL-CHI had three)
             cap_receiving(key, g)
             for sd_, spot_ in ((g.get("b2b") or {}).items() if SPORT[key] == "bb" else []):
                 if spot_:
