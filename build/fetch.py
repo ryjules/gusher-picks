@@ -3762,6 +3762,8 @@ def attach_analysis():
             apply_pick_overrides(key, g)
             same_game_cap(key, g)
             small_to_full(key, g)
+        if key == "nba":
+            cap_threes_day(key)  # Nov 15: at most NBA_3PT_PER_DAY 3-pointer bets a day
         cap_small_bets(key)
         if SPORT[key] == "fb":
             top_large(key)
@@ -3815,6 +3817,28 @@ def small_to_full(key, g):
         if a and a.get("verdict") == "Take small" and not any(k in w for w in a.get("warn") or [] for k in keep) \
                 and (p.get("score") or 0) >= SMALL_KEEP_PROP:
             a["verdict"] = "Take"
+
+
+NBA_3PT_PER_DAY = 4  # 3-pointer bets ride the same shooting luck: a cold night sinks them together
+
+
+def cap_threes_day(key):
+    """NBA (Nov 15): at most NBA_3PT_PER_DAY 3-pointer bets a day, the highest scores kept. Games already under way count
+    are never changed after tip-off."""
+    by_day = {}
+    for g in OUT_DATA.get(key) or []:
+        for p in g.get("props") or []:
+            a = p.get("analysis") or {}
+            if p.get("cat") == "3PT Made" and str(a.get("verdict", "")).startswith("Take"):
+                by_day.setdefault(game_day(g), []).append((g.get("state") not in (None, "pre"), p.get("score") or 0, p, g))
+    for day, rows in by_day.items():
+        rows.sort(key=lambda r: -r[1])  # the highest scores are the bets
+        for started, _, p, g in rows[NBA_3PT_PER_DAY:]:
+            if started:
+                continue
+            p["analysis"]["verdict"] = "Fade"
+            p["analysis"].setdefault("against", []).append(
+                f"Already {NBA_3PT_PER_DAY} 3-pointer bets today: they ride the same shooting luck, so only the strongest {NBA_3PT_PER_DAY} are bets.")
 
 
 def cap_small_bets(key):
