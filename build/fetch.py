@@ -4045,9 +4045,13 @@ def update_history(path_in, path_out):
                 pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
                 if pid in hist:
                     o = hist[pid]
-                    if not o.get("result") and o.get("verdict") in TAKES and o.get("verdict") != a["verdict"]:
-                        o["verdict"], o["score"], o["stake"] = a["verdict"], p["score"], STAKE.get(a["verdict"], 1)
-                    continue
+                    if o.get("result"):
+                        continue
+                    if o.get("verdict") in TAKES:
+                        if o.get("verdict") != a["verdict"]:
+                            o["verdict"], o["score"], o["stake"] = a["verdict"], p["score"], STAKE.get(a["verdict"], 1)
+                        continue
+                    # Nov 15: logged as a Fade earlier, a bet now (Breece Hall receptions): re-log it at the current line and price.
                 text = f"{p['player']} anytime TD" if p["cat"] == "Touchdowns" else f"{p['player']} {'u' if p['side'] == 'Under' else 'o'}{p['line']:g} {p['cat']}"
                 hist[pid] = {"id": pid, "date": game_day(g), "time": g["date"].split(" · ")[1].replace(" ET", ""), "league": lg,
                              "matchup": f"{g['away']['abbr']} @ {g['home']['abbr']}", "play": text,
