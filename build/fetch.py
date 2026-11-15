@@ -4021,6 +4021,11 @@ def update_history(path_in, path_out):
             elif key in snaps:
                 g.update({k: v for k, v in snaps[key].items() if k in FROZEN})
                 g["frozen"] = snaps[key]["at"]
+    # Started games are back on the board now, so the daily 3-pointer cap can count them (Nov 15).
+    cap_threes_day("nba")
+    for g in OUT_DATA.get("nba") or []:
+        if g.get("state") == "pre":
+            snaps[f"nba-{g['id']}"].update({k: g[k] for k in FROZEN if k in g})
     snaps = {k: v for k, v in snaps.items() if v.get("day", "") >= keep_from}
     added = 0
     for lg in ("cfb", "nfl", "nba", "cbb"):
