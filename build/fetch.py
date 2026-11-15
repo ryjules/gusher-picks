@@ -3030,6 +3030,13 @@ def blend_confidence(lg, g, n):
             g["_dominant"] = side
         if kind == "spread" and lg == "nba" and nba_bad_dog(g, side):
             score = min(score, 6.9)  # with the warning below this is never a bet
+        if kind == "spread" and lg == "nba" and g["lines"].get("spreadNum") is not None:
+            lay_ = g["lines"]["spreadNum"] if side == "home" else -g["lines"]["spreadNum"]
+            if lay_ <= -NBA_BIG_FAV and not (vs == side and v >= NBA_BIG_FAV_PRICE):
+                # Nov 15: NBA favorites laying 7+ went 1-6 as bets (they won, just not by enough): a Lean unless the
+                # price model also has this side by 3+.
+                score = min(score, 6.9)
+                g["_bigFav"] = (side, lay_)
         if kind == "spread" and SPORT[lg] == "fb" and bad_team(g, side, n):
             score = min(score, 6.9)  # with the warning below this is a Fade
         if lg == "nfl" and kind == "total" and side == "over":
@@ -3245,6 +3252,8 @@ def analyze_game(lg, g, kind, nteams):
         sp_m = (g.get("matchup") or {}).get("spread") or {}
         if kind == "spread" and sp_m.get("wildFlag") and sp_m.get("side") == side:
             warn.append(f"Our number is {sp_m['edgePts']:g} points from the line: a gap that big usually means the line knows something (a QB change, injuries, a team falling apart).")
+        if kind == "spread" and (g.get("_bigFav") or (None,))[0] == side:
+            warn.append(f"NBA favorite laying {abs(g['_bigFav'][1]):g}: big favorites usually win but often not by enough (1-6 as bets), so this needs the price model behind it too.")
         bt = bad_team(g, side, nteams) if kind == "spread" and SPORT[lg] == "fb" else nba_bad_dog(g, side) if kind == "spread" and lg == "nba" else None
         if bt:
             warn.append(bt)
@@ -3555,6 +3564,8 @@ BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose m
 BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are small bets at most, no exemption (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
+NBA_BIG_FAV = 7.0  # NBA spreads: a favorite laying this many...
+NBA_BIG_FAV_PRICE = 3.0  # ...needs the price model on its side by this much to be a bet (Nov 15)
 NBA_PROP_MAX_JUICE = -126  # NBA (Nov 14): props at -126 or shorter went 5-9 (-4.6u); -125 is the longest price bet
 NBA_THIN_OVER_CATS = ("Rebounds", "Assists", "Reb+Ast", "PRA")
 NBA_THIN_OVER_EDGE = 0.06  # NBA rebound/assist overs need a 6%+ edge (Nov 14)
