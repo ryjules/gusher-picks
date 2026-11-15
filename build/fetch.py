@@ -3518,6 +3518,8 @@ def analyze_prop(p, g=None, lg=None):
         if verdict == "Take" and not against and (p.get("edge") or 0) >= 0.05 and (
                 (p["score"] >= 9 and won >= 4) or (p["score"] >= PROP_LARGE_PERFECT and perfect)):
             verdict = "Take large"  # strong form, a good matchup and a real edge (Nov 9: 8.5+ is enough at 5 of 5)
+        if verdict == "Take large" and p["cat"] == "3PT Made":
+            verdict = "Take"  # Nov 15: no large bets on 3-pointers (one shooting night decides them)
     elif p["score"] >= 4:
         verdict = "Fade"  # props need a 7.0+ read to be a play
     else:
