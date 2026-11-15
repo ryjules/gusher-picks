@@ -1251,7 +1251,7 @@ LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
-NBA_PROP_EDGE_MIN = 0.04  # NBA props need 4+ points of edge over the price (Nov 11: 2-4 went 6-7, 4+ went 27-20)
+NBA_PROP_EDGE_MIN = 0.06  # Nov 15: 6%+ edges went 14-10 (+9.5u), 4-6% went 18-20 (-5.0u); was 0.04 # NBA props need 4+ points of edge over the price (Nov 11: 2-4 went 6-7, 4+ went 27-20)
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 BB_PROP_MATCHUP_W = 0.25  # basketball props (not threes): weight per point of matchup (0-10); was 0.03
 BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
@@ -3030,6 +3030,10 @@ def blend_confidence(lg, g, n):
             g["_dominant"] = side
         if kind == "spread" and lg == "nba" and nba_bad_dog(g, side):
             score = min(score, 6.9)  # with the warning below this is never a bet
+        if lg == "nba" and vs and vs != side:
+            # Nov 15: NBA game picks with the price model on the other side went 2-7 (-5.2u): a Lean at most.
+            score = min(score, 6.9)
+            g.setdefault("_priceAgainst", []).append(kind)
         if kind == "spread" and lg == "nba" and g["lines"].get("spreadNum") is not None:
             lay_ = g["lines"]["spreadNum"] if side == "home" else -g["lines"]["spreadNum"]
             if lay_ <= -NBA_BIG_FAV and not (vs == side and v >= NBA_BIG_FAV_PRICE):
@@ -3181,6 +3185,8 @@ def analyze_game(lg, g, kind, nteams):
     score, call = c
     op = ln.get("open") or {}
     why, against, warn, tips = [], [], [], []
+    if kind in (g.get("_priceAgainst") or ()):
+        warn.append("The price model is on the other side: in the NBA these went 2-7 as bets, so it stays a Lean.")
     k = kalshi_for(g, kind)
     if kind == "total":
         tot = m["away"] + m["home"]
@@ -3525,6 +3531,10 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
+    if lg == "nba" and p["cat"] == "3PT Made" and p.get("side") == "Under" and verdict.startswith("Take"):
+        # Nov 15: NBA 3-pointer unders went 13-14 (-5.0u) as bets: one made shot decides them, so they're Leans now.
+        verdict = "Fade"
+        against.append("3-pointer unders swing on one made shot (13-14 as bets), so they aren't bet in the NBA.")
     if lg in ("nba", "cbb") and p["cat"] == "3PT Made" and p.get("side") == "Under" and verdict in ("Take", "Take large"):
         # Nov 9: 3-pointer unders are 8-11 live (-6.3u): one extra make decides them, so they're small bets for now.
         verdict = "Take small"
