@@ -3030,6 +3030,14 @@ def blend_confidence(lg, g, n):
             g["_dominant"] = side
         if kind == "spread" and lg == "nba" and nba_bad_dog(g, side):
             score = min(score, 6.9)  # with the warning below this is never a bet
+        if lg == "nba" and kind in ("spread", "moneyline"):
+            outs_ = lambda sd_: sum(1 for x_ in ((g.get("inj") or {}).get(sd_) or []) if (x_.get("status") or "").lower() == "out")
+            more_ = outs_(side) - outs_("home" if side == "away" else "away")
+            if more_ >= NBA_SHORTHANDED:
+                # Nov 16: the team stats come from games these players played (GS without Curry, Butler, Porzingis lost
+                # by 21 as an 8.8). Sides with 2+ more players out than the opponent went 9-13 (-7.6u).
+                score = min(score, 6.9)
+                g.setdefault("_shortHanded", {})[kind] = more_
         if lg == "nba" and vs and vs != side:
             # Nov 15: NBA game picks with the price model on the other side went 2-7 (-5.2u): a Lean at most.
             score = min(score, 6.9)
@@ -3185,6 +3193,8 @@ def analyze_game(lg, g, kind, nteams):
     score, call = c
     op = ln.get("open") or {}
     why, against, warn, tips = [], [], [], []
+    if kind in (g.get("_shortHanded") or {}):
+        warn.append(f"{g[side]['abbr']} has {g['_shortHanded'][kind]} more players out than its opponent: its stats come from games they played, so it stays a Lean.")
     if kind in (g.get("_priceAgainst") or ()):
         warn.append("The price model is on the other side: in the NBA these went 2-7 as bets, so it stays a Lean.")
     k = kalshi_for(g, kind)
@@ -3576,6 +3586,7 @@ BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose m
 BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are small bets at most, no exemption (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
+NBA_SHORTHANDED = 2  # NBA sides with this many more players out than the opponent are Leans (Nov 16)
 NBA_BIG_FAV = 7.0  # NBA spreads: a favorite laying this many...
 NBA_BIG_FAV_PRICE = 3.0  # ...needs the price model on its side by this much to be a bet (Nov 15)
 NBA_PROP_MAX_JUICE = -126  # NBA (Nov 14): props at -126 or shorter went 5-9 (-4.6u); -125 is the longest price bet
