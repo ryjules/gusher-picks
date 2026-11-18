@@ -2475,6 +2475,7 @@ DEF_NAME = {"scoring": "scoring defense", "passing": "pass defense", "rushing": 
 
 
 SOS_W = {"cfb": 0.25, "nfl": 0.25, "nba": 0.75, "cbb": 1.5}  # cbb 0.4 -> 1.5 (Nov 11): early college schedules swing the stats  # most strength the schedule can add or take (football's power rating already credits schedule)
+SOS_DEAD = {"cbb": 3.0}  # college basketball: schedule gaps under this many points per game are ignored
 SOS_SCALE = {"cfb": 12.0, "nfl": 6.0, "nba": 6.0, "cbb": 8.0}  # schedule gap (points per game) that earns the full weight
 SOS_CAP_CBB = 0.8  # college basketball: the schedule can move the read much more (Nov 11)
 SOS_CAP = 0.35  # the schedule never moves the read by more than this share of what the stats show
@@ -2581,6 +2582,8 @@ def stat_matchup(lg, g, nteams):
             # Strength of schedule: stats piled up against weak opponents count for a bit less. It trims or adds to
             # the stat read but can never be more than SOS_CAP of it, so the data still leads.
             diff = sv[0] - sv[1]  # > 0: the away team's recent opponents were tougher
+            dead_ = SOS_DEAD.get(lg, 0.0)  # Nov 18: near-equal schedules aren't adjusted (HOU-FLA, 17th vs 39th)
+            diff = math.copysign(max(0.0, abs(diff) - dead_), diff)
             adj = SOS_W[lg] * max(-1.0, min(1.0, diff / SOS_SCALE[lg]))
             cap_ = SOS_CAP_CBB if lg == "cbb" else SOS_CAP
             adj = max(-cap_ * abs(strength), min(cap_ * abs(strength), adj))
