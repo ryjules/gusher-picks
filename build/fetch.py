@@ -3105,6 +3105,13 @@ def blend_confidence(lg, g, n):
             if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
                 score = min(score, 6.4)
                 g["_cfbWeakO"] = max(r_[1][4], r_[2][0])
+        if lg == "nba" and kind == "total" and side == "over":
+            # Nov 19 (by request): the college over rule. Both offenses must rank in the top half in recent scoring,
+            # or the over is a Lean at most (WSH-TOR over, 202 points).
+            r_ = next((r for sec in g.get("sections") or [] for r in sec["rows"] if r[0] == "PPG"), None)
+            if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
+                score = min(score, 6.4)
+                g["_nbaWeakO"] = max(r_[1][4], r_[2][0])
         if lg == "nba" and kind == "total" and st and st.get("proj") is not None and g["lines"].get("totalNum") is not None:
             cush = (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1)
             if cush < NBA_TOTAL_SMALL_CUSHION:
@@ -3325,8 +3332,8 @@ def analyze_game(lg, g, kind, nteams):
     if kind == "spread" and side == "away" and g.get("_bigRoadFav"):
         warn.append(f"Big road favorite ({fsp(-g['lines']['spreadNum'])}): college home teams pull these upsets, so the stake is smaller.")
     tm_ = (g.get("matchup") or {}).get("total") or {}
-    if kind == "total" and side == "over" and (g.get("_overWeakO") or g.get("_cfbWeakO")):
-        warn.append(f"One offense ranks {ordn(g.get('_overWeakO') or g['_cfbWeakO'])} in recent scoring: an over needs both offenses in the top half.")
+    if kind == "total" and side == "over" and (g.get("_overWeakO") or g.get("_cfbWeakO") or g.get("_nbaWeakO")):
+        warn.append(f"One offense ranks {ordn(g.get('_overWeakO') or g.get('_cfbWeakO') or g['_nbaWeakO'])} in recent scoring: an over needs both offenses in the top half.")
     if kind == "total" and g.get("_farTotal"):
         warn.append(f"Our number is {g['_farTotal']} points from the market: a gap that big can mean news the stats don't show.")
     if kind == "total" and tm_.get("thin") is not None:
