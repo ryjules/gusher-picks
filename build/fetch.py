@@ -3501,6 +3501,11 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nfl", "cfb") and p["cat"] == "Receptions" and p["score"] < REC_PROP_BAR:
         against.append("Catch counts swing on one or two targets, so receptions need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg == "nba" and p.get("kalshiP") is None:
+        # Nov 20: without a market price there's no edge to check, and unpriced NBA props had become most of the bets
+        # (9 of 10 on Nov 20, 1-6). Only props with a price and a 6%+ edge are bet in the NBA.
+        against.append("No market price for this prop, so there's no way to confirm an edge: NBA props are only bet with a price and a 6%+ edge.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif (lg == "nba" and p.get("side") == "Over" and p["cat"] in NBA_THIN_OVER_CATS and p.get("kalshiP") is not None
           and (p.get("edge") or 0) < NBA_THIN_OVER_EDGE):
         # Nov 14: NBA rebound and assist overs went 11-20 (-7.5u); they need a bigger edge than other props.
