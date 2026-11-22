@@ -3105,6 +3105,14 @@ def blend_confidence(lg, g, n):
             if r_ and None not in (r_[1][4], r_[2][0]) and max(r_[1][4], r_[2][0]) > n / 2:
                 score = min(score, 6.4)
                 g["_cfbWeakO"] = max(r_[1][4], r_[2][0])
+        if lg == "cfb" and kind == "total" and side == "over":
+            # Nov 22: college overs since Nov 9 went 4-11; without the price model on the over by 2+ points they went
+            # 2-10 (-6.6u). November conference games score less than the season numbers (built partly on September
+            # games against weak opponents) suggest, and the price model catches it.
+            md_ = g.get("model") or {}
+            if not (str(md_.get("totalSide", "")).startswith("Over") and (md_.get("totalEdge") or 0) >= CFB_OVER_PRICE):
+                score = min(score, 6.4)
+                g["_cfbOverPrice"] = round(md_.get("totalEdge") or 0, 1) if str(md_.get("totalSide", "")).startswith("Over") else 0.0
         if lg == "nba" and kind == "total" and side == "over":
             # Nov 19 (by request): the college over rule. Both offenses must rank in the top half in recent scoring,
             # or the over is a Lean at most (WSH-TOR over, 202 points).
@@ -3122,7 +3130,7 @@ def blend_confidence(lg, g, n):
         sm_ = strength_matchups(g, n) if lg == "cfb" and kind == "total" else None
         if sm_ and sm_[0] == "over" and (lambda w_: not w_["indoor"] and w_["rain"] >= 40)(weather_of(g)):
             sm_ = None  # rain still rules out the over
-        if sm_ and sm_[0] == "over" and g.get("_cfbWeakO"):
+        if sm_ and sm_[0] == "over" and (g.get("_cfbWeakO") or g.get("_cfbOverPrice") is not None):
             sm_ = None  # Nov 13: a bottom-half offense still caps the over (it was lifting TULN-RICE, FIU-DEL to 7.0; such overs 8-11)
         if sm_ and sm_[0] == side and st and st.get("side") == side and st.get("proj") is not None and g["lines"].get("totalNum") is not None \
                 and (st["proj"] - g["lines"]["totalNum"]) * (1 if side == "over" else -1) > (STRENGTH_OVER_PROJ if side == "over" else 0):
@@ -3205,6 +3213,8 @@ def analyze_game(lg, g, kind, nteams):
     why, against, warn, tips = [], [], [], []
     if kind in (g.get("_shortHanded") or {}):
         warn.append(f"{g[side]['abbr']} has {g['_shortHanded'][kind]} more players out than its opponent: its stats come from games they played, so it stays a Lean.")
+    if kind == "total" and side == "over" and g.get("_cfbOverPrice") is not None:
+        warn.append(f"College overs need the price model on the over by {CFB_OVER_PRICE:g}+ points (these went 2-10 lately without it); here it's {g['_cfbOverPrice']:g}.")
     if kind in (g.get("_priceAgainst") or ()):
         warn.append("The price model is on the other side: in the NBA these went 2-7 as bets, so it stays a Lean.")
     k = kalshi_for(g, kind)
@@ -3601,6 +3611,7 @@ BLOWOUT_EXEMPT_CUSHION = 1.15  # a player who beat the line in all 5 and whose m
 BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or more are small bets at most, no exemption (Nov 10)
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
+CFB_OVER_PRICE = 2.0  # college football overs need the price model on the over by this many points (Nov 22)
 NBA_SHORTHANDED = 2  # NBA sides with this many more players out than the opponent are Leans (Nov 16)
 NBA_BIG_FAV = 7.0  # NBA spreads: a favorite laying this many...
 NBA_BIG_FAV_PRICE = 3.0  # ...needs the price model on its side by this much to be a bet (Nov 15)
