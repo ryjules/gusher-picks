@@ -3511,6 +3511,12 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in ("nfl", "cfb") and p["cat"] == "Receptions" and p["score"] < REC_PROP_BAR:
         against.append("Catch counts swing on one or two targets, so receptions need an 8.0+ read.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
+    elif lg == "nba" and NBA_PROPS_OFF:
+        # Nov 23: NBA prop bets went 89-91 (-0.6u). Our hit chance on them averaged 72%; they hit 42-47%, right where
+        # Kalshi priced them (45%). The model's edge was overconfidence, so NBA props are shown but not bet.
+        against.append("NBA props are paused: the model rated these at a 72% hit rate on average and they hit about 45%, "
+                       "exactly what the market priced. Shown for information until the prop model is recalibrated.")
+        verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg == "nba" and p.get("kalshiP") is None:
         # Nov 20: without a market price there's no edge to check, and unpriced NBA props had become most of the bets
         # (9 of 10 on Nov 20, 1-6). Only props with a price and a 6%+ edge are bet in the NBA.
@@ -3612,6 +3618,7 @@ BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or mor
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
 CFB_OVER_PRICE = 2.0  # college football overs need the price model on the over by this many points (Nov 22)
+NBA_PROPS_OFF = True  # Nov 23: NBA props shown, not bet (model overconfident: 72% predicted, ~45% actual)
 NBA_SHORTHANDED = 2  # NBA sides with this many more players out than the opponent are Leans (Nov 16)
 NBA_BIG_FAV = 7.0  # NBA spreads: a favorite laying this many...
 NBA_BIG_FAV_PRICE = 3.0  # ...needs the price model on its side by this much to be a bet (Nov 15)
