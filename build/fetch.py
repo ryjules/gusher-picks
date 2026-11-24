@@ -953,6 +953,15 @@ def rescore_prop(pr, key=None):
     w = 0.35 * max(0.0, 1 - gw / 0.5)
     blend = w * pr["prob"] + (1 - w) * market
     pr["edge"] = round(blend - market, 3)
+    if key in PROP_CAL and pr.get("kalshiP") is not None:
+        # Nov 24 recalibration (4,085 graded props, Nov 16-23): our raw hit chance barely predicts results (50-59%
+        # hit 48%, 80-89% hit 52%) while the market's price is accurate. Fit: hit ~ market + a small share of how far
+        # we differ from it. The calibrated chance replaces the blend for the edge.
+        lg_ = lambda q: math.log(max(1e-4, min(1 - 1e-4, q)) / (1 - max(1e-4, min(1 - 1e-4, q))))
+        a_, b_, c_ = PROP_CAL[key]
+        cal = 1 / (1 + math.exp(-(a_ + b_ * lg_(market) + c_ * (lg_(pr["prob"]) - lg_(market)))))
+        pr["probCal"] = round(cal, 3)
+        pr["edge"] = round(cal - market, 3)
     if pr["cat"] == "Touchdowns":
         # Anytime TD: rank how likely the player is to score (blended chance plus the matchup), like the
         # Profit Hunt sheets; whether the price is worth it shows as Edge and decides Take vs Fade.
@@ -1251,6 +1260,7 @@ LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
+PROP_CAL = {"nba": (-0.14, 1.23, 0.108), "nfl": (-0.14, 1.23, 0.108)}  # Nov 24 fit (NBA, 2,288 priced props; NFL uses it too, too few to fit alone)
 NBA_PROP_EDGE_MIN = 0.06  # Nov 15: 6%+ edges went 14-10 (+9.5u), 4-6% went 18-20 (-5.0u); was 0.04 # NBA props need 4+ points of edge over the price (Nov 11: 2-4 went 6-7, 4+ went 27-20)
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 BB_PROP_MATCHUP_W = 0.25  # basketball props (not threes): weight per point of matchup (0-10); was 0.03
@@ -3514,9 +3524,8 @@ def analyze_prop(p, g=None, lg=None):
     elif lg in PROPS_OFF:
         # Nov 23: NBA prop bets went 89-91 (-0.6u). Our hit chance on them averaged 72%; they hit 42-47%, right where
         # Kalshi priced them (45%). The model's edge was overconfidence, so NBA props are shown but not bet.
-        against.append(f"{lg.upper()} props are paused: the model's hit chances run far above what these props actually hit "
-                       "(NBA 72% predicted vs about 45%; NFL 80% vs 12%), right where the market priced them. Shown for information "
-                       "until the prop model is recalibrated.")
+        against.append(f"{lg.upper()} props are paused: recalibrated on 4,085 graded props, the model's own read adds almost "
+                       "nothing to the market price (its 80%+ picks hit 52%), so no prop shows a real edge. Shown for information.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg == "nba" and p.get("kalshiP") is None:
         # Nov 20: without a market price there's no edge to check, and unpriced NBA props had become most of the bets
