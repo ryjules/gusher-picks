@@ -961,7 +961,7 @@ def rescore_prop(pr, key=None):
         a_, b_, c_ = PROP_CAL[key]
         cal = 1 / (1 + math.exp(-(a_ + b_ * lg_(market) + c_ * (lg_(pr["prob"]) - lg_(market)))))
         pr["probCal"] = round(cal, 3)
-        pr["edge"] = round(cal - market, 3)
+        pr["edgeCal"] = round(cal - market, 3)  # information only (Nov 24, by request the picking rules use the original edge)
     if pr["cat"] == "Touchdowns":
         # Anytime TD: rank how likely the player is to score (blended chance plus the matchup), like the
         # Profit Hunt sheets; whether the price is worth it shows as Edge and decides Take vs Fade.
@@ -1261,7 +1261,7 @@ BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
 PROP_CAL = {"nba": (-0.14, 1.23, 0.108), "nfl": (-0.14, 1.23, 0.108)}  # Nov 24 fit (NBA, 2,288 priced props; NFL uses it too, too few to fit alone)
-NBA_PROP_EDGE_MIN = 0.06  # Nov 15: 6%+ edges went 14-10 (+9.5u), 4-6% went 18-20 (-5.0u); was 0.04 # NBA props need 4+ points of edge over the price (Nov 11: 2-4 went 6-7, 4+ went 27-20)
+NBA_PROP_EDGE_MIN = 0.06  # Nov 15: 6%+ edges went 14-10 (+9.5u), 4-6% went 18-20 (-5.0u); was 0.04
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
 BB_PROP_MATCHUP_W = 0.25  # basketball props (not threes): weight per point of matchup (0-10); was 0.03
 BB_PROP_MPG = 30  # players under this many minutes a game need BB_PROP_BAR_LOWMIN (backtest: 30+ minute players hit best)
@@ -3528,8 +3528,8 @@ def analyze_prop(p, g=None, lg=None):
                        "nothing to the market price (its 80%+ picks hit 52%), so no prop shows a real edge. Shown for information.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg == "nba" and p.get("kalshiP") is None:
-        # Nov 20: without a market price there's no edge to check, and unpriced NBA props had become most of the bets
-        # (9 of 10 on Nov 20, 1-6). Only props with a price and a 6%+ edge are bet in the NBA.
+        # Nov 20: without a market price there's no edge to check (9 of 10 NBA prop bets on Nov 20, 1-6). Nov 24: the
+        # calibrated edge needs a market price, so NBA and NFL props are only bet with one.
         against.append("No market price for this prop, so there's no way to confirm an edge: NBA props are only bet with a price and a 6%+ edge.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif (lg == "nba" and p.get("side") == "Over" and p["cat"] in NBA_THIN_OVER_CATS and p.get("kalshiP") is not None
@@ -3628,7 +3628,7 @@ BLOWOUT_NO_BET = 14.0  # basketball: overs on a team favored by this many or mor
 BLOWOUT_FAV = 10.0  # basketball: overs on a player whose team is favored by this many or more are small bets
 HIT_SMALL_SCORE = 7.5  # basketball props that beat the line in 3 of 5 can be small bets from this score up (Nov 9)
 CFB_OVER_PRICE = 2.0  # college football overs need the price model on the over by this many points (Nov 22)
-PROPS_OFF = ("nba", "nfl")  # props shown, not bet: the model is overconfident (NBA 72% vs ~45% actual, Nov 23; NFL 80% vs 12%, Nov 23)
+PROPS_OFF = ()  # Nov 24 (by request): props back on with the pre-pause rules, capped at MAX_PROPS_PER_DAY per sport
 NBA_SHORTHANDED = 2  # NBA sides with this many more players out than the opponent are Leans (Nov 16)
 NBA_BIG_FAV = 7.0  # NBA spreads: a favorite laying this many...
 NBA_BIG_FAV_PRICE = 3.0  # ...needs the price model on its side by this much to be a bet (Nov 15)
@@ -3828,6 +3828,8 @@ def attach_analysis():
             small_to_full(key, g)
         if key == "nba":
             cap_threes_day(key)  # Nov 15: at most NBA_3PT_PER_DAY 3-pointer bets a day
+        if key in ("nba", "nfl"):
+            cap_props_day(key)  # Nov 24: at most MAX_PROPS_PER_DAY prop bets a day
         cap_small_bets(key)
         if SPORT[key] == "fb":
             top_large(key)
@@ -3884,6 +3886,28 @@ def small_to_full(key, g):
 
 
 NBA_3PT_PER_DAY = 4  # 3-pointer bets ride the same shooting luck: a cold night sinks them together
+
+
+MAX_PROPS_PER_DAY = 4  # Nov 24 (by request): at most this many prop bets per sport per day, highest scores kept
+
+
+def cap_props_day(key):
+    """At most MAX_PROPS_PER_DAY prop bets per sport per day, the highest scores kept; games already under way count
+    toward the cap but are never changed after tip-off (Nov 24: a bad prop night like Nov 20, 2-8, costs 3-4 units, not 5-9)."""
+    by_day = {}
+    for g in OUT_DATA.get(key) or []:
+        for p in g.get("props") or []:
+            a = p.get("analysis") or {}
+            if str(a.get("verdict", "")).startswith("Take"):
+                by_day.setdefault(game_day(g), []).append((g.get("state") not in (None, "pre"), p.get("score") or 0, p))
+    for rows in by_day.values():
+        rows.sort(key=lambda r: -r[1])
+        for started, _, p in rows[MAX_PROPS_PER_DAY:]:
+            if started:
+                continue
+            p["analysis"]["verdict"] = "Fade"
+            p["analysis"].setdefault("against", []).append(
+                f"Already {MAX_PROPS_PER_DAY} prop bets today: only the {MAX_PROPS_PER_DAY} highest scores are bets, so one bad night can't sink a dozen.")
 
 
 def cap_threes_day(key):
@@ -4087,9 +4111,11 @@ def update_history(path_in, path_out):
                 g["frozen"] = snaps[key]["at"]
     # Started games are back on the board now, so the daily 3-pointer cap can count them (Nov 15).
     cap_threes_day("nba")
-    for g in OUT_DATA.get("nba") or []:
-        if g.get("state") == "pre":
-            snaps[f"nba-{g['id']}"].update({k: g[k] for k in FROZEN if k in g})
+    for lg_ in ("nba", "nfl"):
+        cap_props_day(lg_)  # started games are back on the board, so they count toward the daily prop cap
+        for g in OUT_DATA.get(lg_) or []:
+            if g.get("state") == "pre":
+                snaps[f"{lg_}-{g['id']}"].update({k: g[k] for k in FROZEN if k in g})
     snaps = {k: v for k, v in snaps.items() if v.get("day", "") >= keep_from}
     added = 0
     for lg in ("cfb", "nfl", "nba", "cbb"):
