@@ -1260,6 +1260,24 @@ LG_TOTALS = {}  # league average combined score, filled from completed games
 BB_PROP_BAR = 7.5
 OVER_TAX = 0.4  # props on the over need this much more (books shade over prices)
 NBA_PROP_BAR = 7.0  # basketball props need this read to be a bet (Oct backtest: 7-8 was the best band; no automatic raise)
+def nba_props_on_paper():
+    """Nov 26 (by request): NBA props are paper picks until the paper record is profitable over the last 3 weeks (30+ graded);
+    then they're bets again automatically."""
+    path = sys.argv[3] if len(sys.argv) > 3 else None
+    try:
+        picks = json.load(open(path)).get("picks", []) if path and os.path.exists(path) else []
+    except (ValueError, OSError):
+        return True
+    since = (datetime.now(ET) - timedelta(days=21)).strftime("%Y-%m-%d")
+    done = [e for e in picks if e.get("league") == "nba" and e.get("paper") and e.get("result") in ("W", "L") and e.get("date", "") >= since]
+    pay = lambda pr: 100 / abs(pr) if pr < 0 else pr / 100
+    units = sum(pay(e.get("price") or -110) if e["result"] == "W" else -1 for e in done)
+    on_paper = not (len(done) >= 30 and units > 0)
+    print("nba props:", "paper" if on_paper else "BETS (paper record profitable)", len(done), "graded", round(units, 2), "u", file=sys.stderr)
+    return on_paper
+
+
+NBA_PAPER = nba_props_on_paper()
 PROP_CAL = {"nba": (-0.14, 1.23, 0.108), "nfl": (-0.14, 1.23, 0.108)}  # Nov 24 fit (NBA, 2,288 priced props; NFL uses it too, too few to fit alone)
 NBA_PROP_EDGE_MIN = 0.04  # Nov 24 (by request): back to the original 4% bar (was 6% from Nov 15)
 PROP_EDGE_MIN = 0.02  # props on a Kalshi price need 2+ points of edge to be worth that price
@@ -3512,7 +3530,7 @@ def analyze_prop(p, g=None, lg=None):
     if p["cat"] != "Touchdowns" and p.get("line") is not None and p["l5"] and won < need and not three_of_five:
         against.append(f"Beat this line in only {won} of his last {len(p['l5'])} games: a bet needs {need} of {len(p['l5'])}.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else NBA_PROP_EDGE_MIN if lg == "nba" else PROP_EDGE_MIN) \
+    elif (p.get("edge") or 0) < (0.02 if p["cat"] == "Touchdowns" else NBA_PROP_EDGE_MIN if lg == "nba" and not NBA_PAPER else PROP_EDGE_MIN) \
             and (p["cat"] == "Touchdowns" or p.get("kalshiP") is not None):
         # The data likes it, but the price already says so: no value in betting it.
         against.append("The price already reflects what the data shows, so there's no value at this number."
@@ -3527,17 +3545,17 @@ def analyze_prop(p, g=None, lg=None):
         against.append(f"{lg.upper()} props are paused: recalibrated on 4,085 graded props, the model's own read adds almost "
                        "nothing to the market price (its 80%+ picks hit 52%), so no prop shows a real edge. Shown for information.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif lg == "nba" and p.get("kalshiP") is None:
+    elif lg == "nba" and p.get("kalshiP") is None and not NBA_PAPER:
         # Nov 20: without a market price there's no edge to check (9 of 10 NBA prop bets on Nov 20, 1-6). Nov 24: the
         # calibrated edge needs a market price, so NBA and NFL props are only bet with one.
         against.append("No market price for this prop, so there's no way to confirm an edge: NBA props are only bet with a price and a 6%+ edge.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif (lg == "nba" and p.get("side") == "Over" and p["cat"] in NBA_THIN_OVER_CATS and p.get("kalshiP") is not None
+    elif (lg == "nba" and not NBA_PAPER and p.get("side") == "Over" and p["cat"] in NBA_THIN_OVER_CATS and p.get("kalshiP") is not None
           and (p.get("edge") or 0) < NBA_THIN_OVER_EDGE):
         # Nov 14: NBA rebound and assist overs went 11-20 (-7.5u); they need a bigger edge than other props.
         against.append(f"{p['cat']} overs need a {NBA_THIN_OVER_EDGE:.0%}+ edge over the price (these overs have gone 11-20); this one is {(p.get('edge') or 0):.1%}.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
-    elif (pnum(p.get("kalshiOdds")) or 0) <= (NBA_PROP_MAX_JUICE if lg == "nba" else PROP_MAX_JUICE):
+    elif (pnum(p.get("kalshiOdds")) or 0) <= (NBA_PROP_MAX_JUICE if lg == "nba" and not NBA_PAPER else PROP_MAX_JUICE):
         against.append(f"Price is too heavy ({p['kalshiOdds']}): laying that much juice eats the edge.")
         verdict = "Fade" if p["score"] >= 4 else "Pass"
     elif lg == "cbb" and p.get("teamOut") and p.get("side") == "Under" and p["cat"] != "3PT Made":
@@ -3582,7 +3600,7 @@ def analyze_prop(p, g=None, lg=None):
     else:
         verdict = "Pass"
     tips_ = []
-    if lg == "nba" and p["cat"] == "3PT Made" and p.get("side") == "Under" and verdict.startswith("Take"):
+    if lg == "nba" and not NBA_PAPER and p["cat"] == "3PT Made" and p.get("side") == "Under" and verdict.startswith("Take"):
         # Nov 15: NBA 3-pointer unders went 13-14 (-5.0u) as bets: one made shot decides them, so they're Leans now.
         verdict = "Fade"
         against.append("3-pointer unders swing on one made shot (13-14 as bets), so they aren't bet in the NBA.")
@@ -3618,6 +3636,11 @@ def analyze_prop(p, g=None, lg=None):
         # (30+ graded bets at 55%+ and in profit, checked every morning).
         verdict = "Take small"
         tips_.append("Basketball props are half-unit bets until the model shows an edge over a bigger sample.")
+    if lg == "nba" and NBA_PAPER and verdict.startswith("Take"):
+        # Nov 26 (by request): NBA props are paper picks, chosen by the Nov 1 rules, until they're profitable on paper.
+        against.append("NBA props are on paper right now (Nov 1 rules): this would be a bet, so it's tracked, but it isn't bet or counted in "
+                       "the P&L until NBA paper props are profitable over 3 weeks.")
+        return {"verdict": "Fade", "paper": True, "why": why, "against": against, "warn": warn, "tips": tips_}
     return {"verdict": verdict, "why": why, "against": against, "warn": warn, "tips": tips_}
 
 
@@ -4161,7 +4184,7 @@ def update_history(path_in, path_out):
                 old = hist.get(ppid)
                 if a and old and not old.get("result") and old.get("verdict") in TAKES and a["verdict"] not in TAKES:
                     old["verdict"], old["stake"] = a["verdict"], 1  # dropped before kickoff
-                if BACKFILL or not a or a["verdict"] not in TAKES or p["score"] < 7 or p.get("flag"):
+                if BACKFILL or not a or (a["verdict"] not in TAKES and not a.get("paper")) or p["score"] < 7 or p.get("flag"):
                     continue  # (a rebuilt day has no live prop prices, so its props are not logged)
                 pid = f"{lg}-{g['id']}-{p['pid']}-{re.sub('[^A-Za-z0-9]', '', p['cat'])}"
                 if pid in hist:
@@ -4181,6 +4204,8 @@ def update_history(path_in, path_out):
                                        "side": "under" if p["side"] == "Under" else "over", "line": p["line"]},
                              "verdict": a["verdict"], "score": p["score"], "stake": STAKE.get(a["verdict"], 1),
                              "result": None, "logged": now}
+                if a.get("paper"):
+                    hist[pid]["paper"] = True  # NBA paper pick: graded and shown with the skipped picks, never in the P&L
                 added += 1
     graded = 0
     for pk in hist.values():
